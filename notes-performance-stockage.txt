@@ -173,6 +173,49 @@ values » ; tests crates/daemon/tests/kv_counts.rs ; DERIVED_VERSION 9) :
   se lisent sur les bits (derived::counted_over), sans lire de ligne
   (192 144 clés → < 300 sur 16 000 fichiers à 3 tags).
 
+ÉTAPE 7 EN COURS — conception d'implémentation (14 nov. 2026, annoncée à
+l'utilisateur ; rien n'est encore codé à l'écriture de cette note) :
+- Découpage : l'étape 7 ne change QUE le sens valeur → ids. Les routes de
+  masse (/query/fields/set|add|remove|unset, routes/query.rs + write_matches
+  dans routes/mod.rs) passent par une opération de masse du Writer ; les
+  LIGNES et le JOURNAL restent écrits metarecord par metarecord (étapes 8-9).
+  Seule, l'étape 7 n'apporte donc pas de gain mesurable : c'est le socle de 8.
+- Stockage : nouvelle table dérivée `events` (TABLES 25, DERIVED_VERSION 10),
+  clé = champ · numéro (8 octets, compteur meta), valeur = événement encodé :
+  genre (ajouter / retirer / remplacer), valeur(s) (codec put_value), bitmap
+  B d'ids denses. Fichier prévu : crates/daemon/src/kvstore/events.rs.
+- « Stocké » d'une valeur = sa suite dans la partition `value` ou son posting
+  (pas de bitmap par valeur) ; pour un champ ref, aussi `referrers`(champ,
+  id cible). Effectif = stocké puis événements rejoués dans l'ordre
+  (ajouter v : |= B ; retirer v : -= B ; remplacer : -= B puis |= B si v ∈
+  vals).
+- Écriture de masse (txn.mass_event) : 1 clé d'événement ; compteurs de
+  valeurs par opérations de bitmap (+1 sur B − effectif(v), −1 sur
+  B ∩ effectif(v), := n sur B) — à écrire (retenue), cf. étape 6 ; `absent` et
+  `long texts` : exacts (remplacer : −= B puis |= B selon vals) ; trigrammes :
+  par valeur = entrées si texte nouveau, par metarecord = pending |= B ;
+  histogrammes : ajouter/retirer tout de suite, la partie « anciennes
+  valeurs » d'un remplacement au repli (check : histogramme non vérifié pour
+  un champ avec événements).
+- Écriture individuelle sur un champ qui a des événements en attente :
+  derive_row ajoute un événement d'un seul id au lieu d'écrire partition /
+  posting / referrers (règle d'ordre des notes).
+- Lectures à faire passer par l'effectif (kvstore/source.rs) : bucket /
+  equal, posting / posted, scan_part / part_ids (algorithme des valeurs
+  SUIVIES pour les intervalles), walk (tri : valeurs présentes seulement dans
+  la liste fusionnées), same_as, referrers_of, gram_values → bucket.
+- Repli (fold_events, appelé par KvStore::fold, reindex, et quand un champ
+  dépasse 64 événements — seuil À MESURER) : rejoue dans la partition /
+  postings / referrers / histogrammes ; un remplacement parcourt les valeurs
+  du champ pour retirer B des anciennes.
+- check_derived : côté « stocké », chaque entrée de partition / referrer d'un
+  champ avec événements est filtrée par le rejeu, et les entrées qui
+  n'existent que par les événements sont ajoutées (valeurs nommées par
+  ajouter / remplacer).
+- Exclus : tree_ref / hierarchy_ref (positions toujours individuelles), une
+  valeur Nothing ou un texte long (> 512 octets) en ajout/retrait de masse →
+  chemin individuel.
+
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
      résolution de chemin et clés de forêt vérifient universe, un nouveau
