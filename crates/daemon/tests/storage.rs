@@ -412,7 +412,11 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
     let counts =
         (conn.snapshots(op.id, false).unwrap().len(), conn.snapshots(op.id, true).unwrap().len());
     assert_eq!(counts, (2, 1));
-    assert_eq!(op.entity_version_before, Some(m.version), "the state the op moved away from");
+    assert_eq!(
+        conn.version_before_label(op.label_id, m.uuid).unwrap(),
+        Some(m.version),
+        "the state the op moved away from"
+    );
 }
 
 #[test]
@@ -935,21 +939,44 @@ fn test_a_value_put_back_restores_the_version() {
 }
 
 #[test]
-fn test_entity_version_columns_name_the_states_around_the_operation() {
-    // `entity_version_before`/`after` are provenance, not authority: nothing
-    // reads them to decide what to write. They must still agree with the states
-    // they name, or a client correlating an operation with something it
-    // observed from outside the write would be misled.
+fn test_the_version_before_a_label_is_computed_back_from_the_log() {
+    // The log records no version (doc "Log storage"): the one a metarecord
+    // had before a label is its content now, with every operation on it
+    // since undone — whatever was written to it afterwards.
     let (mut conn, _dir) = test_conn();
-    let m = create(&mut conn, vec![]);
-    let before_write = conn.version(m.uuid).unwrap().unwrap();
-
+    let m = create(&mut conn, vec![Field::new("keep", Value::Int(0))]);
     set_field(&mut conn, m.uuid, "a", Value::Int(1));
-    let after_write = conn.version(m.uuid).unwrap().unwrap();
+    let before = conn.version(m.uuid).unwrap().unwrap();
 
-    let op = ops_of_type(&conn, "set_field").pop().expect("a set_field operation");
-    assert_eq!(op.entity_version_before, Some(before_write));
-    assert_eq!(op.entity_version_after, Some(after_write));
+    set_field(&mut conn, m.uuid, "a", Value::Int(2));
+    let label = ops_of_type(&conn, "set_field").pop().expect("a set_field operation").label_id;
+    assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(3));
+    set_field(&mut conn, m.uuid, "b", Value::String("later".into()));
+    assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_metarecord(m.uuid).unwrap();
+    w.commit().unwrap();
+    assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
+
+    // A metarecord the label created had none; one it did not touch neither.
+    let created = ops_of_type(&conn, "create_metarecord").pop().expect("the creation").label_id;
+    assert_eq!(conn.version_before_label(created, m.uuid).unwrap(), None);
+    assert_eq!(conn.version_before_label(label, Uuid::new_v4()).unwrap(), None);
+}
+
+#[test]
+fn test_a_field_write_does_not_write_the_metarecord_itself() {
+    // The version is computed when read: a write to a field leaves the
+    // metarecord's own key alone — on a hard disk, one place less to seek.
+    let (mut conn, _dir) = test_conn();
+    let m = create(&mut conn, vec![Field::new("a", Value::Int(1))]);
+    assert_eq!(conn.last_write_keys().get("metarecords"), Some(&1));
+    set_field(&mut conn, m.uuid, "a", Value::Int(2));
+    assert_eq!(conn.last_write_keys().get("metarecords"), None, "{:?}", conn.last_write_keys());
+    assert_eq!(conn.version(m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
 }
 
 #[test]

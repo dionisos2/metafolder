@@ -42,21 +42,21 @@ pub fn assemble_selected(
     fields_filter: Option<&[String]>,
     cancel: &dyn Fn() -> bool,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
-    // Batched reads: the whole page's versions and field rows in a couple of
-    // `IN (…)` scans, not a query per metarecord.
-    let versions = Rows::versions_for(conn, uuids)?;
+    // The whole page's rows at once. A version is a hash of the rows (doc
+    // "Metarecord version"), computed here from the ones just read; only a
+    // metarecord without any row needs asking whether it exists.
     let mut rows = Rows::rows_for(conn, uuids)?;
     let mut objects = Vec::with_capacity(uuids.len());
     for (i, &uuid) in uuids.iter().enumerate() {
         if i % 256 == 0 && cancel() {
             return Err(ApiError::conflict("query cancelled"));
         }
-        let version = *versions
-            .get(&uuid)
-            .ok_or_else(|| ApiError::not_found(format!("Metarecord not found: {uuid}")))?;
-        let fields: Vec<Field> = rows
-            .remove(&uuid)
-            .unwrap_or_default()
+        let own = rows.remove(&uuid).unwrap_or_default();
+        if own.is_empty() && !Rows::exists(conn, uuid)? {
+            return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
+        }
+        let version = crate::version::of_rows(uuid, &own);
+        let fields: Vec<Field> = own
             .into_iter()
             .filter(|r| fields_filter.is_none_or(|f| f.contains(&r.name)))
             .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })

@@ -160,9 +160,9 @@ pub fn changed_since<S: crate::store::Store + ?Sized>(store: &S, op: &OpRow) -> 
     let entity = op.entity_uuid;
     let unchanged = match op.op_type.as_str() {
         "create_metarecord" | "set_metarecord" => {
-            store.version(entity)?.is_some() && same_rows(&store.rows(entity)?, &after)
+            store.exists(entity)? && same_rows(&store.rows(entity)?, &after)
         }
-        "delete_metarecord" => store.version(entity)?.is_none(),
+        "delete_metarecord" => !store.exists(entity)?,
         "append_field" => {
             let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
             let now = store.rows_named(entity, name)?;
@@ -316,13 +316,13 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         match op.op_type.as_str() {
             "create_metarecord" => {
                 // Already gone: there is nothing left to take back.
-                if writer.store().version(op.entity_uuid)?.is_none() {
+                if !writer.store().exists(op.entity_uuid)? {
                     continue;
                 }
                 writer.delete_metarecord(op.entity_uuid)?
             }
             "delete_metarecord" => {
-                if writer.store().version(op.entity_uuid)?.is_some() {
+                if writer.store().exists(op.entity_uuid)? {
                     return Err(crate::error::DomainError::Conflict(format!(
                         "metarecord {} exists again: undoing its deletion (operation {}) \
                          cannot recreate it",
@@ -397,8 +397,6 @@ mod tests {
             timestamp: 0,
             op_type: op_type.into(),
             entity_uuid: uuid::Uuid::nil(),
-            entity_version_before: None,
-            entity_version_after: None,
             field_name: None,
             reverts_op_id: None,
             origin: origin.map(str::to_string),

@@ -30,9 +30,9 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Rows::as_kv($conn)
             }
-            fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
+            fn exists(&self, uuid: Uuid) -> Result<bool> {
                 let $me = self;
-                Rows::version($conn, uuid)
+                Rows::exists($conn, uuid)
             }
             fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>> {
                 let $me = self;
@@ -45,10 +45,6 @@ macro_rules! forward_to_store {
             fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>> {
                 let $me = self;
                 Rows::rows_for($conn, uuids)
-            }
-            fn versions_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, u64>> {
-                let $me = self;
-                Rows::versions_for($conn, uuids)
             }
             fn metarecord_count(&self) -> Result<usize> {
                 let $me = self;
@@ -283,16 +279,33 @@ pub trait Rows {
     fn as_kv(&self) -> Option<&crate::kvstore::KvStore> {
         None
     }
-    /// A metarecord's version, `None` when it does not exist.
-    fn version(&self, uuid: Uuid) -> Result<Option<u64>>;
+    /// Whether a metarecord exists.
+    fn exists(&self, uuid: Uuid) -> Result<bool>;
+    /// A metarecord's version, `None` when it does not exist: a hash of its
+    /// content, computed from its rows — nothing stores it (doc "Metarecord
+    /// version").
+    fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
+        if !self.exists(uuid)? {
+            return Ok(None);
+        }
+        Ok(Some(crate::version::of_rows(uuid, &self.rows(uuid)?)))
+    }
     /// A metarecord's field rows, in row-id order.
     fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>>;
     /// A metarecord's rows of one field name, in row-id order.
     fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>>;
     /// Several metarecords' rows at once.
     fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>>;
-    /// Several metarecords' versions at once (the missing ones left out).
-    fn versions_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, u64>>;
+    /// Which of several metarecords exist.
+    fn existing(&self, uuids: &[Uuid]) -> Result<std::collections::HashSet<Uuid>> {
+        let mut out = std::collections::HashSet::new();
+        for &u in uuids {
+            if self.exists(u)? {
+                out.insert(u);
+            }
+        }
+        Ok(out)
+    }
     /// How many metarecords there are.
     fn metarecord_count(&self) -> Result<usize>;
     /// A row by its id.
@@ -371,9 +384,12 @@ pub trait Rows {
 
     /// A whole metarecord, `None` when it does not exist.
     fn metarecord(&self, uuid: Uuid) -> Result<Option<MetaRecord>> {
-        let Some(version) = self.version(uuid)? else { return Ok(None) };
-        let fields = self
-            .rows(uuid)?
+        if !self.exists(uuid)? {
+            return Ok(None);
+        }
+        let rows = self.rows(uuid)?;
+        let version = crate::version::of_rows(uuid, &rows);
+        let fields = rows
             .into_iter()
             .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
             .collect();
@@ -469,10 +485,12 @@ pub trait Log {
     fn watcher_label(&self) -> Result<Option<i64>>;
     /// An entity's operations newer than `after`, oldest first.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>>;
-    /// The version `entity` had when label `label` began — its first
-    /// operation there's `entity_version_before` (a trash entry records the
-    /// version from outside the watcher's flush, so a revert matches on this
-    /// one).
+    /// The version `entity` had when label `label` began (a trash entry
+    /// records the version from outside the watcher's flush, so a revert
+    /// matches on this one); `None` when the label created it, or did not
+    /// touch it. The log records no version: this is the entity's content
+    /// now with every operation on it since the label's first undone, on the
+    /// version itself — a sum of row terms (doc "Metarecord version").
     fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>>;
     /// The operations newer than `op`, oldest first (the change feed).
     fn ops_after(&self, op: i64) -> Result<Vec<OpRow>>;
@@ -803,13 +821,39 @@ pub mod derive {
     }
 }
 
+/// [`Log::version_before_label`], for any store: the entity's version now —
+/// that of a metarecord without rows once it is deleted, which is what its
+/// deletion left of the sum — and each of its operations since the label's
+/// first, newest first, taken back: the terms of what it wrote subtracted,
+/// those of what it removed added.
+pub fn version_before_label<S: Rows + Log + ?Sized>(
+    store: &S,
+    label: i64,
+    entity: Uuid,
+) -> Result<Option<u64>> {
+    let Some(first) = store.label_ops(label)?.into_iter().find(|o| o.entity_uuid == entity) else {
+        return Ok(None);
+    };
+    if first.op_type == "create_metarecord" {
+        return Ok(None);
+    }
+    let mut version = match store.version(entity)? {
+        Some(v) => v,
+        None => crate::version::base(entity),
+    };
+    for op in store.entity_ops_after(entity, first.id - 1)?.iter().rev() {
+        let (wrote, removed) = (store.snapshots(op.id, true)?, store.snapshots(op.id, false)?);
+        let (add, sub) = crate::version::delta(&wrote, &removed);
+        version = crate::version::apply(version, add, sub);
+    }
+    Ok(Some(version))
+}
+
 /// One operation a write transaction appends to the log.
 pub struct NewOp {
     pub op_type: OpType,
     pub entity: Uuid,
     pub field_name: Option<String>,
-    pub version_before: Option<u64>,
-    pub version_after: Option<u64>,
     pub before: Vec<FieldRow>,
     pub after: Vec<FieldRow>,
     /// The operation this one undoes, when a revert writes it.
@@ -823,10 +867,9 @@ pub struct NewOp {
 /// and it reads its own writes. One `log::Writer` is one of these.
 pub trait WriteTxn: Store {
     /// A new metarecord, with no row yet.
-    fn create_metarecord(&self, uuid: Uuid, version: u64) -> Result<()>;
+    fn create_metarecord(&self, uuid: Uuid) -> Result<()>;
     /// Removes a metarecord and every row it holds.
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()>;
-    fn set_version(&self, uuid: Uuid, version: u64) -> Result<()>;
     /// Inserts a row and returns its id: a fresh one, never reused, or `id`
     /// when given (a store copy puts rows back under their own). Refuses a
     /// second row at one position of a forest, and a second `mfr_path`.

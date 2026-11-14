@@ -96,6 +96,24 @@ crates/daemon/tests/kv_text.rs, DERIVED_VERSION 7 = reindex à l'ouverture) :
   suite bench.sh, elle, construit ses dépôts sans repli → ses scénarios de
   recherche de texte mesurent le balayage jusqu'à l'étape 10.
 
+ÉTAPE 3 FAITE (14 nov. 2026 ; doc "Metarecord version", doc "Log storage") :
+- la version n'est plus stockée : Rows::version = hash des lignes lues
+  (Rows::exists pour l'existence seule) ; table `metarecords` = uuid → vide.
+  Une écriture de champ n'écrit plus la clé `metarecords`.
+- le journal n'enregistre plus de version (les deux emplacements du codec
+  restent, vides ; ceux d'un ancien store sont ignorés) : PAS de changement
+  de LAYOUT, rien n'est réécrit.
+- DÉCISION utilisateur : la corrélation corbeille ↔ revert
+  (`entity_version_before_label`) est RECALCULÉE à l'annulation
+  (store::version_before_label) : version actuelle, puis chaque opération du
+  metarecord depuis le label défaite sur la somme (termes des lignes).
+  À REVOIR À L'ÉTAPE 9 : une opération de masse n'a pas de lignes avant/après
+  par metarecord ; le recalcul devra savoir défaire un événement de masse pour
+  un id (id ∈ B, « qui l'avait déjà »), ou s'arrêter au repli pour un
+  remplacement en attente.
+- `entity_version_before` (par opération) retiré du plan de revert ; le
+  client (core) n'utilisait déjà que la version du label en priorité.
+
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
      résolution de chemin et clés de forêt vérifient universe, un nouveau
@@ -349,7 +367,10 @@ Recherche de texte (trigrammes), validé avec l'utilisateur :
 - Passage au mode par metarecord : quand un trigramme typique désigne trop de
   valeurs distinctes (chaque valeur candidate = une clé lue, alors que le
   trigramme par ids donne directement l'union). Critère connu sans calcul :
-  la taille des bitmaps de trigrammes par valeur. Seuil à mesurer. Au
+  la taille des bitmaps de trigrammes par valeur. Seuil à mesurer.
+  (Fait à l'étape 2 : MOYENNE d'entrées par trigramme > 16 ; l'utilisateur a
+  confirmé la moyenne plutôt que le maximum, et accepté les entrées
+  (trigramme, clé du texte) à la place de bitmaps d'ids de valeur.) Au
   passage, en attente = present(champ) (aucun trigramme par metarecord
   n'existe encore).
 

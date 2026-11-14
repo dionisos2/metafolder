@@ -143,7 +143,7 @@ fn row_ids_are_never_reused_and_can_be_restored() {
     let m = Uuid::new_v4();
     let (a, b) = {
         let tx = conn.begin_write().unwrap();
-        tx.create_metarecord(m, 1).unwrap();
+        tx.create_metarecord(m).unwrap();
         let a = tx.insert_row(m, "k", &s("a"), None).unwrap();
         let b = tx.insert_row(m, "k", &s("b"), None).unwrap();
         tx.delete_row(b).unwrap();
@@ -169,7 +169,7 @@ fn a_forest_position_and_a_path_are_taken_once() {
     let (root, x, y) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let tx = conn.begin_write().unwrap();
     for u in [root, x, y] {
-        tx.create_metarecord(u, 1).unwrap();
+        tx.create_metarecord(u).unwrap();
     }
     tx.insert_row(root, "loc", &Value::TreeRef { parent: None, name: "r".into() }, None).unwrap();
     let under = |name: &str| Value::TreeRef { parent: Some(root), name: name.into() };
@@ -191,11 +191,10 @@ fn removing_a_metarecord_takes_its_rows() {
     let (mut conn, _dir) = empty();
     let m = Uuid::new_v4();
     let tx = conn.begin_write().unwrap();
-    tx.create_metarecord(m, 7).unwrap();
-    assert_eq!(tx.version(m).unwrap(), Some(7));
-    tx.set_version(m, 9).unwrap();
-    assert_eq!(tx.version(m).unwrap(), Some(9));
+    tx.create_metarecord(m).unwrap();
+    let empty = tx.version(m).unwrap().expect("a metarecord without rows has a version");
     let id = tx.insert_row(m, "k", &Value::Int(1), None).unwrap();
+    assert_ne!(tx.version(m).unwrap(), Some(empty), "the version follows the rows");
     tx.insert_row(m, "j", &Value::Int(2), None).unwrap();
     assert_eq!(tx.holders("k").unwrap(), [m]);
     assert_eq!(tx.value_types("k").unwrap(), ["int"]);
@@ -215,8 +214,6 @@ fn appended_operations_chain_from_head() {
         op_type: OpType::SetField,
         entity: m,
         field_name: Some(field.into()),
-        version_before: Some(1),
-        version_after: Some(2),
         before: Vec::new(),
         after: vec![metafolder_daemon::rows::FieldRow {
             id: 5,
@@ -262,7 +259,7 @@ fn an_uncommitted_transaction_leaves_nothing() {
     let m = Uuid::new_v4();
     {
         let tx = conn.begin_write().unwrap();
-        tx.create_metarecord(m, 1).unwrap();
+        tx.create_metarecord(m).unwrap();
         tx.insert_row(m, "k", &Value::Int(1), None).unwrap();
     }
     let store: &dyn Store = &conn;
@@ -349,7 +346,7 @@ fn a_child_is_found_by_its_bytes_or_its_text() {
     let (root, a, e) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let tx = conn.begin_write().unwrap();
     for u in [root, a, e] {
-        tx.create_metarecord(u, 1).unwrap();
+        tx.create_metarecord(u).unwrap();
     }
     tx.insert_row(root, "loc", &Value::TreeRef { parent: None, name: "".into() }, None).unwrap();
     let under = |name: &str| Value::TreeRef { parent: Some(root), name: name.into() };
@@ -574,7 +571,7 @@ fn the_schema_questions_answer_like_their_derivation() {
     let rating = |v: Value| ("rating", v);
     let mk = |fields: Vec<(&str, Value)>| {
         let m = Uuid::new_v4();
-        tx.create_metarecord(m, 1).unwrap();
+        tx.create_metarecord(m).unwrap();
         for (name, value) in fields {
             tx.insert_row(m, name, &value, None).unwrap();
         }

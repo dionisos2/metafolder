@@ -20,7 +20,6 @@ numbered in the order they were written, and none names a parent ([[The operatio
 |`origin` |who asked for it ([[Operations and their origin]]) |
 |`op_type` |[[Operations and their origin]] |
 |`entity_uuid` |the metarecord it changed |
-|`entity_version_before`, `…_after` |the metarecord's version on each side — provenance, not authority |
 |`field_name` |for a field operation |
 |`reverts_op_id` |for an operation a revert wrote: the one it undid |
 
@@ -55,8 +54,16 @@ A directory's `file_deleted` gives each descendant its own operation in the same
 
 A row id is never reused, and a row a revert puts back gets a fresh one ([[What a revert writes]]). The version is never restored from the log either: it is a hash of the content
 ([[Metarecord version]]), so the state a revert writes has the version it should.
-The `entity_version_*` fields stay, costing nothing at write time, for clients correlating
-an operation with something observed outside; nothing reads them to decide what to write.
+An operation records ''no version'' either. Until November 2026 it held the
+metarecord's version on each side, as provenance; keeping a version current cost
+every write a key of its own, and a write to many metarecords one per metarecord.
+The one reader — a revert matching a trash entry on the version a file had before
+the watcher's flush ([[Filesystem coordination]]) — computes it back: the metarecord's
+version now, with the terms of every row its operations wrote since subtracted and
+those of every row they removed added, newest first. The version being a sum of row
+terms ([[Metarecord version]]), this is exact, and costs the operations on that one
+metarecord. An operation of an older store still carries its two versions, which
+are read past.
 
 !! One write
 

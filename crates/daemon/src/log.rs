@@ -16,7 +16,6 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 use crate::error::DomainError;
 use crate::rows::{self, FieldRow};
 use crate::store::{Begin, Database, LabelMeta, Log, NewOp, Store, WriteTxn};
-use crate::version;
 
 /// The `origin` of an operation the daemon writes on the filesystem's
 /// behalf — the watcher's flush (doc "Operations and their origin").
@@ -108,10 +107,6 @@ pub struct OpRow {
     pub timestamp: i64,
     pub op_type: String,
     pub entity_uuid: Uuid,
-    pub entity_version_before: Option<u64>,
-    /// The version the entity held *after* this op (provenance: nothing
-    /// restores a version, it follows the content — doc "Metarecord version").
-    pub entity_version_after: Option<u64>,
     pub field_name: Option<String>,
     /// The operation this one undid, when a revert wrote it (doc "Revert").
     /// `None` for an ordinary write — and for every row of a
@@ -795,9 +790,9 @@ impl<'c> Writer<'c> {
         if before.is_empty() {
             return Ok(());
         }
-        let version_before = self.current_version(uuid)?;
+        self.must_exist(uuid)?;
         self.tx.delete_rows(uuid, Some(name))?;
-        self.log_op(op_type, uuid, Some(name), Some(version_before), before, vec![])?;
+        self.log_op(op_type, uuid, Some(name), before, vec![])?;
         self.field_types.remove(name); // rows removed: the type may have unlocked
         Ok(())
     }
@@ -825,7 +820,7 @@ impl<'c> Writer<'c> {
         // Seeded with the metarecord's own term; `log_op` then adds the terms
         // of the rows created below, so a fresh record's version describes its
         // initial fields like any other (doc "Metarecord version").
-        self.tx.create_metarecord(uuid, version::base(uuid))?;
+        self.tx.create_metarecord(uuid)?;
 
         let mut after = Vec::with_capacity(fields.len());
         let mut out_fields = Vec::with_capacity(fields.len());
@@ -838,7 +833,7 @@ impl<'c> Writer<'c> {
             out_fields.push(Field { id: Some(id), ..f });
         }
 
-        self.log_op(OpType::CreateRecord, uuid, None, None, vec![], after)?;
+        self.log_op(OpType::CreateRecord, uuid, None, vec![], after)?;
         let version = self.current_version(uuid)?;
         Ok(MetaRecord { uuid, version, fields: out_fields })
     }
@@ -852,10 +847,7 @@ impl<'c> Writer<'c> {
     /// Recovery for a root deleted before this check existed is a
     /// revert of the deletion, which restore it at its own uuid.
     pub fn delete_metarecord(&mut self, uuid: Uuid) -> Result<()> {
-        let version = self
-            .tx
-            .version(uuid)?
-            .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
+        self.must_exist(uuid)?;
         let before = self.tx.rows(uuid)?;
         let is_repository_root = before.iter().any(|row| {
             row.name == "mfr_path"
@@ -868,7 +860,7 @@ impl<'c> Writer<'c> {
             .into());
         }
         self.tx.remove_metarecord(uuid)?;
-        self.log_op(OpType::DeleteRecord, uuid, None, Some(version), before, vec![])?;
+        self.log_op(OpType::DeleteRecord, uuid, None, before, vec![])?;
         Ok(())
     }
 
@@ -879,7 +871,7 @@ impl<'c> Writer<'c> {
     pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
         let fields = collapse_duplicate_fields(fields); // doc "No duplicate rows"
         validate_one_position_each(uuid, fields.iter().map(|f| (f.name.as_str(), &f.value)))?;
-        let version_before = self.current_version(uuid)?; // errors NotFound if absent
+        self.must_exist(uuid)?;
         let before = self.tx.rows(uuid)?;
         self.tx.delete_rows(uuid, None)?;
         // The whole record's types are reset; drop cached locks so the new set
@@ -896,7 +888,7 @@ impl<'c> Writer<'c> {
             after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
             out_fields.push(Field { id: Some(id), ..f });
         }
-        self.log_op(OpType::SetRecord, uuid, None, Some(version_before), before, after)?;
+        self.log_op(OpType::SetRecord, uuid, None, before, after)?;
         // A hash of the content (doc "Metarecord version"): read back, never
         // derived from the old one.
         let version = self.current_version(uuid)?;
@@ -919,13 +911,13 @@ impl<'c> Writer<'c> {
     ) -> Result<()> {
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
-        let version_before = self.current_version(uuid)?;
+        self.must_exist(uuid)?;
         let before = self.tx.rows_named(uuid, name)?;
         self.tx.delete_rows(uuid, Some(name))?;
         let cleared_to_nothing = matches!(value, Value::Nothing);
         let id = self.tx.insert_row(uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
-        self.log_op(op_type, uuid, Some(name), Some(version_before), before, after)?;
+        self.log_op(op_type, uuid, Some(name), before, after)?;
         if cleared_to_nothing {
             // The only remaining row is Nothing: the type may have unlocked.
             self.field_types.remove(name);
@@ -962,7 +954,7 @@ impl<'c> Writer<'c> {
         // Each value is written once; a repeat points back at its first
         // occurrence so the returned ids still pair with `values`.
         let (kept, slot) = collapse_duplicates(&values);
-        let version_before = self.current_version(uuid)?;
+        self.must_exist(uuid)?;
         let before = self.tx.rows_named(uuid, name)?;
         self.tx.delete_rows(uuid, Some(name))?;
         let cleared_to_nothing = values.iter().all(|v| matches!(v, Value::Nothing));
@@ -972,7 +964,7 @@ impl<'c> Writer<'c> {
             after.push(FieldRow { id, name: name.to_string(), value });
         }
         let ids = slot.iter().map(|&i| after[i].id).collect();
-        self.log_op(op_type, uuid, Some(name), Some(version_before), before, after)?;
+        self.log_op(op_type, uuid, Some(name), before, after)?;
         if cleared_to_nothing {
             // No non-Nothing row remains: the type may have unlocked.
             self.field_types.remove(name);
@@ -993,10 +985,10 @@ impl<'c> Writer<'c> {
         if let Some(existing) = twin.map(|r| r.id) {
             return Ok(Appended::AlreadyPresent(existing));
         }
-        let version_before = self.current_version(uuid)?;
+        self.must_exist(uuid)?;
         let id = self.tx.insert_row(uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
-        self.log_op(OpType::AppendField, uuid, Some(name), Some(version_before), vec![], after)?;
+        self.log_op(OpType::AppendField, uuid, Some(name), vec![], after)?;
         Ok(Appended::Created(id))
     }
 
@@ -1076,21 +1068,12 @@ impl<'c> Writer<'c> {
         value: Value,
     ) -> Result<()> {
         let field_id = old.id;
-        let v1 = self.current_version(uuid)?;
         self.tx.delete_row(field_id)?;
-        self.log_op(
-            OpType::DeleteField,
-            uuid,
-            Some(&old.name.clone()),
-            Some(v1),
-            vec![old.clone()],
-            vec![],
-        )?;
+        self.log_op(OpType::DeleteField, uuid, Some(&old.name.clone()), vec![old.clone()], vec![])?;
 
-        let v2 = self.current_version(uuid)?;
         self.tx.insert_row(uuid, new_name, &value, Some(field_id))?;
         let after = vec![FieldRow { id: field_id, name: new_name.to_string(), value }];
-        self.log_op(OpType::AppendField, uuid, Some(new_name), Some(v2), vec![], after)?;
+        self.log_op(OpType::AppendField, uuid, Some(new_name), vec![], after)?;
         if new_name != old.name {
             // A rename can unlock the old name's type and lock the new one.
             self.field_types.remove(&old.name);
@@ -1162,16 +1145,9 @@ impl<'c> Writer<'c> {
     /// Removes the single row identified by `field_id`.
     pub fn delete_field(&mut self, uuid: Uuid, field_id: i64) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
-        let version_before = self.current_version(uuid)?;
+        self.must_exist(uuid)?;
         self.tx.delete_row(field_id)?;
-        self.log_op(
-            OpType::DeleteField,
-            uuid,
-            Some(&old.name.clone()),
-            Some(version_before),
-            vec![old.clone()],
-            vec![],
-        )?;
+        self.log_op(OpType::DeleteField, uuid, Some(&old.name.clone()), vec![old.clone()], vec![])?;
         self.field_types.remove(&old.name); // a row removed: the type may have unlocked
         Ok(())
     }
@@ -1184,12 +1160,12 @@ impl<'c> Writer<'c> {
         if rows.is_empty() {
             return Ok(0);
         }
-        let version_before = self.current_version(uuid)?;
+        self.must_exist(uuid)?;
         for row in &rows {
             self.tx.delete_row(row.id)?;
         }
         let removed = rows.len();
-        self.log_op(OpType::DeleteField, uuid, Some(name), Some(version_before), rows, vec![])?;
+        self.log_op(OpType::DeleteField, uuid, Some(name), rows, vec![])?;
         self.field_types.remove(name); // rows removed: the type may have unlocked
         Ok(removed)
     }
@@ -1242,10 +1218,17 @@ impl<'c> Writer<'c> {
 
     // ── Internals ────────────────────────────────────────────────────────────
 
-    /// The entity's version as it stands, i.e. the version this write is about
-    /// to move away from. It is only *read* here: the new version is derived
-    /// from the rows the write moves, in `log_op`, which is the single place a
-    /// version is assigned.
+    /// Refuses a write to a metarecord that does not exist.
+    fn must_exist(&self, uuid: Uuid) -> Result<()> {
+        if self.tx.exists(uuid)? {
+            Ok(())
+        } else {
+            Err(DomainError::NotFound(format!("Metarecord not found: {uuid}")).into())
+        }
+    }
+
+    /// A metarecord's version: a hash of its content, computed from its rows
+    /// (doc "Metarecord version").
     fn current_version(&self, uuid: Uuid) -> Result<u64> {
         self.tx
             .version(uuid)?
@@ -1266,31 +1249,14 @@ impl<'c> Writer<'c> {
         op_type: OpType,
         entity: Uuid,
         field_name: Option<&str>,
-        version_before: Option<u64>,
         before: Vec<FieldRow>,
         after: Vec<FieldRow>,
     ) -> Result<()> {
-        // The version follows the rows this op moved: subtract the terms of
-        // what it removed, add the terms of what it inserted (doc "Metarecord version").
-        // This is the single place a version is assigned. `None`
-        // when the op removed the metarecord itself — there is no row left to
-        // carry a version, and nothing for a redo to restore.
-        let version_after = match self.tx.version(entity)? {
-            Some(current) => {
-                let (add, sub) = version::delta(&before, &after);
-                let assigned = version::apply(current, add, sub);
-                self.tx.set_version(entity, assigned)?;
-                Some(assigned)
-            }
-            None => None,
-        };
         self.observe_effects(op_type, &before, &after, entity);
         self.pending.push(NewOp {
             op_type,
             entity,
             field_name: field_name.map(str::to_string),
-            version_before,
-            version_after,
             before,
             after,
             reverts_op_id: self.reverting,

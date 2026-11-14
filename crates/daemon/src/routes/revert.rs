@@ -222,9 +222,6 @@ fn revert_plan_json(
             // The trash correlation key: the version the record held before
             // the whole label — one flush of the watcher — which is the only
             // one anything outside it observed (doc "Trash, undo and redo").
-            if let Some(v) = op.entity_version_before {
-                entry["entity_version_before"] = json!(v);
-            }
             if let Some(v) = conn.version_before_label(op.label_id, op.entity_uuid)? {
                 entry["entity_version_before_label"] = json!(v);
             }

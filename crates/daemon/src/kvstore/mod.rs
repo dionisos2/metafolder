@@ -11,7 +11,7 @@
 //! | table         | key                              | value                     |
 //! |---------------|----------------------------------|---------------------------|
 //! | meta          | name                             | counter / HEAD            |
-//! | metarecords   | uuid                             | version                   |
+//! | metarecords   | uuid                             | (empty: it exists)        |
 //! | field_cells   | uuid · field name · row id       | field name · value        |
 //! | row_owner     | row id                           | uuid · field name         |
 //! | by_field      | name · row id                    | uuid                      |
@@ -474,8 +474,10 @@ fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
         .opt_bytes(op.origin.as_deref().map(str::as_bytes))
         .bytes(op.op_type.as_str().as_bytes())
         .bytes(op.entity.as_bytes())
-        .opt_int(op.version_before.map(|v| v as i64))
-        .opt_int(op.version_after.map(|v| v as i64))
+        // Where the entity's versions before and after were, until they
+        // stopped being recorded (doc "Log storage"): two absent integers.
+        .opt_int(None)
+        .opt_int(None)
         .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
         .opt_int(op.reverts_op_id);
     out.0
@@ -483,15 +485,18 @@ fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
 
 fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
     let mut r = In(b);
+    let (label_id, timestamp, origin) = (r.int()?, r.int()?, r.opt_string()?);
+    let (op_type, entity_uuid) = (r.string()?, uuid_of(r.bytes()?));
+    // The versions an older store recorded: read past.
+    r.opt_int()?;
+    r.opt_int()?;
     Ok(OpRow {
         id,
-        label_id: r.int()?,
-        timestamp: r.int()?,
-        origin: r.opt_string()?,
-        op_type: r.string()?,
-        entity_uuid: uuid_of(r.bytes()?),
-        entity_version_before: r.opt_int()?.map(|v| v as u64),
-        entity_version_after: r.opt_int()?.map(|v| v as u64),
+        label_id,
+        timestamp,
+        origin,
+        op_type,
+        entity_uuid,
         field_name: r.opt_string()?,
         reverts_op_id: r.opt_int()?,
     })
@@ -713,9 +718,9 @@ impl Read<'_> {
         Ok(self.t.meta.get(self.r, name.as_bytes())?.map(from_be))
     }
 
-    fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
+    fn exists(&self, uuid: Uuid) -> Result<bool> {
         self.count(1)?;
-        Ok(self.t.metarecords.get(self.r, uuid.as_bytes())?.map(|b| from_be(b) as u64))
+        Ok(self.t.metarecords.get(self.r, uuid.as_bytes())?.is_some())
     }
 
     /// Whether the metarecord of a dense id exists: whether the id is in the
@@ -1006,9 +1011,9 @@ macro_rules! kv_reads {
             fn as_kv(&self) -> Option<&KvStore> {
                 self.kv_store()
             }
-            fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
+            fn exists(&self, uuid: Uuid) -> Result<bool> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.version(uuid))
+                $with(&mut |$read: &Read| $read.exists(uuid))
             }
             fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>> {
                 let $me = self;
@@ -1026,18 +1031,6 @@ macro_rules! kv_reads {
                         let rows = $read.rows(u)?;
                         if !rows.is_empty() {
                             out.insert(u, rows);
-                        }
-                    }
-                    Ok(out)
-                })
-            }
-            fn versions_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, u64>> {
-                let $me = self;
-                $with(&mut |$read: &Read| {
-                    let mut out = HashMap::new();
-                    for &u in uuids {
-                        if let Some(v) = $read.version(u)? {
-                            out.insert(u, v);
                         }
                     }
                     Ok(out)
@@ -1363,11 +1356,7 @@ macro_rules! kv_reads {
                 })
             }
             fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>> {
-                Ok(self
-                    .label_ops(label)?
-                    .into_iter()
-                    .find(|o| o.entity_uuid == entity)
-                    .and_then(|o| o.entity_version_before))
+                crate::store::version_before_label(self, label, entity)
             }
             fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
@@ -1957,12 +1946,14 @@ impl KvTxn<'_> {
 }
 
 impl WriteTxn for KvTxn<'_> {
-    fn create_metarecord(&self, uuid: Uuid, version: u64) -> Result<()> {
+    fn create_metarecord(&self, uuid: Uuid) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         if self.t.metarecords.get(&w, uuid.as_bytes())?.is_some() {
             bail!("metarecord {uuid} already exists");
         }
-        self.t.metarecords.put(&mut w, uuid.as_bytes(), &be(version as i64))?;
+        // Its existence, and nothing else: the version is computed from the
+        // rows when read (doc "Metarecord version").
+        self.t.metarecords.put(&mut w, uuid.as_bytes(), &[])?;
         drop(w);
         self.derive_created(uuid)
     }
@@ -1997,16 +1988,8 @@ impl WriteTxn for KvTxn<'_> {
         self.derive_removed(uuid)
     }
 
-    fn set_version(&self, uuid: Uuid, version: u64) -> Result<()> {
-        let mut w = self.txn.borrow_mut();
-        if self.t.metarecords.get(&w, uuid.as_bytes())?.is_some() {
-            self.t.metarecords.put(&mut w, uuid.as_bytes(), &be(version as i64))?;
-        }
-        Ok(())
-    }
-
     fn insert_row(&self, uuid: Uuid, name: &str, value: &Value, id: Option<i64>) -> Result<i64> {
-        if Rows::version(self, uuid)?.is_none() {
+        if !Rows::exists(self, uuid)? {
             bail!("a row for metarecord {uuid}, which does not exist");
         }
         // The two uniqueness rules of the data model, with the messages
@@ -2318,7 +2301,7 @@ mod memory_tests {
         let w = store.begin_write()?;
         for i in 0..rows {
             let uuid = Uuid::new_v4();
-            w.create_metarecord(uuid, 0)?;
+            w.create_metarecord(uuid)?;
             w.insert_row(uuid, "text", &Value::String(format!("{i:0>200}")), None)?;
         }
         w.commit()

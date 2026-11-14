@@ -22,7 +22,7 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 
 |!Table |!Key |!Value |!Serves |
 |`meta` |name |the id counters, HEAD, the layout and derived-format versions, the watcher's label | |
-|`metarecords` |uuid |version |existence, [[Metarecord version]] |
+|`metarecords` |uuid |empty |existence (the version is computed from the rows, [[Metarecord version]]) |
 |`field_cells` |uuid · field name · row id |row id · field name · value |the rows themselves |
 |`row_owner` |row id |uuid · field name |a row by its id alone (`…/fields/:id`) |
 |`by_field` |field name · row id |uuid |every row, every holder, of one field |

@@ -25,10 +25,12 @@ What the hash covers:
 
 The version is the sum of the row terms and the uuid term, modulo 2⁵³ — 53 bits so
 that it survives a JSON number in a JavaScript client and fits a `Value::Int` (the
-sync planner records baselines in one). A write subtracts the terms of the rows it
-removes and adds those of the rows it inserts: its cost follows the rows touched, not
-the size of the metarecord. It is stored beside the rows, so a read never recomputes
-it. The terms are xxHash3 over a length-prefixed encoding of the row; that encoding
+sync planner records baselines in one). It is ''stored nowhere'': a read computes it from the rows it has just read, so a
+write has no version to keep current — one key less to write per metarecord, and
+nothing at all for a write that touches many. Being a sum, it can still be moved
+without the rows: subtract the terms of the rows removed, add those of the rows
+inserted — how the version a metarecord had before a label is computed back from the
+log ([[Log storage]]). The terms are xxHash3 over a length-prefixed encoding of the row; that encoding
 is persisted — changing it changes every stored version, and needs a migration.
 
 Why a hash, and why a sum rather than a XOR: [[Why the version is a content hash]].
