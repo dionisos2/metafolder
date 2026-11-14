@@ -328,8 +328,16 @@ CONSÉQUENCE À FAIRE VALIDER : l'ordre des lignes d'un metarecord est
 aujourd'hui l'ordre des ids (= ordre de création, KvStore::rows trie par id).
 Sans id, l'ordre naturel devient nom puis valeur.
 POINTS À PRÉSENTER À L'UTILISATEUR, UN À LA FOIS, avant de coder :
-  a. la forme de remplacement dans l'API (retirer UNE valeur d'un metarecord,
-     remplacer une valeur par une autre / renommer en une écriture atomique) ;
+  a. TRANCHÉ (14 nov. 2026) — trois routes sur le champ par nom, les routes
+     `/fields/{id}` et `fields[].id` disparaissent, API_VERSION incrémentée :
+     - DELETE /metarecords/{uuid}/fields/{name} avec {"value": V} : retire
+       cette valeur seule (sans `value` : tout le champ, inchangé) ;
+     - PATCH /metarecords/{uuid}/fields/{name} {"value": V, "to": W} :
+       remplace V par W (une écriture, un undo) ;
+     - POST /metarecords/{uuid}/fields/{name}/rename {"to": N} : renomme le
+       CHAMP ENTIER sur ce metarecord (toutes ses valeurs ; l'utilisateur a
+       voulu remplacer et renommer en deux formes distinctes, et le
+       renommage d'une seule ligne disparaît — retirer + ajouter).
   b. le CLI (`mf field get|set|delete`) ;
   c. l'ordre des lignes ;
   d. remplacer A par B quand B existe déjà : refus 400 (comme l'édition par
