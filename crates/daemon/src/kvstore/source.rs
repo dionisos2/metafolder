@@ -150,25 +150,23 @@ impl KvSource<'_> {
         self.ok(read(), Vec::new())
     }
 
-    /// A metarecord's representative on `field`, as a value: its smallest
-    /// value ascending, its largest descending (the sort's order, not the
-    /// keys').
-    fn representative(&self, id: u32, field: &str, want_max: bool) -> Option<(SortRep, Value)> {
-        let reps =
-            self.values(id, field).into_iter().filter_map(|v| sort_rep(&v).map(|rep| (rep, v)));
-        if want_max {
-            reps.max_by(|a, b| a.0.cmp(&b.0))
-        } else {
-            reps.min_by(|a, b| a.0.cmp(&b.0))
-        }
+    /// The representative of an id that holds `key` in a value partition and
+    /// sorts on it, read from the id's rows: for a key that does not hold its
+    /// whole text.
+    fn rep_at(&self, id: u32, field: &str, key: &[u8]) -> Option<SortRep> {
+        self.values(id, field)
+            .into_iter()
+            .find(|v| value_key(v).as_deref() == Some(key))
+            .and_then(|v| sort_rep(&v))
     }
 
     /// [`Source::walk_values`] over the value partition: each entry is an id
-    /// holding a value; it is visited there only if that value is its
-    /// representative. A run of long texts sharing their first bytes — whose
-    /// keys sort by hash — is read whole and put in order of the values. A
-    /// value with a posting is not read holder by holder: its holders with no
-    /// other value are handed over as one run, and the walk resumes past it.
+    /// holding a value, handed over as it comes — the representative is the
+    /// key's own value, no row is read. A run of long texts sharing their
+    /// first bytes — whose keys sort by hash, and hold only those bytes — is
+    /// read whole and put in order of the values. A value with a posting is
+    /// not read holder by holder: its holders are handed over as one run, and
+    /// the walk resumes past it.
     fn walk(
         &self,
         field: &str,
@@ -196,8 +194,6 @@ impl KvSource<'_> {
             }
         };
         let posted = self.posted(field);
-        let multi =
-            if posted.is_empty() { RoaringBitmap::new() } else { self.set(MULTI, Some(field)) };
         // Before the start in the walk's direction: already paged.
         let before_start =
             |rep: &SortRep| start.is_some_and(|s| if want_max { rep > s } else { rep < s });
@@ -208,11 +204,6 @@ impl KvSource<'_> {
                 run.sort_by(|a, b| if want_max { b.0.cmp(&a.0) } else { a.0.cmp(&b.0) });
                 run.drain(..).all(|(rep, id)| visit(&rep, Walked::One(id)))
             };
-        // Visits `id` where `key` is its representative's key.
-        let one = |id: u32, key: &[u8]| -> Option<SortRep> {
-            let (rep, value) = self.representative(id, field, want_max)?;
-            (value_key(&value).as_deref() == Some(key) && !before_start(&rep)).then_some(rep)
-        };
         'resume: loop {
             let entries: Entries<'_> = if want_max {
                 let range = (Bound::Included(prefix.as_slice()), Bound::Excluded(bound.as_slice()));
@@ -229,26 +220,27 @@ impl KvSource<'_> {
                 }
                 let key = &k[prefix.len()..k.len() - 4];
                 let id = dense(&k[k.len() - 4..]);
-                if posted.contains(key) && hashed_run(key).is_none() {
-                    if !emit_run(&mut run, visit) {
-                        return Ok(());
-                    }
-                    run_key = None;
-                    let holders = self.posting(field, key).unwrap_or_default();
-                    let alone = &holders - &multi;
-                    let rep =
-                        alone.min().and_then(|first| self.representative(first, field, want_max));
-                    if let Some((rep, _)) = rep.filter(|(rep, _)| !before_start(rep)) {
-                        if !visit(&rep, Walked::Run(&alone)) {
+                if let Some(r) = hashed_run(key) {
+                    if run_key.as_deref() != Some(r) {
+                        if !emit_run(&mut run, visit) {
                             return Ok(());
                         }
+                        run_key = Some(r.to_vec());
                     }
-                    for id in &holders & &multi {
-                        if let Some(rep) = one(id, key) {
-                            if !visit(&rep, Walked::One(id)) {
-                                return Ok(());
-                            }
-                        }
+                    if let Some(rep) = self.rep_at(id, field, key).filter(|r| !before_start(r)) {
+                        run.push((rep, id));
+                    }
+                    continue;
+                }
+                if !emit_run(&mut run, visit) {
+                    return Ok(());
+                }
+                run_key = None;
+                let Some(rep) = key_rep(key) else { continue };
+                if posted.contains(key) {
+                    let holders = self.posting(field, key).unwrap_or_default();
+                    if !before_start(&rep) && !visit(&rep, Walked::Run(&holders)) {
+                        return Ok(());
                     }
                     bound = if want_max {
                         [&prefix[..], key].concat()
@@ -257,27 +249,8 @@ impl KvSource<'_> {
                     };
                     continue 'resume;
                 }
-                // Is this entry the id's representative?
-                let Some(rep) = one(id, key) else { continue };
-                match hashed_run(key) {
-                    Some(r) => {
-                        if run_key.as_deref() != Some(r) {
-                            if !emit_run(&mut run, visit) {
-                                return Ok(());
-                            }
-                            run_key = Some(r.to_vec());
-                        }
-                        run.push((rep, id));
-                    }
-                    None => {
-                        if !emit_run(&mut run, visit) {
-                            return Ok(());
-                        }
-                        run_key = None;
-                        if !visit(&rep, Walked::One(id)) {
-                            return Ok(());
-                        }
-                    }
+                if !before_start(&rep) && !visit(&rep, Walked::One(id)) {
+                    return Ok(());
                 }
             }
             break;
@@ -1078,6 +1051,23 @@ fn hashed_run(key: &[u8]) -> Option<&[u8]> {
     }
 }
 
+/// The sort representative of a value key holding its whole value — a bool,
+/// a number, a date, a text keyed whole. `None` for a reference, which the
+/// partition does not sort, and for a text cut and hashed.
+fn key_rep(key: &[u8]) -> Option<SortRep> {
+    let int = |b: &[u8]| Some(u64::from_be_bytes(b.try_into().ok()?));
+    Some(match key.split_first()? {
+        (0, [b]) => SortRep::Bool(*b != 0),
+        (1, rest) => SortRep::Num(crate::index::keys::num_of_key(int(rest)?)),
+        (2, rest) if long_prefix(rest).is_none() => {
+            let (bytes, _) = derived::unesc(rest).ok()?;
+            SortRep::Str(String::from_utf8(bytes).ok()?.into())
+        }
+        (3, rest) => SortRep::DateTime(crate::index::keys::dt_of_key(int(rest)?)),
+        _ => return None,
+    })
+}
+
 /// The value a sort representative stands for, as far as its key goes: an
 /// int and a float of equal value share a key.
 fn rep_value(rep: &SortRep) -> Option<Value> {
@@ -1507,6 +1497,10 @@ impl Source for KvSource<'_> {
                 reps.min()
             }
         })
+    }
+
+    fn several(&self, field: &str) -> RoaringBitmap {
+        self.sift(self.set(MULTI, Some(field)))
     }
 
     fn walk_values(

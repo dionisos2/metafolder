@@ -115,6 +115,16 @@ pub(crate) fn num_key(x: f64) -> u64 {
     }
 }
 
+/// The number a [`num_key`] stands for.
+pub(crate) fn num_of_key(key: u64) -> f64 {
+    f64::from_bits(if key & SIGN != 0 { key ^ SIGN } else { !key })
+}
+
+/// The date a [`dt_key`] stands for.
+pub(crate) fn dt_of_key(key: u64) -> i64 {
+    (key ^ SIGN) as i64
+}
+
 /// Maps an i64 (Unix-ms) to an order-preserving u64.
 pub(crate) fn dt_key(ms: i64) -> u64 {
     (ms as u64) ^ SIGN

@@ -24,6 +24,31 @@ minutes on a cold disk, for one result). It now reads the folders it meets. What
 left is one flat folder of many non-matching files before the first match. Keyset pagination is the same for both: the cursor carries the last
 sort key and uuid, and each strategy resumes strictly after it.
 
+!! A record of several values is met several times
+
+A record sorts on its smallest value ascending, its largest descending — its
+''representative''. The value partition lists it once per value, so a walk meets it
+again at each of the others. Telling the first meeting from the next ones used to
+read the record's values: one read per entry walked, and on a field where every
+record holds several values — tags — one read per holder of a frequent value, until
+the walk ran over its budget and the page fell back to fetching every match
+(26 848 keys for a page of 50 over 16 000 records of three tags each).
+
+Nothing is read any more. The pages follow one another from the first, so a walk
+meets a record ''first'' at its representative: a record met that was not given yet
+is at its place, and one already given is a repeat. The cursor therefore carries the
+ids given so far that hold several values of the sort field (the field's `multi`
+set; a record of one value is listed once and needs no memory), and the walk skips
+them — a posted value's holders are taken whole, minus those. Either strategy adds
+its page's ids to the cursor, so a walked page may follow a fetched one. The cursor
+stays with the client: nothing is resident in the daemon between two requests
+([[How queries are evaluated]]). A text too long for its key to hold whole is still
+read, to order the texts sharing its first bytes.
+
+`tests/kv_cost.rs`: a page of 50 sorted on such a field reads the same number of keys
+on 2 000 records and on 16 000. `tests/index_page_strategies.rs` holds pages produced
+by alternating strategies to the oracle's.
+
 !! Postings
 
 A value reaching 64 holders gets a ''posting'' — its holders as one set — in the same

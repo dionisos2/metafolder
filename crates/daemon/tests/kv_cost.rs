@@ -149,6 +149,49 @@ fn a_page_sorted_on_a_value_reads_the_page() {
     bounded("last names first", &present("name"), &[("name", false)], false);
 }
 
+/// `n` records each holding three tags: one every record holds, one of three
+/// common ones, and one of ten — so every holder of the field holds several
+/// values, each of them frequent enough for a posting on either size (the
+/// postings of a field are listed by a walk, whatever the repository's size).
+fn tagged(n: usize) -> (KvStore, TempDir) {
+    let dir = TempDir::new("kv-cost");
+    let mut kv = KvStore::open_unsynced(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    for i in 0..n {
+        let tag = |t: String| Field::new("tag", Value::String(t));
+        w.create_metarecord(vec![
+            tag("every".into()),
+            tag(["blue", "green", "red"][i % 3].into()),
+            tag(format!("n{}", i % 10)),
+        ])
+        .unwrap();
+    }
+    w.commit().unwrap();
+    (kv, dir)
+}
+
+/// A walk of a field's values meets a record once per value it holds; which
+/// of them is the one it sorts on is known from the cursor — the records
+/// already given — and no longer by reading each record's values (doc
+/// "Sorting and postings"). A page then costs the page, on a field where
+/// every record holds several values too.
+#[test]
+fn a_page_sorted_on_a_field_of_several_values_reads_the_page() {
+    let (small, _s) = tagged(2_000);
+    let (large, _l) = tagged(16_000);
+    for ascending in [true, false] {
+        let sort = [("tag", ascending)];
+        let (found_small, cost_small) = reads(&small, &present("tag"), &sort, false);
+        let (found_large, cost_large) = reads(&large, &present("tag"), &sort, false);
+        assert_eq!((found_small, found_large), (50, 50));
+        assert!(
+            cost_large <= cost_small + cost_small / 2 + 20,
+            "ascending {ascending}: {cost_small} keys on 2 000 records, {cost_large} on 16 000"
+        );
+        assert!(cost_large < 1_000, "ascending {ascending}: {cost_large} keys for a page of 50");
+    }
+}
+
 #[test]
 fn a_text_search_reads_its_candidates_not_the_field() {
     // One name matches on either size.

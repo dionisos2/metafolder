@@ -37,9 +37,9 @@ pub type RepReader<'a> = Box<dyn Fn(u32) -> Option<SortRep> + 'a>;
 pub enum Walked<'a> {
     /// One id.
     One(u32),
-    /// Ids sharing the representative, as a set — a frequent value's holders,
-    /// which the source need not read one by one. Ids of the same
-    /// representative may still come alone, before or after it.
+    /// Ids holding the value, as a set — a frequent value's holders, which
+    /// the source need not read one by one. Ids of the same value may still
+    /// come alone, before or after it.
     Run(&'a RoaringBitmap),
 }
 
@@ -157,13 +157,20 @@ pub trait Source {
     /// A reader of `field`'s sort representatives (not for a `tree_ref`
     /// field, which sorts on whole paths the evaluator rebuilds).
     fn sort_reps(&self, field: &str, want_max: bool) -> RepReader<'_>;
-    /// Walks `field`'s values in sort order — ascending on each id's smallest
-    /// value, or descending on its largest (`want_max`) — from `start` on,
-    /// inclusive: `visit` receives each id once, with its representative —
-    /// alone, or in a [`Walked::Run`] of ids sharing it — and returns `false`
-    /// to stop. Ties come in no particular order (the evaluator orders them by
-    /// uuid). `false` when the source has no ordered structure to walk for
-    /// this field, and the page is fetched instead.
+    /// The ids holding several values of `field` — the only ones a walk of
+    /// its values meets more than once ([`Source::walk_values`]).
+    fn several(&self, _field: &str) -> RoaringBitmap {
+        RoaringBitmap::new()
+    }
+    /// Walks `field`'s values in order — ascending, or descending
+    /// (`want_max`) — from `start` on, inclusive: `visit` receives each value
+    /// with the ids holding it — alone, or as a [`Walked::Run`] — and returns
+    /// `false` to stop. An id holding several values comes once per value: it
+    /// sorts where it comes first, which the caller knows by having walked
+    /// from the beginning (doc "Sorting and postings"). Ids of one value come
+    /// in no particular order (the evaluator orders them by uuid). `false`
+    /// when the source has no ordered structure to walk for this field, and
+    /// the page is fetched instead.
     fn walk_values(
         &self,
         _field: &str,

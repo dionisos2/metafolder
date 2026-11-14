@@ -289,6 +289,62 @@ fn every_page_strategy_gives_the_oracles_pages() {
     }
 }
 
+/// The pages of the serving path when each page is produced another way than
+/// the one before: what a page hands the next — its cursor — must serve
+/// whichever strategy comes next.
+fn alternating_pages(
+    conn: &KvStore,
+    roots: &QueryRoots,
+    q: &Query,
+    by: &[(&str, bool)],
+    limit: usize,
+    first: usize,
+) -> Vec<Vec<Uuid>> {
+    let keys: Vec<SortBy> =
+        by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
+    let strategies = [PageStrategy::Walk, PageStrategy::Fetch];
+    let mut pages = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let strategy = strategies[(first + pages.len()) % 2];
+        let (page, next) = with_kv(conn, strategy, |e, _| {
+            e.evaluate_page_with_roots(q, &keys, Some(limit), cursor.as_deref(), roots).unwrap()
+        });
+        pages.push(page);
+        match next {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+        assert!(pages.len() < 10_000, "runaway pagination");
+    }
+    pages
+}
+
+#[test]
+fn pages_produced_by_alternating_strategies_are_the_oracles() {
+    let (conn, _dir) = fixture();
+    let cache = Forest::new(false);
+    for q in queries(&conn, &cache) {
+        for by in sorts() {
+            let want = oracle_pages(&conn, &q, &by, 7);
+            let mut targets = Vec::new();
+            collect_path_targets(&q, &mut targets);
+            let mut roots = QueryRoots::new();
+            for (field, path) in targets {
+                if let Some(uuid) = cache.resolve_path(&conn, &field, &path).unwrap() {
+                    roots.path.insert((field, path), uuid);
+                }
+            }
+            let keys = SortKeys::new(&conn);
+            roots.keys = Some(&keys);
+            for first in [0, 1] {
+                let got = alternating_pages(&conn, &roots, &q, &by, 7, first);
+                assert_eq!(got, want, "starting with {first}: {q:?} by {by:?}");
+            }
+        }
+    }
+}
+
 /// A node of two forests has a key in each: sorting on both must not take
 /// one forest's key of a folder for the other's. `d` is `r` in forest `a` and
 /// `z` in forest `b`; `x1` and `x2` are in `b` only, so `a` ties them and `b`

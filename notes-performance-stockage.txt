@@ -114,6 +114,26 @@ crates/daemon/tests/kv_text.rs, DERIVED_VERSION 7 = reindex à l'ouverture) :
 - `entity_version_before` (par opération) retiré du plan de revert ; le
   client (core) n'utilisait déjà que la version du label en priorité.
 
+ÉTAPE 4 FAITE (14 nov. 2026 ; doc "Sorting and postings", doc "Pagination
+and sorting") :
+- le parcours des valeurs (kvstore/source.rs `walk`) ne lit plus aucune
+  valeur : la représentante vient de la clé (key_rep) ; chaque entrée est
+  remise telle quelle, un posting entier d'un coup. Seule exception : les
+  textes longs à clé hachée (lus pour être ordonnés).
+- l'évaluateur (index/mod.rs `value_page`) écarte les ids de `multi` déjà
+  donnés : ceux du curseur + ceux de la page en cours. Source::several(champ)
+  = l'ensemble `multi` filtré par universe.
+- curseur : octet de format (2) en tête, bitmap roaring des ids multi donnés
+  en queue. Un ancien curseur est refusé (400), le client repart de la
+  première page. Les pages par « lire chaque résultat » ajoutent aussi les
+  leurs (test : stratégies alternées page par page ≡ oracle).
+- mesure du test de coût : page de 50 triée par un champ où tout le monde a
+  3 valeurs, 16 000 fichiers : 26 848 clés lues avant, bornée ensuite (même
+  coût à 2 000 et 16 000).
+- reste ouvert (inchangé) : invalider un curseur quand une écriture change
+  l'ordre entre deux pages ; et le curseur contient des ids denses → concerné
+  par la question « reindex et ids denses ».
+
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
      résolution de chemin et clés de forêt vérifient universe, un nouveau

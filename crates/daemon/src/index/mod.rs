@@ -519,29 +519,40 @@ impl Eval<'_> {
         use std::cmp::Ordering;
         let _stage = crate::progress::stage("paging");
         let guard = page_guard(roots.and_then(|r| r.cursor_query).unwrap_or(q), sort);
-        let after: Option<SortEntry> = match cursor {
-            None => None,
+        let (after, given): (Option<SortEntry>, RoaringBitmap) = match cursor {
+            None => (None, RoaringBitmap::new()),
             Some(c) => {
-                let (g, entry) =
+                let (g, entry, given) =
                     decode_cursor(c, sort.len()).ok_or_else(|| bad_cursor("invalid cursor"))?;
                 if g != guard {
                     return Err(bad_cursor(
                         "invalid cursor: it was issued for a different query or sort",
                     ));
                 }
-                Some(entry)
+                (Some(entry), given)
             }
         };
+        // What the next page's cursor remembers of the pages so far: the ids
+        // given that a walk of the sort field's values would meet again.
+        let given = Given { several: self.walked_several(sort), ids: given };
 
         // A page read from an ordered structure until it is full, when that is
         // cheaper than sorting the whole match set (doc "Sorting and postings"). `None` means the
         // fetch below does it.
         let mut matched = matched;
         if let Some(limit) = limit.filter(|&l| l > 0) {
-            let walked =
-                self.walk_page(&matched, q, sort, limit, after.as_ref(), roots, residual)?;
+            let walked = self.walk_page(
+                &matched,
+                q,
+                sort,
+                limit,
+                after.as_ref(),
+                &given.ids,
+                roots,
+                residual,
+            )?;
             if let Some(ids) = walked {
-                return self.walked_page(ids, limit, guard, sort, roots);
+                return self.walked_page(ids, limit, guard, &given, sort, roots);
             }
         }
         if let Some(residual) = residual {
@@ -553,10 +564,18 @@ impl Eval<'_> {
                 matched &= bm;
             }
             if let Some(limit) = limit.filter(|&l| l > 0) {
-                let walked =
-                    self.walk_page(&matched, q, sort, limit, after.as_ref(), roots, None)?;
+                let walked = self.walk_page(
+                    &matched,
+                    q,
+                    sort,
+                    limit,
+                    after.as_ref(),
+                    &given.ids,
+                    roots,
+                    None,
+                )?;
                 if let Some(ids) = walked {
-                    return self.walked_page(ids, limit, guard, sort, roots);
+                    return self.walked_page(ids, limit, guard, &given, sort, roots);
                 }
             }
         }
@@ -569,10 +588,12 @@ impl Eval<'_> {
         let width = keys.len();
         let mut reps: Vec<Option<SortRep>> = Vec::with_capacity(matched.len() as usize * width);
         let mut uuids: Vec<Uuid> = Vec::with_capacity(matched.len() as usize);
+        let mut ids: Vec<u32> = Vec::with_capacity(matched.len() as usize);
         for id in &matched {
             let uuid = self.uuid_of(id);
             reps.extend(keys.iter().map(|k| k.rep(id, uuid)));
             uuids.push(uuid);
+            ids.push(id);
         }
         let row = |i: usize| &reps[i * width..(i + 1) * width];
         let cmp = |a: &u32, b: &u32| {
@@ -608,7 +629,8 @@ impl Eval<'_> {
         let next = match limit {
             Some(_) if end > 0 && end < total => {
                 let last = order[end - 1] as usize;
-                Some(encode_cursor(guard, &(row(last).to_vec(), uuids[last])))
+                let page = order[..end].iter().map(|&i| ids[i as usize]);
+                Some(encode_cursor(guard, &(row(last).to_vec(), uuids[last]), &given.with(page)))
             }
             _ => None,
         };
@@ -627,6 +649,7 @@ impl Eval<'_> {
         sort: &[SortBy],
         limit: usize,
         after: Option<&SortEntry>,
+        given: &RoaringBitmap,
         roots: Option<&QueryRoots<'_>>,
         residual: Option<&Residual<'_, '_>>,
     ) -> Result<Option<Vec<u32>>, Unsupported> {
@@ -659,8 +682,15 @@ impl Eval<'_> {
                 .value_type(&key.field)
                 .is_some_and(|t| !metafolder_core::metarecord::is_position_type(t))
             {
-                let walked =
-                    self.value_page(matched, &accepts, &key.field, !key.ascending, limit, after);
+                let walked = self.value_page(
+                    matched,
+                    &accepts,
+                    &key.field,
+                    !key.ascending,
+                    limit,
+                    after,
+                    given,
+                );
                 if walked.is_some() {
                     return Ok(walked);
                 }
@@ -687,6 +717,11 @@ impl Eval<'_> {
     /// run of equal representatives ordered by uuid, then the ids without a
     /// value, by uuid. `None` to fetch instead: the walk is not expected to be
     /// cheaper, ran over its budget, or the source cannot walk this field.
+    ///
+    /// The walk meets an id once per value it holds, and the id sorts where
+    /// it is met first. Nothing is read to tell: the pages follow one another
+    /// from the first, so an id of several values met again was given on an
+    /// earlier page (`given`, from the cursor) or earlier on this one.
     #[allow(clippy::too_many_arguments)]
     fn value_page(
         &self,
@@ -696,8 +731,12 @@ impl Eval<'_> {
         want_max: bool,
         limit: usize,
         after: Option<&SortEntry>,
+        given: &RoaringBitmap,
     ) -> Option<Vec<u32>> {
         let valued = self.src.present(field);
+        let several = self.src.several(field);
+        // The ids of several values taken already, on any page.
+        let mut taken = given.clone();
         let budget = self.walk_budget(matched.len(), valued.len(), limit)?;
         let want = limit + 1;
         // Where the walk starts, and where the valueless tail resumes.
@@ -749,14 +788,18 @@ impl Eval<'_> {
                     match walked {
                         Walked::One(id) => {
                             steps += 1;
-                            if let Some(uuid) = self.src.uuid(id).filter(|&u| accepts(id, u)) {
-                                run.push((uuid, id));
+                            let again = several.contains(id) && !taken.insert(id);
+                            if !again && matched.contains(id) {
+                                if let Some(uuid) = self.src.uuid(id).filter(|&u| accepts(id, u)) {
+                                    run.push((uuid, id));
+                                }
                             }
                         }
                         Walked::Run(ids) => {
                             // What picking its first ids by uuid will cost.
-                            let ids = ids & matched;
+                            let ids = (ids & matched) - &taken;
                             steps += self.first_by_uuid_cost(&ids, want) as usize;
+                            taken |= &ids & &several;
                             set |= ids;
                         }
                     }
@@ -953,6 +996,7 @@ impl Eval<'_> {
         mut ids: Vec<u32>,
         limit: usize,
         guard: u64,
+        given: &Given,
         sort: &[SortBy],
         roots: Option<&QueryRoots<'_>>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
@@ -964,11 +1008,28 @@ impl Eval<'_> {
                 let uuid = self.uuid_of(last);
                 let keys = self.key_lookups(sort, roots)?;
                 let reps = keys.iter().map(|k| k.rep(last, uuid)).collect();
-                Some(encode_cursor(guard, &(reps, uuid)))
+                Some(encode_cursor(guard, &(reps, uuid), &given.with(ids.iter().copied())))
             }
             _ => None,
         };
         Ok((uuids, next))
+    }
+
+    /// For a sort a walk of a field's values can serve ([`Self::value_page`]):
+    /// the ids holding several values of that field — the ones a walk meets
+    /// more than once. Empty for any other sort.
+    fn walked_several(&self, sort: &[SortBy]) -> RoaringBitmap {
+        match sort {
+            [key]
+                if self
+                    .src
+                    .value_type(&key.field)
+                    .is_some_and(|t| !metafolder_core::metarecord::is_position_type(t)) =>
+            {
+                self.src.several(&key.field)
+            }
+            _ => RoaringBitmap::new(),
+        }
     }
 
     /// A sort key with its two lookups already resolved. Resolving them per
@@ -1653,10 +1714,34 @@ fn cmp_reps(
     a_uuid.cmp(&b_uuid)
 }
 
+/// What the pages given so far leave for the next one to know: of the ids
+/// already given, those holding several values of the sort field (`several`)
+/// — the ones a walk of that field's values meets again further on (doc
+/// "Sorting and postings"). Whichever way a page is produced, it adds its own.
+struct Given {
+    several: RoaringBitmap,
+    ids: RoaringBitmap,
+}
+
+impl Given {
+    /// With the ids of one more page.
+    fn with(&self, page: impl Iterator<Item = u32>) -> RoaringBitmap {
+        let mut ids = self.ids.clone();
+        ids.extend(page.filter(|id| self.several.contains(*id)));
+        ids
+    }
+}
+
+/// The cursor's format: a token of another one is refused, and the client
+/// starts again from the first page.
+const CURSOR_FORMAT: u8 = 2;
+
 /// Keyset cursor: the guard, then the last returned entry's sort key (one
-/// representative per key) and uuid, so the next page resumes strictly after it.
-fn encode_cursor(guard: u64, entry: &SortEntry) -> String {
-    let mut bytes = Vec::with_capacity(32);
+/// representative per key) and uuid, so the next page resumes strictly after
+/// it — and the ids given so far that a walk would meet again ([`Given`]).
+fn encode_cursor(guard: u64, entry: &SortEntry, given: &RoaringBitmap) -> String {
+    let mut bytes = Vec::with_capacity(48);
+    bytes.push(CURSOR_FORMAT);
     bytes.extend_from_slice(&guard.to_le_bytes());
     bytes.extend_from_slice(&(entry.0.len() as u32).to_le_bytes());
     for rep in &entry.0 {
@@ -1669,6 +1754,9 @@ fn encode_cursor(guard: u64, entry: &SortEntry) -> String {
         }
     }
     bytes.extend_from_slice(entry.1.as_bytes());
+    let mut given = given.clone();
+    given.optimize();
+    given.serialize_into(&mut bytes).expect("writing to a vector");
     base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
 }
 
@@ -1737,9 +1825,12 @@ fn decode_rep(r: &mut Reader<'_>) -> Option<SortRep> {
     })
 }
 
-fn decode_cursor(token: &str, expected_keys: usize) -> Option<(u64, SortEntry)> {
+fn decode_cursor(token: &str, expected_keys: usize) -> Option<(u64, SortEntry, RoaringBitmap)> {
     let bytes = base64::engine::general_purpose::STANDARD_NO_PAD.decode(token).ok()?;
     let mut r = Reader { bytes: &bytes, pos: 0 };
+    if r.u8()? != CURSOR_FORMAT {
+        return None;
+    }
     let guard = r.u64()?;
     let n = r.u32()? as usize;
     if n != expected_keys {
@@ -1754,8 +1845,10 @@ fn decode_cursor(token: &str, expected_keys: usize) -> Option<(u64, SortEntry)> 
         });
     }
     let uuid = Uuid::from_slice(r.take(16)?).ok()?;
-    if r.pos != bytes.len() {
+    // The rest, whole: a bitmap, which refuses what is not one.
+    let given = RoaringBitmap::deserialize_from(&bytes[r.pos..]).ok()?;
+    if given.serialized_size() != bytes.len() - r.pos {
         return None; // trailing garbage
     }
-    Some((guard, (reps, uuid)))
+    Some((guard, (reps, uuid), given))
 }
