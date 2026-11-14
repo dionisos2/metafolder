@@ -16,7 +16,7 @@
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 use anyhow::Result;
@@ -289,6 +289,76 @@ impl KvSource<'_> {
     /// How many keys this snapshot has read (entries iterated, lookups made).
     pub fn reads(&self) -> u64 {
         self.reads.get()
+    }
+
+    /// How `field`'s trigrams are kept; a read.
+    fn gram_state(&self, field: &str) -> derived::GramState {
+        let read = || -> Result<derived::GramState> {
+            self.read_keys(1)?;
+            derived::GramState::decode(self.t.grams.get(&self.r, &derived::gram_state_key(field))?)
+        };
+        self.ok(read(), Default::default())
+    }
+
+    /// The partition `field`'s texts are read from: a string's value, a
+    /// position's name.
+    fn text_part(&self, field: &str) -> u8 {
+        match self.kind(field) {
+            Some(Kind::Reference { tree: true }) => NAME,
+            _ => VALUE,
+        }
+    }
+
+    /// In a field whose trigrams are kept by value: the keys of the texts
+    /// holding every one of `grams`, in key order. Each trigram's texts are
+    /// one sorted run of keys, and the runs are joined by seeking in each the
+    /// first key at or after the furthest one reached — so the join reads
+    /// about what the rarest trigram holds, not what the commonest does.
+    fn gram_values(&self, field: &str, grams: &BTreeSet<[u8; 3]>) -> Vec<Vec<u8>> {
+        let prefixes: Vec<Vec<u8>> =
+            grams.iter().map(|g| derived::gram_values_prefix(field, g)).collect();
+        let read = || -> Result<Vec<Vec<u8>>> {
+            let mut out = Vec::new();
+            if let [only] = &prefixes[..] {
+                for entry in self.t.grams.prefix_iter(&self.r, only)? {
+                    self.read_keys(1)?;
+                    out.push(entry?.0[only.len()..].to_vec());
+                }
+                return Ok(out);
+            }
+            // The key every run must hold next, and how many runs in a row
+            // were found to hold it.
+            let mut at: Vec<u8> = Vec::new();
+            let mut agreed = 0;
+            let mut i = 0;
+            while !prefixes.is_empty() {
+                let prefix = &prefixes[i % prefixes.len()];
+                let from = [&prefix[..], &at].concat();
+                let range = (Bound::Included(from.as_slice()), Bound::Unbounded);
+                self.read_keys(1)?;
+                let Some((k, _)) = self.t.grams.range(&self.r, &range)?.next().transpose()? else {
+                    break;
+                };
+                if !k.starts_with(prefix) {
+                    break;
+                }
+                if k[prefix.len()..] == at[..] {
+                    agreed += 1;
+                } else {
+                    at = k[prefix.len()..].to_vec();
+                    agreed = 1;
+                }
+                if agreed == prefixes.len() {
+                    out.push(at.clone());
+                    // The least key after it.
+                    at.push(0);
+                    agreed = 0;
+                }
+                i += 1;
+            }
+            Ok(out)
+        };
+        self.ok(read(), Vec::new())
     }
 
     /// The ids holding a trigram in `field`'s texts; a read per chunk.
@@ -831,23 +901,52 @@ impl KvSource<'_> {
         self.ok(read(), Vec::new())
     }
 
-    /// The ids whose text in `field` may hold every one of `literals`: the
-    /// intersection of their trigrams' bitmaps (plus the texts too long to be
-    /// split), within `restrict` — a superset of the answer, each candidate
-    /// then checked on its values. `None` when the literals hold no trigram.
+    /// The ids whose text in `field` may hold every one of `literals`, within
+    /// `restrict` — a superset of the answer, each candidate then checked on
+    /// its values. `None` when the literals hold no trigram.
+    ///
+    /// A field keeps its trigrams one of two ways (doc "Text search in the
+    /// store"). By value: the texts holding every trigram, and their holders.
+    /// By metarecord: the intersection of the trigrams' bitmaps, plus the ids
+    /// written since the last fold, whose trigrams are not built. Either way
+    /// with the texts too long to be split.
     fn text_candidates(
         &self,
         field: &str,
         literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> Option<RoaringBitmap> {
-        let grams: std::collections::BTreeSet<[u8; 3]> =
-            literals.iter().flat_map(|l| derived::trigrams(l)).collect();
+        let grams: BTreeSet<[u8; 3]> = literals.iter().flat_map(|l| derived::trigrams(l)).collect();
         if grams.is_empty() {
             return None;
         }
+        let mut candidates = if self.gram_state(field).by_ids {
+            self.gram_ids(field, &grams, restrict) | self.set(derived::GRAM_PENDING, Some(field))
+        } else {
+            let part = self.text_part(field);
+            let mut ids = RoaringBitmap::new();
+            for key in self.gram_values(field, &grams) {
+                ids |= self.bucket(field, part, &key);
+            }
+            ids
+        };
+        candidates |= self.set(derived::LONG_TEXTS, Some(field));
+        if let Some(r) = restrict {
+            candidates &= r;
+        }
+        Some(self.sift(candidates))
+    }
+
+    /// The ids every one of `grams` names in a field keeping its trigrams by
+    /// metarecord, within `restrict`.
+    fn gram_ids(
+        &self,
+        field: &str,
+        grams: &BTreeSet<[u8; 3]>,
+        restrict: Option<&RoaringBitmap>,
+    ) -> RoaringBitmap {
         let mut candidates: Option<RoaringBitmap> = restrict.cloned();
-        for gram in &grams {
+        for gram in grams {
             let ids = self.gram_set(field, gram);
             candidates = Some(match candidates {
                 None => ids,
@@ -857,18 +956,15 @@ impl KvSource<'_> {
                 break;
             }
         }
-        let mut candidates = candidates.unwrap_or_default();
-        let mut long = self.set(derived::LONG_TEXTS, Some(field));
-        if let Some(r) = restrict {
-            long &= r;
-        }
-        candidates |= long;
-        Some(self.sift(candidates))
+        candidates.unwrap_or_default()
     }
 
     /// The ids of `field`'s partition `part` whose text satisfies `keep`,
-    /// within `restrict`. A small candidate set reads its own rows; a large
-    /// one scans the distinct keys, testing each once.
+    /// within `restrict`. Trigrams kept by value name the texts to test,
+    /// whose holders are then read without a metarecord being; kept by
+    /// metarecord they name candidates, each read. A small candidate set
+    /// reads its own rows; a large one — or a field most of whose ids await
+    /// a fold — scans the distinct keys, testing each once.
     fn scan(
         &self,
         field: &str,
@@ -880,15 +976,47 @@ impl KvSource<'_> {
     ) -> RoaringBitmap {
         let _stage = crate::progress::stage(format!("scanning {field}"));
         let text = |v: &Value| text_of(v).is_some_and(|t| keep(&t));
-        if let Some(candidates) = self.text_candidates(field, literals, restrict) {
-            return self.having(candidates, field, &text);
+        let region: &[u8] = if part == VALUE { &[2] } else { &[] };
+        let grams: BTreeSet<[u8; 3]> = literals.iter().flat_map(|l| derived::trigrams(l)).collect();
+        if !grams.is_empty() {
+            let within = |mut ids: RoaringBitmap| {
+                if let Some(r) = restrict {
+                    ids &= r;
+                }
+                ids
+            };
+            let long = within(self.set(derived::LONG_TEXTS, Some(field)));
+            if !self.gram_state(field).by_ids {
+                let mut out = RoaringBitmap::new();
+                // A key cut and hashed does not hold its whole text: its
+                // holders are decided on their values.
+                let mut undecided = long;
+                for key in self.gram_values(field, &grams) {
+                    let Some(tail) = key.strip_prefix(region) else { continue };
+                    if long_prefix(tail).is_some() {
+                        undecided |= within(self.bucket(field, part, &key));
+                    } else if derived::unesc(tail)
+                        .is_ok_and(|(bytes, _)| keep(&String::from_utf8_lossy(&bytes)))
+                    {
+                        out |= within(self.bucket(field, part, &key));
+                    }
+                }
+                undecided -= &out;
+                return out | self.having(undecided, field, &text);
+            }
+            let pending = within(self.set(derived::GRAM_PENDING, Some(field)));
+            // Checked one by one, unless the ids awaiting a fold are so many
+            // that the scan below is the cheaper way to all of them.
+            if plan::probes(pending.len(), self.present(field).len()) {
+                let candidates = self.gram_ids(field, &grams, restrict) | pending | long;
+                return self.having(self.sift(candidates), field, &text);
+            }
         }
         if let Some(r) = restrict {
             if plan::probes(r.len(), self.present(field).len()) {
                 return self.having(r.clone(), field, &text);
             }
         }
-        let region: &[u8] = if part == VALUE { &[2] } else { &[] };
         let last: RefCell<Option<(Vec<u8>, bool)>> = RefCell::new(None);
         // A key cut and hashed does not hold its whole text: its ids are
         // decided on their values, after the pass.
@@ -1282,7 +1410,13 @@ impl Source for KvSource<'_> {
         if self.kind(field) != Some(Kind::Reference { tree: true }) {
             return Some(Vec::new());
         }
-        let candidates = self.text_candidates(field, literals, within)?;
+        let mut candidates = self.text_candidates(field, literals, within)?;
+        // Most of them ids awaiting a fold, which no trigram narrowed: the
+        // names are scanned first, so that only the matching nodes are read.
+        let pending = &candidates & self.set(derived::GRAM_PENDING, Some(field));
+        if !plan::probes(pending.len(), self.present(field).len()) {
+            candidates = self.sift(self.scan(field, NAME, &name_of, keep, literals, within));
+        }
         let read = || -> Result<Vec<NamedNode>> {
             let mut out = Vec::new();
             for id in &candidates {

@@ -40,6 +40,10 @@ of the set of those that exist ([[Deleting a metarecord in the store]]) —, so 
 deleting much of a repository, a reindex is what makes its queries scan less, and
 what lets a compact give the room back.
 
+It also builds the name trigrams the writes left pending
+([[Text search in the store]]): after a large import, a reindex is for now what makes
+a search on file names read its candidates again instead of scanning every name.
+
 !! What check reports, and the repair
 
 `check` prints `ok` on a healthy store. Otherwise it prints one line per problem (a
@@ -72,6 +76,8 @@ every trigram of every text, per holder — can be larger than the machine's mem
 and the same check runs inside the daemon on every backup, automatic ones included
 ([[Backups and restore]]). Both sides are streamed into fingerprints (a sum of entry
 hashes per index, cut in buckets), and only the buckets whose fingerprints differ
-are read a second time, to name the entries that differ. What stays resident is a
+are read a second time, to name the entries that differ. The trigrams are the
+exception: stale ones are allowed, so they are looked up text by text instead of
+compared ([[Text search in the store]]). What stays resident is a
 parent per forest node. An earlier check that collected everything it compared was
 killed for lack of memory on a 3 GB store, taking the daemon with it at every start.

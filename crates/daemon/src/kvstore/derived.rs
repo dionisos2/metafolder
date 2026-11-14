@@ -9,7 +9,9 @@
 //! | sets  | kind · [field] · [key] · chunk       | a roaring bitmap         |
 //! | parts | field · partition · key · dense id   | rows (count)             |
 //! | kids  | parent uuid · field · dense id       | rows (count)             |
-//! | grams | field · trigram · chunk              | a roaring bitmap         |
+//! | grams | 0 · field · trigram · text key       | (empty)                  |
+//! | grams | 1 · field · trigram · chunk          | a roaring bitmap         |
+//! | grams | 2 · field                            | the field's trigram state|
 //! | hist  | field · bucket                       | rows (count)             |
 //!
 //! A *set* is a bitmap of dense ids cut in chunks of 65 536 ids (the high 16
@@ -49,8 +51,8 @@ use crate::store::Rows;
 /// The format of the derived key spaces. A store stamped with another (or
 /// none: a store from before they existed) is reindexed when it opens. 5:
 /// descendant bitmaps for every forest (4 kept `mfr_path`'s only); 6: the
-/// histograms.
-pub(super) const DERIVED_VERSION: i64 = 6;
+/// histograms; 7: the trigrams in two modes (doc "Text search in the store").
+pub(super) const DERIVED_VERSION: i64 = 7;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -84,6 +86,11 @@ pub(super) const POSTINGS: u8 = 7;
 /// sort representative is not simply their value, which a walk of the
 /// values must read one by one.
 pub(super) const MULTI: u8 = 8;
+
+/// In a field whose trigrams are kept by metarecord: the ids written since
+/// the last fold, whose trigrams are not built yet — every text search checks
+/// them (doc "Text search in the store").
+pub(super) const GRAM_PENDING: u8 = 9;
 
 /// How many holders promote a value to a posting.
 pub(crate) const POSTING_MIN: u64 = 64;
@@ -165,9 +172,77 @@ pub(crate) fn search_text(value: &Value) -> Option<String> {
     }
 }
 
-/// The key of a trigram's bitmap, without its chunk.
+/// The three key spaces of `grams` (doc "Text search in the store"): the
+/// distinct texts holding a trigram, the ids holding it, and each field's
+/// state.
+const GRAM_VALUES: u8 = 0;
+const GRAM_IDS: u8 = 1;
+const GRAM_STATE: u8 = 2;
+
+/// How many distinct texts a field's trigram names on average before the
+/// field turns by metarecord: under it a new text writes its trigrams (some
+/// twenty keys, once per distinct text) and a search reads no metarecord;
+/// over it the field's texts are mostly new ones — file names — and a write
+/// only marks its id pending. A starting point, to be measured.
+pub(crate) const GRAM_VALUES_MAX: u64 = 16;
+
+/// The key of a trigram's bitmap of ids, without its chunk.
 pub(super) fn gram_prefix(field: &str, gram: &[u8; 3]) -> Vec<u8> {
-    [&name_key(field)[..], gram].concat()
+    [&[GRAM_IDS][..], &name_key(field), gram].concat()
+}
+
+/// The prefix of the texts holding a trigram: each key ends with the text's
+/// key in the partition the field's texts are read from ([`text_part_key`]).
+pub(super) fn gram_values_prefix(field: &str, gram: &[u8; 3]) -> Vec<u8> {
+    [&[GRAM_VALUES][..], &name_key(field), gram].concat()
+}
+
+/// The key of a field's trigram state.
+pub(super) fn gram_state_key(field: &str) -> Vec<u8> {
+    [&[GRAM_STATE][..], &name_key(field)].concat()
+}
+
+/// How a field's trigrams are kept.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub(super) struct GramState {
+    /// By metarecord (trigram → ids, built by a fold) rather than by value
+    /// (trigram → distinct texts, written with each new text).
+    pub(super) by_ids: bool,
+    /// By value: the (trigram, text) entries, and the distinct trigrams.
+    entries: u64,
+    grams: u64,
+    /// The field turned by metarecord and its by-value entries are still
+    /// there, for the next fold to drop.
+    leftovers: bool,
+}
+
+impl GramState {
+    pub(super) fn decode(bytes: Option<&[u8]>) -> Result<GramState> {
+        let Some(b) = bytes else { return Ok(GramState::default()) };
+        anyhow::ensure!(b.len() == 18, "a trigram state of {} bytes", b.len());
+        Ok(GramState {
+            by_ids: b[0] != 0,
+            leftovers: b[1] != 0,
+            entries: u64::from_be_bytes(b[2..10].try_into().expect("8 bytes")),
+            grams: u64::from_be_bytes(b[10..18].try_into().expect("8 bytes")),
+        })
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut out = vec![self.by_ids as u8, self.leftovers as u8];
+        out.extend_from_slice(&self.entries.to_be_bytes());
+        out.extend_from_slice(&self.grams.to_be_bytes());
+        out
+    }
+}
+
+/// The partition a value's text is read from, and its key there: a string's
+/// value key, a position's name. What a by-value trigram entry names.
+pub(crate) fn text_part_key(value: &Value) -> Option<(u8, Vec<u8>)> {
+    match value {
+        Value::String(_) => value_key(value).map(|k| (VALUE, k)),
+        _ => name_part_key(value).map(|k| (NAME, k)),
+    }
 }
 
 // ── Keys ────────────────────────────────────────────────────────────────────
@@ -552,6 +627,10 @@ impl KvTxn<'_> {
     /// Writes the chunks the transaction changed.
     pub(super) fn flush_sets(&self) -> Result<()> {
         let mut w = self.txn.borrow_mut();
+        for field in self.grams_changed.borrow_mut().drain() {
+            let state = self.grams.borrow()[&field];
+            self.t.grams.put(&mut w, &gram_state_key(&field), &state.encode())?;
+        }
         for (k, mut bm) in self.sets.borrow_mut().drain() {
             let db = if k[0] == SETS { self.t.sets } else { self.t.grams };
             if bm.is_empty() {
@@ -707,6 +786,16 @@ impl KvTxn<'_> {
         delta: i64,
     ) -> Result<()> {
         let id = self.id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
+        // Before the partitions learn of the row: whether its text is one
+        // the field does not hold yet.
+        let text = match search_text(value) {
+            Some(text) if delta > 0 && text.len() <= TRIGRAM_MAX => Some(text),
+            _ => None,
+        };
+        let new_text = match &text {
+            Some(_) => self.new_text(field, value)?,
+            None => None,
+        };
         if let Some(k) = value_key(value) {
             self.bump(self.t.parts, &part_key(field, VALUE, &k, id), delta)?;
             self.derive_posting(field, &k, id)?;
@@ -739,15 +828,11 @@ impl KvTxn<'_> {
         self.set_member(ABSENT, Some(field), id, absent)?;
         let valued = rows.iter().filter(|r| !matches!(r.value, Value::Nothing)).count();
         self.set_member(MULTI, Some(field), id, valued > 1)?;
-        // Trigrams: the changed row's, held by the id while one of its
-        // remaining texts still has them.
-        if let Some(text) = search_text(value).filter(|t| t.len() <= TRIGRAM_MAX) {
-            let texts: Vec<String> = rows.iter().filter_map(|r| search_text(&r.value)).collect();
-            let held: std::collections::BTreeSet<[u8; 3]> =
-                texts.iter().filter(|t| t.len() <= TRIGRAM_MAX).flat_map(|t| trigrams(t)).collect();
-            for gram in trigrams(&text) {
-                self.chunk_member(GRAMS, &gram_prefix(field, &gram), id, held.contains(&gram))?;
-            }
+        // Trigrams give candidates, which a search always checks: a text
+        // going leaves its own where they are, and only a text coming writes
+        // (doc "Text search in the store").
+        if let Some(text) = &text {
+            self.derive_grams(field, id, text, new_text.as_deref())?;
         }
         if search_text(value).is_some() {
             let long =
@@ -766,6 +851,141 @@ impl KvTxn<'_> {
                 self.derive_hierarchy(uuid, id, field, *parent, delta > 0)?;
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// A field's trigram state, as the transaction has it.
+    fn gram_state(&self, field: &str) -> Result<GramState> {
+        if let Some(state) = self.grams.borrow().get(field) {
+            return Ok(*state);
+        }
+        let state =
+            GramState::decode(self.t.grams.get(&self.txn.borrow(), &gram_state_key(field))?)?;
+        self.grams.borrow_mut().insert(field.to_string(), state);
+        Ok(state)
+    }
+
+    /// For a text about to join a field whose trigrams are kept by value:
+    /// its key, when the field may not hold that text yet — no row of the
+    /// partition has it, or its key is a cut one, which another text could
+    /// share. `None` when the text's trigrams are already written, or the
+    /// field keeps them by metarecord.
+    fn new_text(&self, field: &str, value: &Value) -> Result<Option<Vec<u8>>> {
+        if self.gram_state(field)?.by_ids {
+            return Ok(None);
+        }
+        let Some((part, key)) = text_part_key(value) else { return Ok(None) };
+        let text = if part == VALUE { &key[1..] } else { &key[..] };
+        if long_prefix(text).is_none() {
+            let run = [&part_prefix(field, part)[..], &key].concat();
+            if self.t.parts.prefix_iter(&self.txn.borrow(), &run)?.next().transpose()?.is_some() {
+                return Ok(None);
+            }
+        }
+        Ok(Some(key))
+    }
+
+    /// The trigrams of a text `id` gained in `field`. By value: those of a
+    /// text the field did not hold (`new_text`, its key), each written once —
+    /// and the field turns by metarecord when its trigrams name too many
+    /// texts ([`GRAM_VALUES_MAX`]), every holder pending. By metarecord: `id`
+    /// joins the pending ones, whose trigrams a fold builds.
+    fn derive_grams(
+        &self,
+        field: &str,
+        id: u32,
+        text: &str,
+        new_text: Option<&[u8]>,
+    ) -> Result<()> {
+        let mut state = self.gram_state(field)?;
+        if state.by_ids {
+            return self.set_member(GRAM_PENDING, Some(field), id, true);
+        }
+        let Some(key) = new_text else { return Ok(()) };
+        let before = state;
+        {
+            let mut w = self.txn.borrow_mut();
+            for gram in trigrams(text) {
+                let prefix = gram_values_prefix(field, &gram);
+                let k = [&prefix[..], key].concat();
+                if self.t.grams.get(&w, &k)?.is_some() {
+                    continue;
+                }
+                if self.t.grams.prefix_iter(&w, &prefix)?.next().transpose()?.is_none() {
+                    state.grams += 1;
+                }
+                self.t.grams.put(&mut w, &k, &[])?;
+                state.entries += 1;
+            }
+        }
+        if state.entries > GRAM_VALUES_MAX * state.grams {
+            state.by_ids = true;
+            state.leftovers = true;
+            // No trigram is kept by metarecord yet: every holder is pending.
+            let holders = self.read_chunked(SETS, &set_prefix(PRESENT, Some(field)))?;
+            self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(field)), &holders, true)?;
+        }
+        if state != before {
+            self.grams.borrow_mut().insert(field.to_string(), state);
+            self.grams_changed.borrow_mut().insert(field.to_string());
+        }
+        Ok(())
+    }
+
+    /// Builds the trigrams the writes left pending (doc "Text search in the
+    /// store"): in each field kept by metarecord, those of the pending ids'
+    /// texts, as they are now; the entries the field wrote while it was by
+    /// value go. What a text that changed or left wrote before stays — a
+    /// candidate too many, never one too few.
+    pub(super) fn fold_grams(&self) -> Result<()> {
+        let t = self.t;
+        let mut fields: Vec<String> = Vec::new();
+        for entry in t.grams.prefix_iter(&self.txn.borrow(), &[GRAM_STATE])? {
+            let (name, _) = unesc(&entry?.0[1..])?;
+            fields.push(String::from_utf8(name).context("a field name")?);
+        }
+        fields.extend(self.grams_changed.borrow().iter().cloned());
+        fields.sort();
+        fields.dedup();
+        for field in fields {
+            let mut state = self.gram_state(&field)?;
+            if !state.by_ids {
+                continue;
+            }
+            let pending = self.read_chunked(SETS, &set_prefix(GRAM_PENDING, Some(&field)))?;
+            for id in &pending {
+                let uuid = match t.uuids.get(&self.txn.borrow(), &id.to_be_bytes())? {
+                    Some(uuid) => uuid_of(uuid),
+                    None => continue,
+                };
+                for row in Rows::rows_named(self, uuid, &field)? {
+                    let Some(text) = search_text(&row.value).filter(|t| t.len() <= TRIGRAM_MAX)
+                    else {
+                        continue;
+                    };
+                    for gram in trigrams(&text) {
+                        self.chunk_member(GRAMS, &gram_prefix(&field, &gram), id, true)?;
+                    }
+                }
+            }
+            self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(&field)), &pending, false)?;
+            if state.leftovers {
+                let prefix = [&[GRAM_VALUES][..], &name_key(&field)].concat();
+                let mut w = self.txn.borrow_mut();
+                let mut gone = Vec::new();
+                for entry in t.grams.prefix_iter(&w, &prefix)? {
+                    gone.push(entry?.0.to_vec());
+                }
+                for k in gone {
+                    t.grams.delete(&mut w, &k)?;
+                }
+                state.leftovers = false;
+                state.entries = 0;
+                state.grams = 0;
+                self.grams.borrow_mut().insert(field.clone(), state);
+                self.grams_changed.borrow_mut().insert(field.clone());
+            }
         }
         Ok(())
     }
@@ -901,6 +1121,8 @@ impl KvTxn<'_> {
         self.sets.borrow_mut().clear();
         self.cached_chunks.borrow_mut().clear();
         self.universe.borrow_mut().clear();
+        self.grams.borrow_mut().clear();
+        self.grams_changed.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
         for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams, t.hist] {
@@ -1084,7 +1306,17 @@ impl KvStore {
                 txn.derive_row(uuid, &row.name, &row.value, 1)?;
             }
         }
+        txn.fold_grams()?;
         txn.meta_put("derived", DERIVED_VERSION)?;
+        txn.finish()
+    }
+
+    /// Integrates what the writes left pending for a quiet moment: the
+    /// trigrams of the fields kept by metarecord (doc "Text search in the
+    /// store"). A reindex does as much.
+    pub fn fold(&mut self) -> Result<()> {
+        let txn = KvTxn::new(self)?;
+        txn.fold_grams()?;
         txn.finish()
     }
 
@@ -1108,7 +1340,9 @@ impl KvStore {
 
         let mut sums = Sums::new();
         let mut hist = Histograms::new();
-        self.walk_entries(&r, &mut diff, Some(&mut hist), &mut |side, entry| {
+        let mut grams = GramCheck::default();
+        let first = Some((&mut hist, &mut grams));
+        self.walk_entries(&r, &mut diff, first, &mut |side, entry| {
             sums.add(side, &entry);
             Ok(())
         })?;
@@ -1131,16 +1365,21 @@ impl KvStore {
     /// entry the derived tables hold ([`Side::Got`]), postings aside, handed
     /// to `sink` one at a time. What cannot be an entry — a metarecord with
     /// no dense id, an id the two mappings disagree on — goes to `diff`.
-    /// `hist`, when given, gets the histograms the rows derive: a count per
-    /// bucket, not an entry per row, small enough to be held.
+    /// `first`, on the first of the two passes, gets the histograms the rows
+    /// derive — a count per bucket, not an entry per row, small enough to be
+    /// held — and holds the trigrams to the texts ([`GramCheck`]).
     fn walk_entries(
         &self,
         r: &RoTxn<'_>,
         diff: &mut Diff,
-        mut hist: Option<&mut Histograms>,
+        first: Option<(&mut Histograms, &mut GramCheck)>,
         sink: &mut dyn FnMut(Side, Entry<'_>) -> Result<()>,
     ) -> Result<()> {
         let t = &self.t;
+        let (mut hist, mut grams) = match first {
+            Some((hist, grams)) => (Some(hist), Some(grams)),
+            None => (None, None),
+        };
 
         // The universe and the id mappings. `live`: the ids of the
         // metarecords that exist — what the universe must be. A deleted
@@ -1208,6 +1447,9 @@ impl KvStore {
                 }
             };
             if group.uuid != uuid || group.field != row.name {
+                if let Some(grams) = grams.as_deref_mut() {
+                    grams.check(t, r, &group, diff)?;
+                }
                 group.flush(sink)?;
                 group = Group { uuid, id, field: row.name.clone(), ..Group::default() };
             }
@@ -1248,7 +1490,8 @@ impl KvStore {
             }
             if let Some(text) = search_text(&row.value) {
                 if text.len() <= TRIGRAM_MAX {
-                    group.grams.extend(trigrams(&text));
+                    let (_, key) = text_part_key(&row.value).expect("a text has a key");
+                    group.grams.extend(trigrams(&text).into_iter().map(|g| (g, key.clone())));
                 } else {
                     group.long = true;
                 }
@@ -1258,6 +1501,9 @@ impl KvStore {
             } else {
                 group.valued += 1;
             }
+        }
+        if let Some(grams) = grams {
+            grams.check(t, r, &group, diff)?;
         }
         group.flush(sink)?;
         for (field, set) in &parents {
@@ -1297,8 +1543,9 @@ impl KvStore {
         for entry in t.sets.iter(r)? {
             let (k, v) = entry?;
             let kind = k[0];
-            if kind == POSTINGS {
-                continue; // not an equality: see `check_postings`
+            if kind == POSTINGS || kind == GRAM_PENDING {
+                // Not an equality: see `check_postings`, and `GramCheck`.
+                continue;
             }
             let (name, rest) =
                 if kind == UNIVERSE { (Vec::new(), &k[1..]) } else { unesc(&k[1..])? };
@@ -1342,19 +1589,6 @@ impl KvStore {
             };
             if !sifted(entry.id) {
                 sink(Side::Got, entry)?;
-            }
-        }
-        for entry in t.grams.iter(r)? {
-            let (k, v) = entry?;
-            let (name, rest) = unesc(k)?;
-            let field = std::str::from_utf8(&name).context("a field name")?;
-            for id in decode_set(v)? {
-                if !sifted(id) {
-                    sink(
-                        Side::Got,
-                        Entry { space: GRAM, tag: 0, field, key: &rest[..3], id, count: 1 },
-                    )?;
-                }
             }
         }
         Ok(())
@@ -1502,13 +1736,12 @@ impl Diff {
 
 /// The key spaces [`KvStore::check_derived`] compares entry by entry, by the
 /// name its lines give them.
-const SPACES: [&str; 6] = ["set", "referrer", "descendant", "part", "kid", "gram"];
+const SPACES: [&str; 5] = ["set", "referrer", "descendant", "part", "kid"];
 const SET: usize = 0;
 const REFERRER: usize = 1;
 const DESCENDANT: usize = 2;
 const PART: usize = 3;
 const KID: usize = 4;
-const GRAM: usize = 5;
 
 /// How many buckets each key space's entries are spread over. A divergence
 /// costs the content of the buckets it falls in — a 4096th of the key space
@@ -1533,8 +1766,8 @@ struct Entry<'a> {
     /// The set kind, or the partition.
     tag: u8,
     field: &'a str,
-    /// A partition key, a trigram, or the uuid a referrer, a descendant or a
-    /// child is filed under.
+    /// A partition key, or the uuid a referrer, a descendant or a child is
+    /// filed under.
     key: &'a [u8],
     id: u32,
     /// Rows, where the key space counts them; 1 elsewhere.
@@ -1570,8 +1803,7 @@ impl<'a> Entry<'a> {
             SET => format!("({}, {field:?}, {who})", self.tag),
             REFERRER | DESCENDANT => format!("({field:?}, {}, {who})", uuid_of(self.key)),
             PART => format!("({field:?}, {}, {:?}, {who}): {}", self.tag, self.key, self.count),
-            KID => format!("({}, {field:?}, {who}): {}", uuid_of(self.key), self.count),
-            _ => format!("({field:?}, {:?}, {who})", String::from_utf8_lossy(self.key)),
+            _ => format!("({}, {field:?}, {who}): {}", uuid_of(self.key), self.count),
         })
     }
 }
@@ -1584,7 +1816,9 @@ struct Group {
     field: String,
     parts: BTreeMap<(u8, Vec<u8>), i64>,
     kids: BTreeMap<[u8; 16], i64>,
-    grams: BTreeSet<[u8; 3]>,
+    /// Each trigram of the field's short texts, with the text's key
+    /// ([`text_part_key`]).
+    grams: BTreeSet<([u8; 3], Vec<u8>)>,
     targets: BTreeSet<[u8; 16]>,
     /// Non-`Nothing` rows.
     valued: usize,
@@ -1607,9 +1841,6 @@ impl Group {
         for (parent, rows) in &self.kids {
             emit(KID, 0, parent, *rows)?;
         }
-        for gram in &self.grams {
-            emit(GRAM, 0, gram, 1)?;
-        }
         for target in &self.targets {
             emit(REFERRER, 0, target, 1)?;
         }
@@ -1622,6 +1853,77 @@ impl Group {
         for (kind, holds) in kinds {
             if holds {
                 emit(SET, kind, &[], 1)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The trigrams, held to the texts (doc "Text search in the store"). They
+/// are not compared entry by entry as the other key spaces are: a text that
+/// changed or went leaves its trigrams, so the tables hold more than the rows
+/// derive. What must hold is that no text lacks one — by value, an entry per
+/// trigram of each text; by metarecord, the id in each trigram's bitmap,
+/// unless it awaits a fold.
+#[derive(Default)]
+struct GramCheck {
+    /// Per field: its state, and its pending ids.
+    fields: HashMap<String, (GramState, RoaringBitmap)>,
+    /// The chunks last decoded, by their key.
+    chunks: HashMap<Vec<u8>, RoaringBitmap>,
+}
+
+impl GramCheck {
+    fn check(&mut self, t: &Tables, r: &RoTxn<'_>, group: &Group, diff: &mut Diff) -> Result<()> {
+        let Some(id) = group.id else { return Ok(()) };
+        if group.grams.is_empty() {
+            return Ok(());
+        }
+        let field = group.field.as_str();
+        if !self.fields.contains_key(field) {
+            let state = GramState::decode(t.grams.get(r, &gram_state_key(field))?)?;
+            let mut pending = RoaringBitmap::new();
+            for entry in t.sets.prefix_iter(r, &set_prefix(GRAM_PENDING, Some(field)))? {
+                pending |= decode_set(entry?.1)?;
+            }
+            self.fields.insert(field.to_string(), (state, pending));
+        }
+        let (state, pending) = &self.fields[field];
+        if !state.by_ids {
+            for (gram, key) in &group.grams {
+                let k = [&gram_values_prefix(field, gram)[..], key].concat();
+                if t.grams.get(r, &k)?.is_none() {
+                    let gram = String::from_utf8_lossy(gram);
+                    diff.push(format!("gram missing: ({field:?}, {gram:?}, text key {key:?})"));
+                }
+            }
+            return Ok(());
+        }
+        if pending.contains(id) {
+            return Ok(());
+        }
+        let mut last = None;
+        for (gram, _) in &group.grams {
+            if last.replace(gram) == Some(gram) {
+                continue;
+            }
+            let k = [&gram_prefix(field, gram)[..], &((id >> 16) as u16).to_be_bytes()].concat();
+            if !self.chunks.contains_key(&k) {
+                if self.chunks.len() >= 1024 {
+                    self.chunks.clear();
+                }
+                let chunk = match t.grams.get(r, &k)? {
+                    Some(bytes) => decode_set(bytes)?,
+                    None => RoaringBitmap::new(),
+                };
+                self.chunks.insert(k.clone(), chunk);
+            }
+            if !self.chunks[&k].contains(id) {
+                let gram = String::from_utf8_lossy(gram);
+                diff.push(format!(
+                    "gram missing: ({field:?}, {gram:?}, {})",
+                    Uuid::from_bytes(group.uuid)
+                ));
             }
         }
         Ok(())
@@ -1691,7 +1993,7 @@ impl Detail {
     fn report(&self, diff: &mut Diff) {
         // Referrers and descendants first, then the sets, as the lines have
         // always come.
-        for space in [REFERRER, DESCENDANT, SET, PART, KID, GRAM] {
+        for space in [REFERRER, DESCENDANT, SET, PART, KID] {
             let (expected, got) = (&self.sides[0][space], &self.sides[1][space]);
             let what = SPACES[space];
             for e in expected.difference(got) {
@@ -1791,7 +2093,7 @@ mod tests {
     #[test]
     fn test_a_lost_trigram_chunk_is_named() {
         let (store, _dir) = populated();
-        let key = first_key(&store, |t| &t.grams, &gram_prefix("title", b"num"));
+        let key = first_key(&store, |t| &t.grams, &gram_values_prefix("title", b"num"));
         tamper(&store, |t, w| {
             t.grams.delete(w, &key).unwrap();
         });

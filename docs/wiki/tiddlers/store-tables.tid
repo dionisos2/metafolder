@@ -59,7 +59,9 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`sets` |kind · [field] · [key] · chunk |a roaring bitmap of dense ids |
 |`parts` |field · partition · key · dense id |rows (count) |
 |`kids` |parent uuid · field · dense id |rows (count) |
-|`grams` |field · trigram · chunk |a roaring bitmap of dense ids |
+|`grams` |`0` · field · trigram · text key |empty: a distinct text holding the trigram |
+|`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |
+|`grams` |`2` · field |the field's trigram state: its mode, its counts |
 |`hist` |field · bucket |rows (count) |
 
 ''Dense ids'' come first: each metarecord gets a small integer, allocated in
@@ -88,6 +90,7 @@ chunk: a write rewrites one chunk, a read unions a few. The kinds:
 |postings |field · value key |the holders of a frequent value ([[Sorting and postings]]) |
 |long texts |field |the ids whose text is too long for trigrams ([[Text search in the store]]) |
 |multi |field |the ids holding several rows of the field, whose sort representative a walk must read one by one |
+|pending trigrams |field |in a field whose trigrams are kept by metarecord, the ids written since the last fold ([[Text search in the store]]) |
 
 A ''partition'' (`parts`) lists a field's rows in the order of a key whose bytes sort
 like the values, so equality, ranges and sorts are range scans. Three per field:
@@ -95,8 +98,8 @@ like the values, so equality, ranges and sorts are range scans. Three per field:
 value points at — its referent, or its parent).
 
 `kids` is the forest keyed by parent first, so a metarecord arriving or leaving finds
-the fields it is a parent in without a scan. `grams` holds one bitmap per trigram of a
-field's texts ([[Text search in the store]]). `hist` counts a number's or a date's rows per bucket,
+the fields it is a parent in without a scan. `grams` holds the trigrams of a
+field's texts, naming the distinct texts or the ids that hold each ([[Text search in the store]]). `hist` counts a number's or a date's rows per bucket,
 a bucket being a fixed-width prefix of the value key: the histograms the planner
 estimates a range from ([[Query planner]]).
 

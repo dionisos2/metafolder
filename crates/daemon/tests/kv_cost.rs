@@ -55,6 +55,9 @@ fn repository_with(n: usize, per_folder: usize, extra: usize) -> (KvStore, TempD
         .unwrap();
     }
     w.commit().unwrap();
+    // A settled repository: the names' trigrams are built (doc "Text search
+    // in the store"), as they are once the daemon had a quiet moment.
+    kv.fold().unwrap();
     (kv, dir)
 }
 

@@ -36,6 +36,9 @@ fn repository(n: usize) -> (KvStore, Vec<Uuid>, TempDir) {
         uuids.push(r.uuid);
     }
     w.commit().unwrap();
+    // The names' trigrams built, as in a settled repository (doc "Text
+    // search in the store"): a literal then narrows the candidates.
+    kv.fold().unwrap();
     (kv, uuids, dir)
 }
 

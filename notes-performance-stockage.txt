@@ -67,6 +67,35 @@ que prévu, ou appris en route :
   supprimé avant de le sauter (lectures perdues tant qu'il n'y a pas eu de
   reindex) ; disparaît avec l'étape 4.
 
+ÉTAPE 2 FAITE (14 nov. 2026 ; doc "Text search in the store", tests
+crates/daemon/tests/kv_text.rs, DERIVED_VERSION 7 = reindex à l'ouverture) :
+- table `grams` en trois espaces : 0 · champ · trigramme · clé du texte
+  (par valeur, valeur vide), 1 · champ · trigramme · tranche (par
+  metarecord, bitmap d'ids), 2 · champ (état : mode, compteurs). Ensemble
+  `pending trigrams` (sets, kind 9) par champ.
+- Par valeur : pas d'ids de valeur ; l'entrée porte la clé du texte dans la
+  partition (value ou name). « Valeur nouvelle » = aucune ligne de la
+  partition n'a cette clé (1 lecture par écriture de texte). Requête :
+  jointure des listes de textes par trigramme en sautant (seek) à la clé la
+  plus avancée, test du texte sur la clé, puis porteurs par partition/posting.
+- Passage par metarecord : entrées par valeur / trigrammes distincts > 16
+  (GRAM_VALUES_MAX, À MESURER), compté dans l'état du champ. Jamais de retour.
+- Par metarecord : une écriture ne fait qu'ajouter l'id à `pending` ; le
+  repli (KvStore::fold, appelé aussi en fin de reindex) construit les
+  trigrammes des ids en attente depuis leurs textes. Recherche : trigrammes ∪
+  pending, vérifiés par metarecord ; si pending est trop gros (plan::probes),
+  balayage des valeurs distinctes de la partition (coût d'un champ sans
+  trigrammes).
+- Retirer/remplacer/supprimer n'écrit aucun trigramme (restes purgés au
+  reindex). `mf repo check` ne compare plus les trigrammes entrée par entrée
+  (les périmés sont permis) : il vérifie qu'aucun texte n'en manque.
+- CONSÉQUENCE EN ATTENDANT L'ÉTAPE 10 : rien ne déclenche le repli hors
+  reindex. Après un premier reconcile, une recherche sur les noms balaie
+  toutes les valeurs tant qu'il n'y a pas eu de `mf repo reindex`. Les tests
+  de coût (kv_cost, query_progress) replient leur dépôt avant de mesurer ; la
+  suite bench.sh, elle, construit ses dépôts sans repli → ses scénarios de
+  recherche de texte mesurent le balayage jusqu'à l'étape 10.
+
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
      résolution de chemin et clés de forêt vérifient universe, un nouveau
@@ -128,7 +157,8 @@ Questions laissées ouvertes :
 - retirer les ids de ligne (A.1) seulement si une étape y gagne ;
 - le « plancher » fdatasync mesuré à ~1 ms vient du cache du disque USB :
   durabilité dépendante du matériel ;
-- `tag_text` 128 ms en mémoire : à revoir avec l'étape 2.
+- `tag_text` 128 ms en mémoire : à remesurer (étape 2 faite) ;
+- seuil GRAM_VALUES_MAX = 16 : point de départ, à mesurer.
 
 
 0. Contraintes de la refonte (validées avec l'utilisateur, 13 nov. 2026)

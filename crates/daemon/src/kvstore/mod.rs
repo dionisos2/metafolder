@@ -1492,6 +1492,10 @@ pub struct KvTxn<'e> {
     /// The universe's chunks the transaction read without changing them
     /// (a changed one is in `sets`).
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
+    /// Each field's trigram state as the transaction read or changed it, and
+    /// the fields whose state it changed, written at commit.
+    grams: RefCell<HashMap<String, derived::GramState>>,
+    grams_changed: RefCell<std::collections::HashSet<String>>,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
@@ -1804,6 +1808,8 @@ impl<'e> KvTxn<'e> {
             reads: &store.reads,
             written: &store.written,
             universe: RefCell::new(HashMap::new()),
+            grams: RefCell::new(HashMap::new()),
+            grams_changed: RefCell::new(Default::default()),
         })
     }
 
