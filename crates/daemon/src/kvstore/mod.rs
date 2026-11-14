@@ -62,6 +62,7 @@ use crate::rows::{self, FieldRow, RawValue, TreeRow};
 use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Questions, Rows, WriteTxn};
 
 mod derived;
+mod mass;
 pub mod memory;
 mod source;
 mod table;
@@ -80,6 +81,7 @@ struct Tables {
     meta: Db,
     metarecords: Db,
     records: Db,
+    mass: Db,
     field_types: Db,
     forest: Db,
     ops: Db,
@@ -108,6 +110,7 @@ const NAMES: [&str; table::TABLES] = [
     "meta",
     "metarecords",
     "records",
+    "mass",
     "field_types",
     "forest",
     "ops",
@@ -147,12 +150,13 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [meta, metarecords, records, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist, events] =
+        let [meta, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist, events] =
             dbs;
         Ok(Tables {
             meta,
             metarecords,
             records,
+            mass,
             field_types,
             forest,
             ops,
@@ -182,6 +186,7 @@ impl Tables {
             self.meta,
             self.metarecords,
             self.records,
+            self.mass,
             self.field_types,
             self.forest,
             self.ops,
@@ -226,6 +231,9 @@ pub struct KvStore {
     /// Keys read so far by the store's reads and its query sources — what
     /// the cost assertions count (`tests/kv_cost.rs`).
     reads: std::sync::atomic::AtomicU64,
+    /// Whether any part has entries pending (doc "Mass writes in the store"):
+    /// when none does, no read looks for them.
+    mass: std::sync::atomic::AtomicBool,
     /// The keys the last committed write transaction wrote, per table — what
     /// the write cost assertions count ([`KvStore::last_write_keys`]).
     written: std::sync::Mutex<[u64; table::TABLES]>,
@@ -659,11 +667,17 @@ impl KvStore {
             _lock: lock,
             dir: dir.to_path_buf(),
             reads: Default::default(),
+            mass: Default::default(),
             written: Default::default(),
             memory: None,
             resident: Default::default(),
             durable,
         };
+        {
+            let r = store.env.read_txn()?;
+            let pending = store.t.mass.len(&r)? > 0;
+            store.mass.store(pending, std::sync::atomic::Ordering::Relaxed);
+        }
         let mut derived = derived;
         if layout != Some(LAYOUT) {
             let rebuild =
@@ -719,6 +733,9 @@ struct Read<'a> {
     /// own changes included); `None` for a read of the committed store, which
     /// reads the field's bitmaps itself ([`Read::holder_ids`]).
     holders: Option<&'a HoldersOf<'a>>,
+    /// Whether any part has entries pending, which a record is read with
+    /// applied ([`mass`]).
+    mass: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
 }
@@ -761,11 +778,7 @@ impl Read<'_> {
 
     /// The rows of the record of dense id `id`: its one key.
     fn record(&self, id: u32) -> Result<Vec<FieldRow>> {
-        self.count(1)?;
-        match self.t.records.get(self.r, &id.to_be_bytes())? {
-            Some(v) => dec_rows(v),
-            None => Ok(Vec::new()),
-        }
+        mass::read_record(self.t, self.r, id, self.mass, &mut |n| self.count(n))
     }
 
     /// A record's rows, in no particular order.
@@ -1089,11 +1102,14 @@ macro_rules! kv_reads {
             fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    for e in $read.t.records.iter($read.r)? {
-                        $read.count(2)?;
-                        let (k, v) = e?;
-                        let uuid = $read.uuid_of_id(derived::dense(k))?;
-                        for row in dec_rows(v)? {
+                    for id in mass::record_ids($read.t, $read.r, $read.mass)? {
+                        // An id only an entry names may be a metarecord's that
+                        // is gone.
+                        if !$read.live(id)? {
+                            continue;
+                        }
+                        let uuid = $read.uuid_of_id(id)?;
+                        for row in $read.record(id)? {
                             f(uuid, row)?;
                         }
                     }
@@ -1399,6 +1415,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         reads: Some(&me.reads),
         live: None,
         holders: None,
+        mass: me.mass_pending(),
         universe: Default::default(),
     })
 });
@@ -1464,6 +1481,7 @@ impl KvTxn<'_> {
             reads: Some(self.reads),
             live: Some(&live),
             holders: Some(&holders),
+            mass: self.mass_pending(),
             universe: Default::default(),
         })
     }
@@ -1500,6 +1518,9 @@ pub struct KvTxn<'e> {
     mass: RefCell<Option<String>>,
     /// How many events each field has pending, as read or changed.
     events: RefCell<HashMap<String, usize>>,
+    /// The store's flag that some part has entries pending: a write to many
+    /// records raises it.
+    mass_lists: &'e std::sync::atomic::AtomicBool,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
@@ -1916,6 +1937,7 @@ impl<'e> KvTxn<'e> {
             sets: RefCell::new(HashMap::new()),
             cached_chunks: RefCell::new(HashMap::new()),
             reads: &store.reads,
+            mass_lists: &store.mass,
             written: &store.written,
             universe: RefCell::new(HashMap::new()),
             grams: RefCell::new(HashMap::new()),
@@ -1976,16 +1998,6 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// The rows of the record of dense id `id`, as the transaction has them.
-    fn record_rows(&self, id: u32) -> Result<Vec<FieldRow>> {
-        let txn = self.txn.borrow();
-        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        match self.t.records.get(&txn, &id.to_be_bytes())? {
-            Some(v) => dec_rows(v),
-            None => Ok(Vec::new()),
-        }
-    }
-
     /// Writes a record's rows under its key; a record with none has no key.
     fn put_record(&self, id: u32, rows: &[FieldRow]) -> Result<()> {
         let mut w = self.txn.borrow_mut();
@@ -2041,6 +2053,7 @@ impl KvTxn<'_> {
                     reads: Some(self.reads),
                     live: None,
                     holders: None,
+                    mass: false,
                     universe: Default::default(),
                 };
                 let Some(meta) = self.t.labels.get(&txn, &be(label))? else { break };
@@ -2138,11 +2151,9 @@ impl WriteTxn for KvTxn<'_> {
             self.delete_rows(uuid, None)?;
         } else {
             let id = self.dense_id(uuid.as_bytes())?;
-            let rows = match id {
-                Some(id) => self.record_rows(id)?,
-                None => Vec::new(),
-            };
+            let mut rows = Vec::new();
             if let Some(id) = id {
+                rows = self.load_record(id)?.plain_rows();
                 self.put_record(id, &[])?;
             }
             for row in &rows {
@@ -2160,10 +2171,16 @@ impl WriteTxn for KvTxn<'_> {
         }
         let id =
             self.dense_id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
-        let mut rows = self.record_rows(id)?;
+        // A write to many records: the record is not written, the entry that
+        // ends the write is (doc "Mass writes in the store").
+        if self.in_mass(name) {
+            return self.count_type(name, value, 1);
+        }
+        let loaded = self.load_record(id)?;
+        let before = loaded.plain_rows();
         // The two uniqueness rules of the data model, with the messages
         // clients already know.
-        if name == "mfr_path" && rows.iter().any(|r| r.name == name) {
+        if name == "mfr_path" && before.iter().any(|r| r.name == name) {
             return Err(DomainError::BadRequest(
                 "mfr_path is single-valued: a metarecord tracks at most one path".into(),
             )
@@ -2185,37 +2202,68 @@ impl WriteTxn for KvTxn<'_> {
                 .into());
             }
         }
-        rows.push(FieldRow { name: name.to_string(), value: value.clone() });
-        self.put_record(id, &rows)?;
+        let op = self.write_number(&loaded)?;
+        let mut rows = loaded.rows.clone();
+        rows.push((FieldRow { name: name.to_string(), value: value.clone() }, op));
+        self.save_record(&loaded, rows, Vec::new(), Vec::new())?;
         if let Some(k) = &forest {
             let mut w = self.txn.borrow_mut();
             self.t.forest.put(&mut w, k, &key(&[uuid.as_bytes(), &id.to_be_bytes()]))?;
         }
         self.count_type(name, value, 1)?;
-        self.derive_row(uuid, name, value, 1, valued_in(&rows[..rows.len() - 1], name))
+        self.derive_row(uuid, name, value, 1, valued_in(&before, name))
     }
 
     fn delete_row(&self, owner: Uuid, name: &str, value: &Value) -> Result<()> {
         let Some(id) = self.dense_id(owner.as_bytes())? else { return Ok(()) };
-        let mut rows = self.record_rows(id)?;
-        let Some(at) = rows.iter().position(|r| r.name == name && &r.value == value) else {
+        let loaded = self.load_record(id)?;
+        let Some(at) = loaded.rows.iter().position(|(r, _)| r.name == name && &r.value == value)
+        else {
             return Ok(());
         };
-        let before = rows.clone();
-        let row = rows.remove(at);
-        self.put_record(id, &rows)?;
-        self.row_gone(owner, &row, &before)
+        if self.in_mass(name) {
+            return self.count_type(name, value, -1);
+        }
+        let op = self.write_number(&loaded)?;
+        let mut rows = loaded.rows.clone();
+        let (row, _) = rows.remove(at);
+        let tombs = if loaded.entries.is_empty() {
+            Vec::new()
+        } else {
+            vec![(name.to_string(), value.clone(), op)]
+        };
+        self.save_record(&loaded, rows, tombs, Vec::new())?;
+        self.row_gone(owner, &row, &loaded.plain_rows())
     }
 
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()> {
         let Some(id) = self.dense_id(uuid.as_bytes())? else { return Ok(()) };
-        let before = self.record_rows(id)?;
-        let (gone, kept): (Vec<FieldRow>, Vec<FieldRow>) =
-            before.iter().cloned().partition(|row| name.is_none_or(|n| n == row.name));
+        let loaded = self.load_record(id)?;
+        let wanted = |row: &FieldRow| name.is_none_or(|n| n == row.name);
+        let gone: Vec<FieldRow> =
+            loaded.rows.iter().filter(|(r, _)| wanted(r)).map(|(r, _)| r.clone()).collect();
         if gone.is_empty() {
             return Ok(());
         }
-        self.put_record(id, &kept)?;
+        if name.is_some_and(|n| self.in_mass(n)) {
+            for row in &gone {
+                self.count_type(&row.name, &row.value, -1)?;
+            }
+            return Ok(());
+        }
+        let op = self.write_number(&loaded)?;
+        let kept: Vec<(FieldRow, u64)> =
+            loaded.rows.iter().filter(|(r, _)| !wanted(r)).cloned().collect();
+        let mut cleared: Vec<(String, u64)> = Vec::new();
+        if !loaded.entries.is_empty() {
+            for row in &gone {
+                if !cleared.iter().any(|(n, _)| *n == row.name) {
+                    cleared.push((row.name.clone(), op));
+                }
+            }
+        }
+        self.save_record(&loaded, kept, Vec::new(), cleared)?;
+        let before = loaded.plain_rows();
         for row in &gone {
             self.row_gone(uuid, row, &before)?;
         }

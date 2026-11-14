@@ -2,7 +2,7 @@ title: Mass writes in the store
 tags: Storage
 kind: rationale
 audience: dev
-summary: A write to many records files one event per operation in the field's list instead of an entry per record; reads replay the pending events, a fold writes them in. The rows and the log are still written record by record.
+summary: A write to many records files one event per operation in the field's list, and one entry per part of the ids in the parts' lists, instead of a write per record; reads replay the pending events and apply the entries, a fold writes them in. The log is still written record by record.
 
 Setting a tag on ten thousand files (`mf … field set|add|remove` on a query,
 [[Query endpoints]]) is one write to many records. Indexing it record by record has
@@ -58,12 +58,39 @@ events counts those rows, so `mf repo check` does not hold it to the rows; the
 partition and the referrers are held to them as replayed
 ([[Checking and reindexing a repository]]).
 
-!! What is not there yet
+!! The rows: one entry per part
 
-The ''rows'' of each record and the ''log'' are still written record by record: a
-mass write reads and writes every record it changes, as before. Filing the rows by
-part of the id space and the log as bitmaps are the next steps of the storage
-redesign; this one is their footing, and saves nothing by itself.
+The events say, for a value, which records hold it. The ''rows'' of a record say
+the other way round, which values it holds, and they are not written either: a
+write to many records appends, to the list of every ''part'' of the ids it touches —
+64 k ids, the high bits of the dense id — one entry (table `mass`, keyed by part and
+operation number): the field, the kind (add, remove, replace), the values, and the
+ids of that part. A mass write thus writes as many keys as it has parts, and no
+record.
+
+A record is read as what it holds, with the entries of its part that name it applied
+oldest first: an add puts the value in, a remove takes it out, a replace takes the
+field's rows out and puts its values in. Reading a record costs the entries of its
+part, which is why a part is folded when its list passes 32 entries (`PART_MAX`, to
+be measured). When no part has any entry, nothing is looked for.
+
+The most recent write wins, a write to one record included, so a record that an entry
+names carries the number of the operation that wrote each of its rows, what was taken
+off it by hand (`tomb`: this value, after that number) and the fields it was emptied
+of (`cleared`). Such a write loads the record with the entries applied, changes it,
+and writes the result: the entries stay in the list and apply to it again, harmlessly,
+since what it holds then is newer than they are. A record no entry names is written
+as ever, without a number. A record's value is its rows, then — when it has any —
+those numbers and marks, so one written before reads unchanged
+([[Persisted format changes]]).
+
+The fold (`KvStore::fold`, a reindex, a part past its limit) writes the entries into
+the records of their part and empties the list; a metarecord that is gone is not
+written back.
+
+What is not there yet: the ''log''. A mass write still reads every record it changes,
+to log what it was, and writes one operation per record; the log as bitmaps is the
+next step of the storage redesign, and the gain of this one waits for it.
 
 Positions (`tree_ref`, `hierarchy_ref`) are never part of an event: each is written
 on its own ([[One position per forest]]). Nor is a `Nothing` or a text over 512 bytes

@@ -240,6 +240,7 @@ impl KvTxn<'_> {
         uuids: &[Uuid],
     ) -> Result<()> {
         *self.mass.borrow_mut() = None;
+        let listed = values.clone();
         let mut ids = RoaringBitmap::new();
         for u in uuids {
             ids.insert(self.id(u.as_bytes())?.with_context(|| format!("no dense id for {u}"))?);
@@ -282,7 +283,9 @@ impl KvTxn<'_> {
                 }
             }
         }
-        self.append_event(field, &event)
+        self.append_event(field, &event)?;
+        // The rows the write did not put into the records.
+        self.append_entries(kind, field, &listed, &event.ids)
     }
 
     /// A row of one record came or went in a field that has events pending:

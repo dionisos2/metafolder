@@ -451,6 +451,38 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       candidat au lieu de 2 ; seuil du test de compactage ramené d'un quart
       à un cinquième (le fichier de départ est plus petit).
       À SURVEILLER : sync::test_sync_orphans_a_directory_gone_on_the_other_side_in_one_run.
+  8d FAIT (14 nov. 2026) : listes de masse par partie (doc "Mass writes in
+      the store", code kvstore/mass.rs, tests tests/kv_mass.rs). Table `mass`
+      (TABLES 24) : partie (id >> 16) · numéro d'op → champ · genre · valeurs
+      · ids de la partie. mass_end ajoute UNE entrée par partie touchée
+      (Writer inchangé : en mode masse insert_row / delete_row / delete_rows
+      du champ ne touchent plus le record, ils ne tiennent que field_types).
+      Lecture d'un record = record + entrées de sa partie qui le nomment,
+      par numéro d'op croissant (mass::effective). ÉCARTS AVEC LE PLAN :
+      - le record porte les numéros d'op de ses lignes, des « tombs » (valeur
+        retirée à la main après tel numéro) et des « cleared » (champ vidé) :
+        queue FACULTATIVE de la valeur (un ancien record se lit tel quel) →
+        PAS de nouveau LAYOUT, comme je l'avais annoncé (« conversion à part »)
+        mais finalement inutile ;
+      - une écriture individuelle sur un record nommé par une entrée charge
+        le record effectif, le modifie, et le réécrit MATÉRIALISÉ (les
+        entrées restent et se réappliquent sans effet) ; elle ne touche donc
+        jamais à la liste, comme prévu, mais la LIT (une recherche de préfixe
+        par écriture quand une liste existe ; aucune sinon : drapeau
+        KvStore::mass, KvTxn::mass_lists, Read::mass, KvSource::mass) ;
+      - PART_BITS = 16, PART_MAX = 32 entrées avant repli d'une partie :
+        À MESURER (le plan disait « à recalculer avec 0quater, opération par
+        opération ») ; pas de seuil par opération pour l'instant ;
+      - le repli d'une partie réécrit TOUS les records qu'elle nomme (jusqu'à
+        64 k) ; reindex et KvStore::fold replient tout d'abord ; un id mort
+        n'est pas réécrit ;
+      - les lectures « tous les records » (for_each_row, walk_entries du
+        check) parcourent les ids des records ∪ ceux des entrées
+        (mass::record_ids), l'univers départageant les morts.
+      Le journal (étape 9) n'est PAS touché : une écriture de masse lit
+      encore chaque record et écrit une opération par record.
+      Mesure : kv_cost « osm path » inchangé (3 630 clés). Pas de mesure
+      sur disque : à faire avec scripts/dev/bench.sh --storage.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

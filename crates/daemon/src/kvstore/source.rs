@@ -30,7 +30,7 @@ use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, part_prefix, read_set, text_key,
     type_tag, value_key, NAME, VALUE,
 };
-use super::{dec_rows, from_be, name_key, uuid_of, KvStore, Tables};
+use super::{from_be, mass, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
 use crate::index::plan;
 use crate::index::{unsupported, Follow, NamedNode, RepReader, Source, Unsupported, Walked};
@@ -54,6 +54,9 @@ pub struct KvSource<'s> {
     /// Each field's pending events, read once (doc "Mass writes in the
     /// store"): what is stored of the field's values is behind by them.
     events: RefCell<BTreeMap<String, std::rc::Rc<Vec<Event>>>>,
+    /// Whether any part has entries pending, which a record is read with
+    /// applied ([`mass`]).
+    mass: bool,
 }
 
 impl KvStore {
@@ -68,6 +71,7 @@ impl KvStore {
             live: std::cell::OnceCell::new(),
             live_chunks: RefCell::new(BTreeMap::new()),
             events: RefCell::new(BTreeMap::new()),
+            mass: self.mass_pending(),
         })
     }
 }
@@ -1015,12 +1019,10 @@ impl KvSource<'_> {
     /// A metarecord's rows of `field`.
     fn values(&self, id: u32, field: &str) -> Vec<Value> {
         let read = || -> Result<Vec<Value>> {
-            // The record: one key.
-            self.read_keys(1)?;
-            let Some(rows) = self.t.records.get(&self.r, &id.to_be_bytes())? else {
-                return Ok(Vec::new());
-            };
-            Ok(dec_rows(rows)?.into_iter().filter(|r| r.name == field).map(|r| r.value).collect())
+            // The record: one key, and the entries of its part.
+            let rows =
+                mass::read_record(&self.t, &self.r, id, self.mass, &mut |n| self.read_keys(n))?;
+            Ok(rows.into_iter().filter(|r| r.name == field).map(|r| r.value).collect())
         };
         self.ok(read(), Vec::new())
     }
@@ -1569,12 +1571,13 @@ impl Source for KvSource<'_> {
         let read = || -> Result<Vec<NamedNode>> {
             let mut out = Vec::new();
             for id in &candidates {
-                self.read_keys(2)?;
+                self.read_keys(1)?;
                 let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
                 // The record's rows: one key.
                 let mut positions = Vec::new();
-                let rows = self.t.records.get(&self.r, &id.to_be_bytes())?;
-                for row in dec_rows(rows.unwrap_or_default())? {
+                let rows =
+                    mass::read_record(&self.t, &self.r, id, self.mass, &mut |n| self.read_keys(n))?;
+                for row in rows {
                     if row.name != field {
                         continue;
                     }

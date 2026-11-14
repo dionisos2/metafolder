@@ -1532,6 +1532,9 @@ impl KvStore {
     /// which are filed under their dense id, are filed under the new one.
     pub fn reindex(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
+        // What the lists hold is written into the records first: the records
+        // are filed again below, and the rows are derived from them.
+        txn.fold_all_mass()?;
         txn.drop_left_behind()?;
         let order = {
             let r = txn.txn.borrow();
@@ -1577,7 +1580,9 @@ impl KvStore {
         }
         txn.fold_grams()?;
         txn.meta_put("derived", DERIVED_VERSION)?;
-        txn.finish()
+        txn.finish()?;
+        self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     /// Integrates what the writes left pending for a quiet moment: the
@@ -1585,9 +1590,12 @@ impl KvStore {
     /// store"). A reindex does as much.
     pub fn fold(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
+        txn.fold_all_mass()?;
         txn.fold_all_events()?;
         txn.fold_grams()?;
-        txn.finish()
+        txn.finish()?;
+        self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     /// Where the derived key spaces differ from what the primary data
@@ -1700,13 +1708,18 @@ impl KvStore {
         let mut parents: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
         let mut fields: HashMap<String, u32> = HashMap::new();
         let mut parent_of: HashMap<(u32, Uuid), (Vec<Uuid>, Option<u32>)> = HashMap::new();
-        for entry in t.records.iter(r)? {
-            let (k, v) = entry?;
-            let record_id = dense(k);
-            let Some(named) = t.uuids.get(r, k)? else {
+        let pending = self.mass_pending();
+        let mut parts = super::mass::Parts::default();
+        for record_id in super::mass::record_ids(t, r, pending)? {
+            let k = record_id.to_be_bytes();
+            let Some(named) = t.uuids.get(r, &k)? else {
                 diff.push(format!("records: dense id {record_id} names no metarecord"));
                 continue;
             };
+            // An id only an entry names may be a metarecord's that is gone.
+            if t.metarecords.get(r, named)?.is_none() {
+                continue;
+            }
             let uuid: [u8; 16] = named.try_into().expect("a 16-byte uuid");
             let id = Some(record_id);
             if id_of(t, r, &uuid)? != id {
@@ -1715,7 +1728,7 @@ impl KvStore {
                     Uuid::from_bytes(uuid)
                 ));
             }
-            let mut record = dec_rows(v)?;
+            let mut record = parts.rows(t, r, record_id, pending)?;
             // The fields of a record come together, in name order.
             record.sort_by(|a, b| a.name.cmp(&b.name));
             for row in record {

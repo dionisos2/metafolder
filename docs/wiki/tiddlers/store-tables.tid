@@ -23,7 +23,8 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 |!Table |!Key |!Value |!Serves |
 |`meta` |name |the id counters, HEAD, the layout and derived-format versions, the watcher's label | |
 |`metarecords` |uuid |empty |existence (the version is computed from the rows, [[Metarecord version]]) |
-|`records` |dense id |the rows: field name · value, each |a record's rows, in one read |
+|`records` |dense id |the rows: field name · value, each; then, if any, their numbers, tombs and cleared fields |a record's rows, in one read |
+|`mass` |part · operation number |field · kind · values · the ids of the part |the writes to many records not yet written into the records ([[Mass writes in the store]]) |
 |`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
 |`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
 |`ops` |op id |the operation |the log, in order ([[The operation log]]) |
