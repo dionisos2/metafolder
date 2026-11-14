@@ -23,7 +23,7 @@ in memory.
 |its parent out of the `parents` set, if it was the last child |a fact about ''another'' metarecord |
 |the operation and its snapshots |the log, appended ([[The operation log]]) |
 
-Everything else stays: the value, name and target partitions, the trigrams, the
+Everything else stays: the value and name partitions, the trigrams, the
 postings, the `present` / `absent` / `multi` sets, the referrers and descendants, the
 `kids`, the id's mapping to its uuid — and, in the primary tables, the `row_owner`
 and `by_field` entries of its rows and its key in `forest`. The same file of eight
@@ -32,7 +32,7 @@ universe.
 
 !! Why what is left is harmless
 
-* ''A dense id is never given again.'' What still names a deleted id names nothing; a metarecord created again under the same uuid (a revert of the deletion) gets a new id, so the old entries never come back to life.
+* ''A dense id is never given again.'' What still names a deleted id names nothing; a metarecord created again under the same uuid (a revert of the deletion) gets a new id, so the old entries never come back to life — and what points at that uuid, filed under the former id, is moved under the new one ([[Store tables]]).
 * ''Every answer is sifted through the universe.'' The query source intersects each bitmap it hands the evaluator with the universe, read once per query (`KvSource::sift`); a walk of a partition steps over the ids that are not in it. An entry is about one id, so a deleted id's entries cannot change what is said of another.
 * ''The primary leftovers name a row that is gone.'' A read of `row_owner` or `by_field` skips an entry whose cell is missing. A `forest` entry holds its metarecord's dense id beside its uuid, so listing a folder or resolving a path tests the id against the universe without another read; a new position written on such a key replaces it.
 

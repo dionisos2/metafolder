@@ -63,6 +63,12 @@ pub trait Source {
     fn uuid(&self, id: u32) -> Option<Uuid>;
     /// How many ids there are in uuid order (the span of a uuid-order walk).
     fn id_count(&self) -> u64;
+    /// Which numbering the ids are of: it changes whenever the source gives
+    /// its metarecords other ids (a reindex), so that what a client kept of
+    /// the ids — a page's cursor — is known to be of another one.
+    fn numbering(&self) -> u64 {
+        0
+    }
     /// Every `(uuid, id)` in uuid order, starting strictly after `after`.
     fn in_uuid_order(&self, after: Option<Uuid>) -> Box<dyn Iterator<Item = (Uuid, u32)> + '_>;
 

@@ -27,9 +27,9 @@ use uuid::Uuid;
 
 use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, part_prefix, read_set, text_key,
-    type_tag, value_key, MULTI, NAME, TARGET, VALUE,
+    type_tag, value_key, MULTI, NAME, VALUE,
 };
-use super::{dec_row, name_key, uuid_of, KvStore, Tables};
+use super::{dec_row, from_be, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
 use crate::index::plan;
 use crate::index::{unsupported, Follow, NamedNode, RepReader, Source, Unsupported, Walked};
@@ -355,6 +355,17 @@ impl KvSource<'_> {
     /// bitmap, a read per chunk.
     fn referrers_of(&self, field: &str, target: &[u8; 16]) -> RoaringBitmap {
         let read = || -> Result<RoaringBitmap> {
+            // Filed under the target's dense id; nothing points at a uuid
+            // that has none.
+            let target = if *target == [0; 16] {
+                derived::NO_TARGET
+            } else {
+                self.read_keys(1)?;
+                match self.t.ids.get(&self.r, target)? {
+                    Some(id) => dense(id),
+                    None => return Ok(RoaringBitmap::new()),
+                }
+            };
             let prefix = derived::referrers_prefix(field, target);
             let mut out = RoaringBitmap::new();
             for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
@@ -1163,6 +1174,14 @@ impl Source for KvSource<'_> {
         self.ok(r.map_err(Into::into), 0)
     }
 
+    fn numbering(&self) -> u64 {
+        let read = || -> Result<u64> {
+            self.read_keys(1)?;
+            Ok(self.t.meta.get(&self.r, derived::NUMBERING.as_bytes())?.map_or(0, from_be) as u64)
+        };
+        self.ok(read(), 0)
+    }
+
     fn in_uuid_order(&self, after: Option<Uuid>) -> Box<dyn Iterator<Item = (Uuid, u32)> + '_> {
         let after = after.map(|u| *u.as_bytes());
         let lo = match &after {
@@ -1447,8 +1466,31 @@ impl Source for KvSource<'_> {
     }
 
     fn tree_parents_except(&self, field: &str, except: Option<Uuid>) -> RoaringBitmap {
-        let except = except.map(|u| *u.as_bytes());
-        self.sift(self.all_but(field, TARGET, except.as_ref().map(|u| &u[..])))
+        // Every parent's referrers but that one's: a key per parent and
+        // 65 536 children, where the positions are a key each.
+        let read = || -> Result<RoaringBitmap> {
+            // The zero uuid is "no parent", which the roots are filed under.
+            let except = match except {
+                None => None,
+                Some(u) if u.is_nil() => Some(derived::NO_TARGET.to_be_bytes().to_vec()),
+                Some(u) => {
+                    self.read_keys(1)?;
+                    self.t.ids.get(&self.r, u.as_bytes())?.map(|id| id.to_vec())
+                }
+            };
+            let prefix = [&[derived::REFERRERS][..], &name_key(field)].concat();
+            let mut out = RoaringBitmap::new();
+            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+                let (k, v) = entry?;
+                self.read_keys(1)?;
+                if k.len() == prefix.len() + 6 && except.as_deref() != Some(&k[prefix.len()..][..4])
+                {
+                    out |= derived::decode_set(v)?;
+                }
+            }
+            Ok(out)
+        };
+        self.sift(self.ok(read(), RoaringBitmap::new()))
     }
 
     // Every forest keeps its descendant bitmaps; another field has none, and
@@ -1467,9 +1509,7 @@ impl Source for KvSource<'_> {
         let read = || -> Result<RoaringBitmap> {
             let mut out = RoaringBitmap::new();
             for id in of {
-                self.read_keys(1)?;
-                let Some(node) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
-                let prefix = derived::descendants_prefix(field, &uuid_of(node).into_bytes());
+                let prefix = derived::descendants_prefix(field, id);
                 for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
                     let (k, v) = entry?;
                     self.read_keys(1)?;

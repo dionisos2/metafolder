@@ -134,6 +134,31 @@ and sorting") :
   l'ordre entre deux pages ; et le curseur contient des ids denses → concerné
   par la question « reindex et ids denses ».
 
+ÉTAPE 5 FAITE (14 nov. 2026 ; doc "Store tables", § « Filed under the
+target's dense id » ; tests crates/daemon/tests/kv_targets.rs ;
+DERIVED_VERSION 8) :
+- `referrers`, `descendants` et `kids` sont rangés sous l'ID DENSE de la
+  cible (id 0 = « pas de parent », les racines). La partition `target` est
+  retirée (une clé de moins par ref / position) ; `tree_parents_except` lit
+  les referrers.
+- PAS FAIT, volontairement : la clé d'une valeur ref dans la partition
+  `value` (04 · uuid cible) et les valeurs dans les lignes primaires restent
+  en uuid. La partition `value` sera refondue aux étapes 6-7, les lignes
+  primaires à l'étape 8 (forme normale par id dense).
+- Cible sans metarecord (ref vers un uuid pas encore créé, enfant écrit avant
+  son parent) : un id lui est RÉSERVÉ tout de suite (ensemble `reserved`,
+  sets kind 10) ; le metarecord le prend à sa création.
+- Metarecord supprimé puis recréé (revert) : nouvel id (étape 1), et ce qui
+  était rangé sous l'ancien id en tant que cible est DÉPLACÉ sous le nouveau
+  (KvTxn::move_target : referrers et descendants de chaque champ de type
+  ref/tree_ref/hierarchy_ref, + kids). Coût : un parcours de field_types par
+  recréation.
+- Curseur : la garde inclut le compteur `numbering` (meta), incrémenté par
+  reindex → un curseur d'avant un reindex reçoit 400.
+- RÈGLE (décision « le reindex renumérote ») : reindex reconstruit tous les
+  index dérivés (donc ces clés) ; hors index, seules les valeurs de `forest`
+  portent un id dense aujourd'hui (stamp_forest_ids).
+
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
      résolution de chemin et clés de forêt vérifient universe, un nouveau
@@ -183,13 +208,13 @@ Conséquence : l'id dense devient une donnée primaire, d'où la question
 « reindex et ids denses » ci-dessous.
 
 Questions laissées ouvertes :
-- reindex et ids denses (À TRANCHER AVANT L'ÉTAPE 5) : `mf repo reindex`
-  renumérote les ids denses (next_id remis à 1, ordre de la forêt). Or le
-  plan range des ids denses dans des données durables : valeurs ref par id
-  dense de la cible (étape 5), bitmaps « avant » et résumés par bloc du
-  journal (étape 9), bitmap du curseur chez le client (étape 4). Rien ne dit
-  encore ce qu'ils deviennent après un reindex (les réécrire, ou ne plus
-  renuméroter) ;
+- reindex et ids denses : TRANCHÉ (utilisateur, 14 nov. 2026) : le reindex
+  CONTINUE de renuméroter (le regroupement des ids par dossier est une
+  optimisation jugée importante) et RÉÉCRIT tout ce qui contient un id dense.
+  Plus risqué, assumé. Conséquence pour chaque étape : tout nouvel endroit
+  qui range un id dense (valeurs ref, bitmaps et résumés du journal…) doit
+  être réécrit par le reindex, avec un test ; un curseur émis avant un
+  reindex doit être refusé (numéro d'époque des ids dans la garde) ;
 - invalider un curseur quand une écriture change l'ordre entre deux pages
   (important, plus tard) ;
 - retirer les ids de ligne (A.1) seulement si une étape y gagne ;

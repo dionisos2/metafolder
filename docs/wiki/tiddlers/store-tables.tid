@@ -58,7 +58,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`uuids` |dense id |uuid |
 |`sets` |kind · [field] · [key] · chunk |a roaring bitmap of dense ids |
 |`parts` |field · partition · key · dense id |rows (count) |
-|`kids` |parent uuid · field · dense id |rows (count) |
+|`kids` |parent's dense id · field · dense id |rows (count) |
 |`grams` |`0` · field · trigram · text key |empty: a distinct text holding the trigram |
 |`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |
 |`grams` |`2` · field |the field's trigram state: its mode, its counts |
@@ -85,17 +85,34 @@ chunk: a write rewrites one chunk, a read unions a few. The kinds:
 |present |field |the ids holding a value of the field |
 |absent |field |the ids holding `Nothing` in it |
 |parents |field |on a `tree_ref` field, the ids with a child |
-|referrers |field · target |the ids pointing at a uuid — a folder's children, a `ref`'s referrers ([[The forest in the store]]) |
-|descendants |field · node |every id below a node ([[The forest in the store]]) |
+|referrers |field · target's dense id |the ids pointing at a metarecord — a folder's children, a `ref`'s referrers ([[The forest in the store]]) |
+|descendants |field · node's dense id |every id below a node ([[The forest in the store]]) |
 |postings |field · value key |the holders of a frequent value ([[Sorting and postings]]) |
 |long texts |field |the ids whose text is too long for trigrams ([[Text search in the store]]) |
-|multi |field |the ids holding several rows of the field, whose sort representative a walk must read one by one |
+|multi |field |the ids holding several rows of the field, which a walk of its values meets more than once ([[Sorting and postings]]) |
 |pending trigrams |field |in a field whose trigrams are kept by metarecord, the ids written since the last fold ([[Text search in the store]]) |
+|reserved |— |the ids given to a uuid something points at and no metarecord has had |
 
 A ''partition'' (`parts`) lists a field's rows in the order of a key whose bytes sort
-like the values, so equality, ranges and sorts are range scans. Three per field:
-''value'' (the value itself), ''name'' (a `tree_ref`'s name), ''target'' (the uuid a
-value points at — its referent, or its parent).
+like the values, so equality, ranges and sorts are range scans. Two per field:
+''value'' (the value itself) and ''name'' (a `tree_ref`'s name). A third, by the uuid
+a value points at, was dropped in November 2026: a key per reference and per position
+written for one reader, which the referrers answer.
+
+!! Filed under the target's dense id
+
+What points at a metarecord — the referrers of a `ref`, the children and descendants
+of a folder — is filed under that metarecord's ''dense id'', not its uuid: following a
+reference from a set of ids reads their bitmaps without translating each id to a uuid,
+and the keys are 12 bytes shorter. A forest's roots are filed under id 0, which no
+metarecord has. A uuid pointed at before any metarecord has it (a reference to a
+record not yet created, a child written before its parent) is given an id at once,
+kept in the ''reserved'' set; the metarecord takes it when it comes.
+
+A dense id is not a metarecord's for life, so what is filed under one follows it:
+
+* a metarecord deleted and created again (a revert) gets a new id ([[Deleting a metarecord in the store]]); its referrers, descendants and `kids` are moved under the new one in the same write — a few keys per field holding references;
+* `mf repo reindex` numbers every metarecord again and rebuilds all of this. Whatever else holds a dense id must be rewritten by it — today the `forest` entries — and what a client holds is refused afterwards: a page's cursor is bound to the ''numbering'', a counter the reindex moves ([[Pagination and sorting]]).
 
 `kids` is the forest keyed by parent first, so a metarecord arriving or leaving finds
 the fields it is a parent in without a scan. `grams` holds the trigrams of a

@@ -518,7 +518,10 @@ impl Eval<'_> {
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         use std::cmp::Ordering;
         let _stage = crate::progress::stage("paging");
-        let guard = page_guard(roots.and_then(|r| r.cursor_query).unwrap_or(q), sort);
+        // Bound to the query, the sort, and the numbering of the ids, which
+        // the cursor holds some of.
+        let guard = page_guard(roots.and_then(|r| r.cursor_query).unwrap_or(q), sort)
+            ^ self.src.numbering().wrapping_mul(0x9E37_79B9_7F4A_7C15);
         let (after, given): (Option<SortEntry>, RoaringBitmap) = match cursor {
             None => (None, RoaringBitmap::new()),
             Some(c) => {

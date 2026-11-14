@@ -8,7 +8,7 @@
 //! | uuids | dense id                             | uuid                     |
 //! | sets  | kind · [field] · [key] · chunk       | a roaring bitmap         |
 //! | parts | field · partition · key · dense id   | rows (count)             |
-//! | kids  | parent uuid · field · dense id       | rows (count)             |
+//! | kids  | parent id · field · dense id         | rows (count)             |
 //! | grams | 0 · field · trigram · text key       | (empty)                  |
 //! | grams | 1 · field · trigram · chunk          | a roaring bitmap         |
 //! | grams | 2 · field                            | the field's trigram state|
@@ -51,8 +51,10 @@ use crate::store::Rows;
 /// The format of the derived key spaces. A store stamped with another (or
 /// none: a store from before they existed) is reindexed when it opens. 5:
 /// descendant bitmaps for every forest (4 kept `mfr_path`'s only); 6: the
-/// histograms; 7: the trigrams in two modes (doc "Text search in the store").
-pub(super) const DERIVED_VERSION: i64 = 7;
+/// histograms; 7: the trigrams in two modes (doc "Text search in the store");
+/// 8: what points at a metarecord filed under its dense id, and no target
+/// partition.
+pub(super) const DERIVED_VERSION: i64 = 8;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -62,12 +64,13 @@ pub(super) const PARENTS: u8 = 3;
 
 /// The texts too long to be split in trigrams (see [`TRIGRAM_MAX`]).
 pub(super) const LONG_TEXTS: u8 = 4;
-/// The ids pointing at a uuid in a field — a `ref`'s referrers, a folder's
-/// children — keyed by field *and* target: a folder filter is one bitmap,
-/// a read per 65 536 children (doc "Store tables", `children`).
+/// The ids pointing at a metarecord in a field — a `ref`'s referrers, a
+/// folder's children — keyed by field *and* the target's dense id
+/// ([`KvTxn::target_id`]): a folder filter is one bitmap, a read per 65 536
+/// children (doc "Store tables", `children`).
 pub(super) const REFERRERS: u8 = 5;
 
-/// Every id below a node of a forest, keyed by field and node — what makes a
+/// Every id below a node of a forest, keyed by field and the node's dense id — what makes a
 /// subtree one bitmap read (doc "The forest in the store").
 /// Kept for every `tree_ref` field: a node holds one position per forest
 /// (doc "One position per forest"), so the tree is a tree and a
@@ -92,6 +95,20 @@ pub(super) const MULTI: u8 = 8;
 /// them (doc "Text search in the store").
 pub(super) const GRAM_PENDING: u8 = 9;
 
+/// The dense ids given to a uuid something points at and no metarecord has
+/// had: a reference to a metarecord not created yet, a child written before
+/// its parent. The metarecord takes that id when it comes.
+pub(super) const RESERVED: u8 = 10;
+
+/// The `meta` counter of the numberings of the dense ids: a reindex, which
+/// numbers the metarecords again, moves it, and a cursor of an earlier
+/// numbering is refused (doc "Pagination and sorting").
+pub(super) const NUMBERING: &str = "numbering";
+
+/// The dense id standing for "no parent": what a forest's roots are filed
+/// under. No metarecord gets it — ids start at 1.
+pub(super) const NO_TARGET: u32 = 0;
+
 /// How many holders promote a value to a posting.
 pub(crate) const POSTING_MIN: u64 = 64;
 
@@ -103,13 +120,13 @@ pub(super) fn posting_prefix(field: &str, key: &[u8]) -> Vec<u8> {
 }
 
 /// The key of the descendants of `node` in `field`, without its chunk.
-pub(super) fn descendants_prefix(field: &str, node: &[u8; 16]) -> Vec<u8> {
-    [&[DESCENDANTS][..], &name_key(field), node].concat()
+pub(super) fn descendants_prefix(field: &str, node: u32) -> Vec<u8> {
+    [&[DESCENDANTS][..], &name_key(field), &node.to_be_bytes()].concat()
 }
 
 /// The key of the referrers of `target` in `field`, without its chunk.
-pub(super) fn referrers_prefix(field: &str, target: &[u8; 16]) -> Vec<u8> {
-    [&[REFERRERS][..], &name_key(field), target].concat()
+pub(super) fn referrers_prefix(field: &str, target: u32) -> Vec<u8> {
+    [&[REFERRERS][..], &name_key(field), &target.to_be_bytes()].concat()
 }
 
 /// The histogram bucket of a value key: the prefix of it that rows are
@@ -151,7 +168,6 @@ pub(crate) const TRIGRAM_MAX: usize = 512;
 /// Partitions.
 pub(super) const VALUE: u8 = 0;
 pub(super) const NAME: u8 = 1;
-pub(super) const TARGET: u8 = 2;
 
 const ZERO: [u8; 16] = [0; 16];
 
@@ -417,8 +433,8 @@ fn part_key(field: &str, part: u8, key: &[u8], id: u32) -> Vec<u8> {
     [&part_prefix(field, part)[..], key, &id.to_be_bytes()].concat()
 }
 
-fn kids_key(parent: &[u8; 16], field: &str, id: u32) -> Vec<u8> {
-    [&parent[..], &name_key(field), &id.to_be_bytes()].concat()
+fn kids_key(parent: u32, field: &str, id: u32) -> Vec<u8> {
+    [&parent.to_be_bytes()[..], &name_key(field), &id.to_be_bytes()].concat()
 }
 
 pub(super) fn dense(b: &[u8]) -> u32 {
@@ -516,7 +532,7 @@ impl KvTxn<'_> {
     /// Whether a metarecord that exists, other than `except`, is placed
     /// under `parent` in `field` — read off the parent's referrers, among
     /// which the children deleted since the last reindex still are.
-    fn has_live_kids(&self, parent: &[u8; 16], field: &str, except: Option<u32>) -> Result<bool> {
+    fn has_live_kids(&self, parent: u32, field: &str, except: Option<u32>) -> Result<bool> {
         let mut kids = self.read_chunked(SETS, &referrers_prefix(field, parent))?;
         if let Some(id) = except {
             kids.remove(id);
@@ -526,8 +542,9 @@ impl KvTxn<'_> {
 
     /// Whether a metarecord that exists is placed under `uuid`, in any field.
     pub(super) fn has_live_children(&self, uuid: Uuid) -> Result<bool> {
-        for field in self.parent_fields(uuid.as_bytes())? {
-            if self.has_live_kids(uuid.as_bytes(), &field, None)? {
+        let Some(id) = self.id(uuid.as_bytes())? else { return Ok(false) };
+        for field in self.parent_fields(id)? {
+            if self.has_live_kids(id, &field, None)? {
                 return Ok(true);
             }
         }
@@ -715,32 +732,107 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// The fields in which `uuid` has children.
-    fn parent_fields(&self, uuid: &[u8; 16]) -> Result<BTreeSet<String>> {
+    /// The fields in which the metarecord of dense id `parent` has children.
+    fn parent_fields(&self, parent: u32) -> Result<BTreeSet<String>> {
         let mut out = BTreeSet::new();
-        for entry in self.t.kids.prefix_iter(&self.txn.borrow(), uuid)? {
+        for entry in self.t.kids.prefix_iter(&self.txn.borrow(), &parent.to_be_bytes())? {
             let (k, _) = entry?;
-            let (field, _) = unesc(&k[16..])?;
+            let (field, _) = unesc(&k[4..])?;
             out.insert(String::from_utf8(field).context("a field name")?);
         }
         Ok(out)
     }
 
-    /// A metarecord was created: it gets the next dense id, in the universe,
-    /// and in `parents` wherever rows already hang below it (a revert may put
-    /// a child back before its parent).
-    pub(super) fn derive_created(&self, uuid: Uuid) -> Result<()> {
-        let id = u32::try_from(self.next("next_id")?).context("dense ids exhausted")?;
-        {
-            let mut w = self.txn.borrow_mut();
-            self.t.ids.put(&mut w, uuid.as_bytes(), &id.to_be_bytes())?;
-            self.t.uuids.put(&mut w, &id.to_be_bytes(), uuid.as_bytes())?;
+    /// The dense id a target — a `ref`'s referent, a position's parent, as
+    /// [`target_of`] gives it — is filed under: [`NO_TARGET`] for no parent,
+    /// the metarecord's id, or one reserved for a uuid no metarecord has had.
+    fn target_id(&self, target: &[u8; 16]) -> Result<u32> {
+        if *target == ZERO {
+            return Ok(NO_TARGET);
         }
+        if let Some(id) = self.id(target)? {
+            return Ok(id);
+        }
+        let id = self.new_id(target)?;
+        self.set_member(RESERVED, None, id, true)?;
+        Ok(id)
+    }
+
+    /// The next dense id, given to `uuid`.
+    fn new_id(&self, uuid: &[u8; 16]) -> Result<u32> {
+        let id = u32::try_from(self.next("next_id")?).context("dense ids exhausted")?;
+        let mut w = self.txn.borrow_mut();
+        self.t.ids.put(&mut w, uuid, &id.to_be_bytes())?;
+        self.t.uuids.put(&mut w, &id.to_be_bytes(), uuid)?;
+        Ok(id)
+    }
+
+    /// Whether `id` was reserved for a uuid no metarecord has had.
+    fn reserved(&self, id: u32) -> Result<bool> {
+        let mut found = false;
+        self.with_chunk(SETS, &set_prefix(RESERVED, None), (id >> 16) as u16, &mut |bm| {
+            found = bm.contains(id);
+        })?;
+        Ok(found)
+    }
+
+    /// A metarecord was created: it gets a dense id, in the universe, and
+    /// is in `parents` wherever rows already hang below it (a revert may put
+    /// a child back before its parent). The id is the one reserved for its
+    /// uuid when something pointed at it first; otherwise the next one — a
+    /// new one too for a uuid that had a metarecord before, whose former id
+    /// still names what that one left in the indexes (doc "Deleting a
+    /// metarecord in the store"): what points at the uuid is then filed
+    /// under the new id.
+    pub(super) fn derive_created(&self, uuid: Uuid) -> Result<()> {
+        let id = match self.id(uuid.as_bytes())? {
+            Some(reserved) if self.reserved(reserved)? => {
+                self.set_member(RESERVED, None, reserved, false)?;
+                reserved
+            }
+            Some(former) => {
+                let id = self.new_id(uuid.as_bytes())?;
+                self.move_target(former, id)?;
+                id
+            }
+            None => self.new_id(uuid.as_bytes())?,
+        };
         self.set_member(UNIVERSE, None, id, true)?;
-        for field in self.parent_fields(uuid.as_bytes())? {
-            if self.has_live_kids(uuid.as_bytes(), &field, None)? {
+        for field in self.parent_fields(id)? {
+            if self.has_live_kids(id, &field, None)? {
                 self.set_member(PARENTS, Some(&field), id, true)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Files under `to` what was filed under the target `from`: its
+    /// referrers and its descendants in every field that holds references,
+    /// and its children.
+    fn move_target(&self, from: u32, to: u32) -> Result<()> {
+        let mut fields: BTreeSet<String> = BTreeSet::new();
+        for entry in self.t.field_types.iter(&self.txn.borrow())? {
+            let (name, ty) = unesc(entry?.0)?;
+            if matches!(ty, b"ref" | b"tree_ref" | b"hierarchy_ref") {
+                fields.insert(String::from_utf8(name).context("a field name")?);
+            }
+        }
+        for field in &fields {
+            for prefix in [referrers_prefix, descendants_prefix] {
+                let ids = self.read_chunked(SETS, &prefix(field, from))?;
+                self.chunk_apply(SETS, &prefix(field, from), &ids, false)?;
+                self.chunk_apply(SETS, &prefix(field, to), &ids, true)?;
+            }
+        }
+        let mut w = self.txn.borrow_mut();
+        let mut kids = Vec::new();
+        for entry in self.t.kids.prefix_iter(&w, &from.to_be_bytes())? {
+            let (k, v) = entry?;
+            kids.push((k.to_vec(), v.to_vec()));
+        }
+        for (k, v) in kids {
+            self.t.kids.delete(&mut w, &k)?;
+            self.t.kids.put(&mut w, &[&to.to_be_bytes()[..], &k[4..]].concat(), &v)?;
         }
         Ok(())
     }
@@ -766,10 +858,9 @@ impl KvTxn<'_> {
         }
         if value.position().is_some() {
             let parent = target_of(value).expect("a position has a parent key");
-            let (Some(id), Some(pid)) = (self.id(uuid.as_bytes())?, self.id(&parent)?) else {
-                return Ok(());
-            };
-            if !self.has_live_kids(&parent, field, Some(id))? {
+            let pid = self.target_id(&parent)?;
+            let Some(id) = self.id(uuid.as_bytes())? else { return Ok(()) };
+            if pid != NO_TARGET && !self.has_live_kids(pid, field, Some(id))? {
                 self.set_member(PARENTS, Some(field), pid, false)?;
             }
         }
@@ -806,19 +897,19 @@ impl KvTxn<'_> {
         if let Some(k) = name_part_key(value) {
             self.bump(self.t.parts, &part_key(field, NAME, &k, id), delta)?;
         }
-        if let Some(target) = target_of(value) {
-            self.bump(self.t.parts, &part_key(field, TARGET, &target, id), delta)?;
-        }
         let rows = Rows::rows_named(self, uuid, field)?;
-        if value.position().is_some() {
-            let parent = target_of(value).expect("a position has a parent key");
-            self.bump(self.t.kids, &kids_key(&parent, field, id), delta)?;
-            if let Some(pid) = self.id(&parent)? {
+        // What the row points at, by the dense id it is filed under.
+        let target = match target_of(value) {
+            Some(target) => Some((target, self.target_id(&target)?)),
+            None => None,
+        };
+        if let (Some((parent, pid)), true) = (target, value.position().is_some()) {
+            self.bump(self.t.kids, &kids_key(pid, field, id), delta)?;
+            if pid != NO_TARGET {
                 // The parent's referrers still hold `id` (they are brought up
                 // to date below): it counts only if it keeps a row there.
                 let stays = rows.iter().any(|r| target_of(&r.value) == Some(parent));
-                let member =
-                    delta > 0 || self.has_live_kids(&parent, field, (!stays).then_some(id))?;
+                let member = delta > 0 || self.has_live_kids(pid, field, (!stays).then_some(id))?;
                 self.set_member(PARENTS, Some(field), pid, member)?;
             }
         }
@@ -839,9 +930,9 @@ impl KvTxn<'_> {
                 rows.iter().filter_map(|r| search_text(&r.value)).any(|t| t.len() > TRIGRAM_MAX);
             self.set_member(LONG_TEXTS, Some(field), id, long)?;
         }
-        if let Some(target) = target_of(value) {
+        if let Some((target, tid)) = target {
             let held = rows.iter().any(|r| target_of(&r.value) == Some(target));
-            self.chunk_member(SETS, &referrers_prefix(field, &target), id, held)?;
+            self.chunk_member(SETS, &referrers_prefix(field, tid), id, held)?;
         }
         match value {
             Value::TreeRef { parent: Some(parent), .. } => {
@@ -1008,11 +1099,11 @@ impl KvTxn<'_> {
     ) -> Result<()> {
         let ancestors = self.hierarchy_ancestors(field, parent)?;
         if add {
-            let mut moving =
-                self.read_chunked(SETS, &descendants_prefix(field, uuid.as_bytes()))?;
+            let _ = uuid;
+            let mut moving = self.read_chunked(SETS, &descendants_prefix(field, id))?;
             moving.insert(id);
             for ancestor in &ancestors {
-                let prefix = descendants_prefix(field, ancestor.as_bytes());
+                let prefix = descendants_prefix(field, self.target_id(ancestor.as_bytes())?);
                 self.chunk_apply(SETS, &prefix, &moving, true)?;
             }
             return Ok(());
@@ -1022,7 +1113,7 @@ impl KvTxn<'_> {
             recomputed.push(self.reachable_below(field, *ancestor, &ancestors)?);
         }
         for (ancestor, now) in ancestors.iter().zip(recomputed) {
-            let prefix = descendants_prefix(field, ancestor.as_bytes());
+            let prefix = descendants_prefix(field, self.target_id(ancestor.as_bytes())?);
             let before = self.read_chunked(SETS, &prefix)?;
             self.chunk_apply(SETS, &prefix, &(&before - &now), false)?;
             self.chunk_apply(SETS, &prefix, &(&now - &before), true)?;
@@ -1068,7 +1159,7 @@ impl KvTxn<'_> {
                 if walked.contains(&child) {
                     todo.push(child);
                 } else {
-                    out |= self.read_chunked(SETS, &descendants_prefix(field, child.as_bytes()))?;
+                    out |= self.read_chunked(SETS, &descendants_prefix(field, child_id))?;
                 }
             }
         }
@@ -1077,7 +1168,8 @@ impl KvTxn<'_> {
 
     /// The nodes placed directly under `parent` in `field`, with their ids.
     fn children_of(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, u32)>> {
-        let prefix = [&parent.as_bytes()[..], &name_key(field)].concat();
+        let pid = self.target_id(parent.as_bytes())?;
+        let prefix = [&pid.to_be_bytes()[..], &name_key(field)].concat();
         let r = self.txn.borrow();
         let mut out = Vec::new();
         for entry in self.t.kids.prefix_iter(&r, &prefix)? {
@@ -1101,12 +1193,14 @@ impl KvTxn<'_> {
         parent: Uuid,
         add: bool,
     ) -> Result<()> {
-        let mut moving = self.read_chunked(SETS, &descendants_prefix(field, uuid.as_bytes()))?;
+        let _ = uuid;
+        let mut moving = self.read_chunked(SETS, &descendants_prefix(field, id))?;
         moving.insert(id);
         let mut up = Some(parent);
         for _ in 0..crate::log::MAX_TREE_DEPTH {
             let Some(ancestor) = up else { return Ok(()) };
-            self.chunk_apply(SETS, &descendants_prefix(field, ancestor.as_bytes()), &moving, add)?;
+            let above = self.target_id(ancestor.as_bytes())?;
+            self.chunk_apply(SETS, &descendants_prefix(field, above), &moving, add)?;
             up = Rows::rows_named(self, ancestor, field)?.into_iter().find_map(|r| match r.value {
                 Value::TreeRef { parent, .. } => parent,
                 _ => None,
@@ -1274,6 +1368,7 @@ impl KvStore {
         txn.drop_left_behind()?;
         txn.clear_derived()?;
         txn.meta_put("next_id", 1)?;
+        txn.next(NUMBERING)?;
         let order = {
             let r = txn.txn.borrow();
             let mut seen = BTreeSet::new();
@@ -1462,15 +1557,28 @@ impl KvStore {
             if let Some(key) = name_part_key(&row.value) {
                 *group.parts.entry((NAME, key)).or_default() += 1;
             }
-            if let Some(target) = target_of(&row.value) {
-                *group.parts.entry((TARGET, target.to_vec())).or_default() += 1;
+            // What the row points at, by the dense id it is filed under.
+            let target = match target_of(&row.value) {
+                Some(target) if target == ZERO => Some(NO_TARGET),
+                Some(target) => {
+                    let id = id_of(t, r, &target)?;
+                    if id.is_none() {
+                        diff.push(format!(
+                            "ids: {} is pointed at and has no dense id",
+                            uuid_of(&target)
+                        ));
+                    }
+                    id
+                }
+                None => None,
+            };
+            if let Some(target) = target {
                 group.targets.insert(target);
             }
-            if let Some((parent, _)) = row.value.position() {
+            if let (Some((parent, _)), Some(target)) = (row.value.position(), target) {
                 let parent = &parent;
-                let target = target_of(&row.value).expect("a position has a parent key");
                 *group.kids.entry(target).or_default() += 1;
-                if let Some(parent_id) = id_of(t, r, &target)?.filter(|id| live.contains(*id)) {
+                if let Some(parent_id) = Some(target).filter(|id| live.contains(*id)) {
                     match parents.get_mut(&row.name) {
                         Some(set) => {
                             set.insert(parent_id);
@@ -1523,15 +1631,19 @@ impl KvStore {
                 if !seen.insert(ancestor) {
                     continue;
                 }
-                let entry = Entry {
-                    space: DESCENDANT,
-                    tag: 0,
-                    field: names[field],
-                    key: ancestor.as_bytes(),
-                    id,
-                    count: 1,
-                };
-                sink(Side::Expected, entry)?;
+                // An ancestor without an id was reported with the row that
+                // points at it.
+                if let Some(above) = id_of(t, r, ancestor.as_bytes())? {
+                    let entry = Entry {
+                        space: DESCENDANT,
+                        tag: 0,
+                        field: names[field],
+                        key: &above.to_be_bytes(),
+                        id,
+                        count: 1,
+                    };
+                    sink(Side::Expected, entry)?;
+                }
                 if let Some((parents, _)) = parent_of.get(&(*field, ancestor)) {
                     todo.extend(parents.iter().copied());
                 }
@@ -1543,16 +1655,17 @@ impl KvStore {
         for entry in t.sets.iter(r)? {
             let (k, v) = entry?;
             let kind = k[0];
-            if kind == POSTINGS || kind == GRAM_PENDING {
-                // Not an equality: see `check_postings`, and `GramCheck`.
+            if kind == POSTINGS || kind == GRAM_PENDING || kind == RESERVED {
+                // Not an equality: see `check_postings`, and `GramCheck`; a
+                // reserved id is no metarecord's.
                 continue;
             }
             let (name, rest) =
                 if kind == UNIVERSE { (Vec::new(), &k[1..]) } else { unesc(&k[1..])? };
             let field = std::str::from_utf8(&name).context("a field name")?;
             let (space, tag, key) = match kind {
-                REFERRERS => (REFERRER, 0, &rest[..16]),
-                DESCENDANTS => (DESCENDANT, 0, &rest[..16]),
+                REFERRERS => (REFERRER, 0, &rest[..4]),
+                DESCENDANTS => (DESCENDANT, 0, &rest[..4]),
                 _ => (SET, kind, &rest[..0]),
             };
             for id in decode_set(v)? {
@@ -1578,12 +1691,12 @@ impl KvStore {
         }
         for entry in t.kids.iter(r)? {
             let (k, v) = entry?;
-            let (name, rest) = unesc(&k[16..])?;
+            let (name, rest) = unesc(&k[4..])?;
             let entry = Entry {
                 space: KID,
                 tag: 0,
                 field: std::str::from_utf8(&name).context("a field name")?,
-                key: &k[..16],
+                key: &k[..4],
                 id: dense(rest),
                 count: from_be(v),
             };
@@ -1799,11 +1912,21 @@ impl<'a> Entry<'a> {
             None => format!("dense id {} (no metarecord)", self.id),
         };
         let field = self.field;
+        // What the entry is filed under, for the key spaces keyed by a
+        // target's dense id.
+        let target = || -> Result<String> {
+            let id = dense(self.key);
+            Ok(match t.uuids.get(r, self.key)? {
+                _ if id == NO_TARGET => "no parent".to_string(),
+                Some(uuid) => uuid_of(uuid).to_string(),
+                None => format!("dense id {id} (no uuid)"),
+            })
+        };
         Ok(match self.space {
             SET => format!("({}, {field:?}, {who})", self.tag),
-            REFERRER | DESCENDANT => format!("({field:?}, {}, {who})", uuid_of(self.key)),
+            REFERRER | DESCENDANT => format!("({field:?}, {}, {who})", target()?),
             PART => format!("({field:?}, {}, {:?}, {who}): {}", self.tag, self.key, self.count),
-            _ => format!("({}, {field:?}, {who}): {}", uuid_of(self.key), self.count),
+            _ => format!("({}, {field:?}, {who}): {}", target()?, self.count),
         })
     }
 }
@@ -1815,11 +1938,13 @@ struct Group {
     id: Option<u32>,
     field: String,
     parts: BTreeMap<(u8, Vec<u8>), i64>,
-    kids: BTreeMap<[u8; 16], i64>,
+    /// Rows per parent, by the parent's dense id.
+    kids: BTreeMap<u32, i64>,
     /// Each trigram of the field's short texts, with the text's key
     /// ([`text_part_key`]).
     grams: BTreeSet<([u8; 3], Vec<u8>)>,
-    targets: BTreeSet<[u8; 16]>,
+    /// The dense ids of what the rows point at.
+    targets: BTreeSet<u32>,
     /// Non-`Nothing` rows.
     valued: usize,
     absent: bool,
@@ -1839,10 +1964,10 @@ impl Group {
             emit(PART, *part, key, *rows)?;
         }
         for (parent, rows) in &self.kids {
-            emit(KID, 0, parent, *rows)?;
+            emit(KID, 0, &parent.to_be_bytes(), *rows)?;
         }
         for target in &self.targets {
-            emit(REFERRER, 0, target, 1)?;
+            emit(REFERRER, 0, &target.to_be_bytes(), 1)?;
         }
         let kinds = [
             (PRESENT, self.valued > 0),

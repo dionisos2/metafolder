@@ -52,8 +52,9 @@ It is valid only for the same query and sort — otherwise `400` `invalid cursor
 was issued for a different query or sort` — and does not expire. It grows with the
 pages read, by a compressed set of those items: use each page's `next_cursor` for the
 next page, starting from the first — a cursor is not a position to jump to. A cursor
-of an earlier daemon's format is refused (`400 invalid cursor`): start again from the
-first page. Resuming is "strictly after the last item", so pages
+of an earlier daemon's format, or issued before a `mf repo reindex` — which gives the
+metarecords other ids — is refused (`400 invalid cursor`): start again from the first
+page. Resuming is "strictly after the last item", so pages
 are stable against metarecords added or removed in the part already read; a
 metarecord whose sort value changes between two pages may come twice or be skipped,
 which keyset pagination over live data accepts.
