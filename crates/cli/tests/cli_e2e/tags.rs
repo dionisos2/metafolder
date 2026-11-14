@@ -127,35 +127,17 @@ fn test_mf_tag_subsumption_deny_list() {
     tag(&["-i", &rec, "remove", "musique/rock"]);
     assert_eq!(names("tag"), vec!["musique/jazz"]);
 
-    // The record's single `tag` row id, to tell an untouched row from a rewritten one.
-    let tag_row_id = || -> i64 {
-        let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "get"]);
-        assert_ok(&out);
-        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-        let ids: Vec<i64> = value[0]["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|f| f["name"] == "tag")
-            .map(|f| f["id"].as_i64().unwrap())
-            .collect();
-        assert_eq!(ids.len(), 1, "expected one tag row: {}", out.stdout);
-        ids[0]
-    };
-
     // bebop's ancestor jazz is present → dropped on add.
     tag(&["-i", &rec, "add", "musique/jazz/bebop"]);
     assert_eq!(names("tag"), vec!["musique/jazz/bebop"]);
 
     // Re-adding is idempotent, and writes nothing at all: the daemon refuses to
-    // duplicate the row (doc "No duplicate rows"), so the existing
-    // row keeps its id and no metarecord is counted as having gained one.
-    let before = tag_row_id();
+    // duplicate the row (doc "No duplicate rows"), so no metarecord is
+    // counted as having gained one.
     let again = mf(&["-u", &repo, "tag", "-i", &rec, "add", "musique/jazz/bebop"]);
     assert_ok(&again);
     assert_eq!(again.stdout.trim(), "0", "nothing gained a row");
     assert_eq!(names("tag"), vec!["musique/jazz/bebop"]);
-    assert_eq!(tag_row_id(), before, "the row that already held the tag is untouched");
 
     // A path absent from the vocabulary is auto-created as a node chain
     // (cinema → cinema/thriller) by `ensure_tag_entry`. It is unrelated to bebop,

@@ -60,7 +60,6 @@ pub const SCENARIOS: &[Scenario] = &[
         &[(G, "/repos/:repo/metarecords/:uuid/fields/:name/resolve-tree")],
     ),
     s("api.metarecord.mf_sync", &[(G, "/repos/:repo/metarecords/:uuid/mf-sync")]),
-    s("api.field.get", &[(G, "/repos/:repo/fields/:id")]),
     s("api.fields", &[(G, "/repos/:repo/fields")]),
     s("api.tree.roots", &[(G, "/repos/:repo/tree/roots")]),
     s("api.tree.children", &[(G, "/repos/:repo/tree/children")]),
@@ -100,8 +99,6 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.metarecord.field_replace", &[("PATCH", "/repos/:repo/metarecords/:uuid/fields/:name")]),
     s("api.metarecord.field_rename", &[(P, "/repos/:repo/metarecords/:uuid/fields/:name/rename")]),
     s("api.metarecord.refresh", &[(P, "/repos/:repo/metarecords/:uuid/refresh")]),
-    s("api.field.patch", &[("PATCH", "/repos/:repo/fields/:id")]),
-    s("api.field.delete", &[("DELETE", "/repos/:repo/fields/:id")]),
     s("api.retype", &[(P, "/repos/:repo/retype")]),
     s("api.query.set", &[(P, "/repos/:repo/query/fields/set")]),
     s("api.query.add", &[(P, "/repos/:repo/query/fields/add")]),
@@ -187,8 +184,6 @@ pub struct Ctx {
     pub paths: Vec<String>,
     /// The first directory of the generated tree.
     pub dir0: String,
-    /// The sample's `rating` row.
-    pub rating_row: i64,
     /// A label, and an operation twenty back from HEAD: what the plans
     /// look back to, and what the prune keeps from (after the warm-up, there
     /// is nothing left before it to prune).
@@ -300,7 +295,6 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         "api.metarecord.mf_sync" => {
             get(&format!("{base}/metarecords/{sample}/mf-sync")).await?;
         }
-        "api.field.get" => drop(get(&format!("{base}/fields/{}", c.rating_row)).await?),
         "api.fields" => drop(get(&format!("{base}/fields")).await?),
         "api.tree.roots" => drop(get(&format!("{base}/tree/roots")).await?),
         "api.tree.children" => {
@@ -434,20 +428,6 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
         }
         "api.metarecord.refresh" => {
             post(&format!("{base}/metarecords/{sample}/refresh"), json!({})).await?;
-        }
-        "api.field.patch" => {
-            send(
-                "PATCH",
-                &format!("{base}/fields/{}", c.rating_row),
-                Some(&json!({"value": int(next_seq() % 10)})),
-            )
-            .await?;
-        }
-        "api.field.delete" => {
-            let u = scratch(base).await?;
-            let record = get(&format!("{base}/metarecords/{u}")).await?;
-            let row = record["fields"][0]["id"].as_i64().context("a field row id")?;
-            send("DELETE", &format!("{base}/fields/{row}"), None).await?;
         }
         "api.retype" => {
             // One row, its type turned back and forth.
@@ -713,12 +693,6 @@ pub async fn prepare(url: &str, dir: &Path, peer_dir: &Path) -> Result<Ctx> {
     anyhow::ensure!(paths.len() == page.len(), "every file of the page has a path");
     let dir0 = post(&format!("{base}/tree/resolve-path"), json!({"path": "/dir0"})).await?;
     let dir0 = dir0["uuid"].as_str().context("/dir0 resolves")?.to_string();
-    let record = get(&format!("{base}/metarecords/{sample}")).await?;
-    let rating_row = record["fields"]
-        .as_array()
-        .and_then(|f| f.iter().find(|f| f["name"] == "rating"))
-        .and_then(|f| f["id"].as_i64())
-        .context("the sample's rating row")?;
     // The retyped field, one row.
     send(
         "PUT",
@@ -763,7 +737,6 @@ pub async fn prepare(url: &str, dir: &Path, peer_dir: &Path) -> Result<Ctx> {
         page,
         paths,
         dir0,
-        rating_row,
         label_id,
         older_op,
         peer,

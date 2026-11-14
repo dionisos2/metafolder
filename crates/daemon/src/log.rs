@@ -830,7 +830,7 @@ impl<'c> Writer<'c> {
             self.validate_value_type(&f.name, &f.value)?;
             let id = self.tx.insert_row(uuid, &f.name, &f.value, None)?;
             after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
-            out_fields.push(Field { id: Some(id), ..f });
+            out_fields.push(f);
         }
 
         self.log_op(OpType::CreateRecord, uuid, None, vec![], after)?;
@@ -886,7 +886,7 @@ impl<'c> Writer<'c> {
             self.validate_value_type(&f.name, &f.value)?;
             let id = self.tx.insert_row(uuid, &f.name, &f.value, None)?;
             after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
-            out_fields.push(Field { id: Some(id), ..f });
+            out_fields.push(f);
         }
         self.log_op(OpType::SetRecord, uuid, None, before, after)?;
         // A hash of the content (doc "Metarecord version"): read back, never

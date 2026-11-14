@@ -756,18 +756,16 @@ fn parse_external_ref(s: &str) -> Option<Value> {
 }
 
 /// A field: name + value. Multiple fields can share the same name (multi-map).
-/// `id` is the database row id; present in API responses, absent in requests.
+/// A row has no identity beyond the two (doc "No duplicate rows").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Field {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<i64>,
     pub name: String,
     pub value: Value,
 }
 
 impl Field {
     pub fn new(name: impl Into<String>, value: Value) -> Self {
-        Self { id: None, name: name.into(), value }
+        Self { name: name.into(), value }
     }
 }
 
@@ -1337,27 +1335,29 @@ mod tests {
         }
     }
 
-    // ── Field: id handling ───────────────────────────────────────────────────
+    // ── Field: its wire form ─────────────────────────────────────────────────
 
     #[test]
-    fn test_field_id_omitted_when_none() {
+    fn test_field_is_its_name_and_value() {
         let f = Field::new("rating", Value::Int(5));
         let json = serde_json::to_string(&f).unwrap();
         assert_eq!(json, r#"{"name":"rating","value":{"type":"int","value":5}}"#);
     }
 
+    /// What a client of an older contract still sends is read, its row id
+    /// ignored.
     #[test]
-    fn test_field_id_present_when_some() {
-        let f = Field { id: Some(42), name: "rating".into(), value: Value::Int(5) };
-        let json = serde_json::to_string(&f).unwrap();
-        assert_eq!(json, r#"{"id":42,"name":"rating","value":{"type":"int","value":5}}"#);
+    fn test_field_deserialize_ignores_a_row_id() {
+        let f: Field =
+            serde_json::from_str(r#"{"id":42,"name":"rating","value":{"type":"int","value":5}}"#)
+                .unwrap();
+        assert_eq!(f, Field::new("rating", Value::Int(5)));
     }
 
     #[test]
-    fn test_field_deserialize_without_id() {
+    fn test_field_deserialize() {
         let f: Field =
             serde_json::from_str(r#"{"name":"rating","value":{"type":"int","value":5}}"#).unwrap();
-        assert_eq!(f.id, None);
         assert_eq!(f.name, "rating");
     }
 
@@ -1366,15 +1366,11 @@ mod tests {
     #[test]
     fn test_record_json_format() {
         let uuid = Uuid::parse_str("8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8").unwrap();
-        let m = MetaRecord {
-            uuid,
-            version: 3,
-            fields: vec![Field { id: Some(43), name: "rating".into(), value: Value::Int(5) }],
-        };
+        let m = MetaRecord { uuid, version: 3, fields: vec![Field::new("rating", Value::Int(5))] };
         let json = serde_json::to_string(&m).unwrap();
         assert_eq!(
             json,
-            r#"{"uuid":"8f3a2b1c4d5e6f708192a3b4c5d6e7f8","version":3,"fields":[{"id":43,"name":"rating","value":{"type":"int","value":5}}]}"#
+            r#"{"uuid":"8f3a2b1c4d5e6f708192a3b4c5d6e7f8","version":3,"fields":[{"name":"rating","value":{"type":"int","value":5}}]}"#
         );
     }
 

@@ -66,7 +66,7 @@ empty, and a client falls back to a full refresh. The GUI's change feed is built
 "is_head", "operation_count"}, "operations": [{"id", "label_id", "timestamp", "origin",
 "op_type", "entity_uuid", "field_name", "snapshots_before", "snapshots_after"}, …]}`, a
 snapshot being a row in column form
-(`{"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 3}`). Only
+(`{"field_name": "rating", "value_type": "int", "value_int": 3}`). Only
 the label's ''own'' operations are listed — its children are labels of their own. A label
 may hold a whole reconcile, so `offset`/`limit` window its operations and `op` picks one
 (`404` if not in it); `is_head` and `operation_count` always describe the whole label.

@@ -16,7 +16,7 @@ fn test_create_and_get_by_uuid() {
     let rating = fields.iter().find(|f| f["name"] == "rating").expect("rating field");
     assert_eq!(rating["value"]["type"], "int");
     assert_eq!(rating["value"]["value"], 5);
-    assert!(rating["id"].is_i64(), "mf get must include field ids");
+    assert!(rating.get("id").is_none(), "a field is its name and value");
 }
 
 #[test]
@@ -593,9 +593,10 @@ fn test_field_replace_and_rename_need_one_metarecord() {
 
 /// One vocabulary across the daemon, the CLI and the GUI: `set` / `add` /
 /// `remove` / `unset` take a *value* out of a multi-map field, while `delete`
-/// stays reserved for destroying an entity (`mf metarecord delete`, and the
-/// row-addressed `mf field delete <id>`). The field-level verb used to be
-/// `delete`, which collided with that meaning; it is gone rather than aliased.
+/// stays reserved for destroying an entity (`mf metarecord delete`). The
+/// field-level verb used to be `delete`, which collided with that meaning; it
+/// is gone rather than aliased — and so are the verbs that named a row by its
+/// id (`mf field get|set|delete <id>`), a row being its name and value.
 #[test]
 fn test_field_delete_verb_is_gone() {
     let (repo, _root) = init_repo("field_delete_gone");
@@ -604,11 +605,10 @@ fn test_field_delete_verb_is_gone() {
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "delete", "tag:string=test"]);
     assert_eq!(out.code, 2, "unknown verb is a usage error.\nstderr: {}", out.stderr);
 
-    // The row-addressed form keeps `delete`: it destroys a directly-named row,
-    // it does not take a value out of a multi-map.
-    let entries = get_entries(&repo, &uuid);
-    let id = entries[0]["fields"][0]["id"].as_i64().unwrap();
-    assert_ok(&mf(&["-u", &repo, "field", "delete", &id.to_string()]));
+    for verb in [&["get", "1"][..], &["set", "1", "tag:string=x"], &["delete", "1"]] {
+        let out = mf(&[&["-u", &repo, "field"][..], verb].concat());
+        assert_eq!(out.code, 2, "mf field {verb:?} is gone.\nstderr: {}", out.stderr);
+    }
 }
 
 #[test]
@@ -637,26 +637,6 @@ fn test_remove_by_predicate_prints_changed_count() {
         mf(&["-u", &repo, "metarecord", "-q", r#"tag = "keep""#, "get"]).stdout.lines().count(),
         2
     );
-}
-
-#[test]
-fn test_unset_deletes_single_row_by_id() {
-    let (repo, _root) = init_repo("unset");
-    let uuid = create_metarecord(&repo, &["genre:string=jazz", "genre:string=blues"]);
-    let entries = get_entries(&repo, &uuid);
-    let fields = entries[0]["fields"].as_array().unwrap();
-    let jazz_id = fields
-        .iter()
-        .find(|f| f["value"]["value"] == "jazz")
-        .and_then(|f| f["id"].as_i64())
-        .expect("jazz row id");
-    let out = mf(&["-u", &repo, "field", "delete", &jazz_id.to_string()]);
-    assert_ok(&out);
-    let entries = get_entries(&repo, &uuid);
-    let fields = entries[0]["fields"].as_array().unwrap();
-    let genres: Vec<&serde_json::Value> = fields.iter().filter(|f| f["name"] == "genre").collect();
-    assert_eq!(genres.len(), 1);
-    assert_eq!(genres[0]["value"]["value"], "blues");
 }
 
 #[test]
@@ -925,33 +905,6 @@ fn test_field_multi_value_set_and_unset() {
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "unset", "tag"]);
     assert_ok(&out);
     assert_eq!(count_tags(&uuid), 0);
-}
-
-#[test]
-fn test_field_by_id_get_set_delete() {
-    let (repo, _root) = init_repo("fbyid");
-    let uuid = create_metarecord(&repo, &["rating:int=5"]);
-    let entries = get_entries(&repo, &uuid);
-    let id = entries.as_array().unwrap()[0]["fields"][0]["id"].as_i64().unwrap().to_string();
-
-    // get by id
-    let got = mf(&["-u", &repo, "field", "get", &id]);
-    assert_ok(&got);
-    assert!(got.stdout.contains("rating"));
-
-    // set by id: rename + revalue, keeping the id
-    let set = mf(&["-u", &repo, "field", "set", &id, "score:int=9"]);
-    assert_ok(&set);
-    let entries = get_entries(&repo, &uuid);
-    let entry = &entries.as_array().unwrap()[0];
-    assert_eq!(entry["fields"][0]["id"].as_i64().unwrap().to_string(), id);
-    assert_eq!(entry["fields"][0]["name"], "score");
-
-    // delete by id
-    let del = mf(&["-u", &repo, "field", "delete", &id]);
-    assert_ok(&del);
-    let entries = get_entries(&repo, &uuid);
-    assert_eq!(entries.as_array().unwrap()[0]["fields"].as_array().unwrap().len(), 0);
 }
 
 // ── CLI primitives: --eq, --tsv, --resolve ────────────────────────────────────

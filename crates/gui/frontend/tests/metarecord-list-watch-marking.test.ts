@@ -63,8 +63,8 @@ async function mountPanel(watchResults: Record<string, unknown>[] | null) {
     uuid,
     version: 1,
     fields: [
-      { id: 1, name: 'mfr_path', value: { type: 'tree_ref', value: { parent: uuid === ROOT_UUID ? null : ROOT_UUID, name: uuid === ROOT_UUID ? '' : 'notes.txt' } } },
-      { id: 2, name: 'mfr_type', value: { type: 'string', value: 'file' } },
+      { name: 'mfr_path', value: { type: 'tree_ref', value: { parent: uuid === ROOT_UUID ? null : ROOT_UUID, name: uuid === ROOT_UUID ? '' : 'notes.txt' } } },
+      { name: 'mfr_type', value: { type: 'string', value: 'file' } },
     ],
   });
   const records = [record(ROOT_UUID), record(UUID)];

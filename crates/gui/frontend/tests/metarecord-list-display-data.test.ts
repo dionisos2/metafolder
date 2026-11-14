@@ -8,7 +8,7 @@ import { createDisplayData } from '../../default-config/panel-types/metarecord-l
 const tree = (name: string) => ({ type: 'tree_ref', value: { parent: null, name } });
 
 function record(uuid: string): Metafolder.Metarecord {
-  return { uuid, version: 1, fields: [{ id: 1, name: 'mfr_path', value: tree(uuid) }] } as never;
+  return { uuid, version: 1, fields: [{ name: 'mfr_path', value: tree(uuid) }] } as never;
 }
 
 function stubDaemon({ paths = {}, watched = true }: { paths?: Record<string, string[]>; watched?: boolean } = {}) {

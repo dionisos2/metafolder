@@ -125,10 +125,9 @@ fn a_store_of_the_first_layout_migrates_when_it_opens() {
     for (u, record) in uuids.iter().zip(&before) {
         let now = kv.metarecord(*u).unwrap().unwrap();
         assert_eq!(&now, record);
-        for f in &record.fields {
-            let id = f.id.unwrap();
-            assert_eq!(kv.row(id).unwrap().unwrap().value, f.value);
-            assert_eq!(kv.owner_of_row(id).unwrap(), Some(*u));
+        for row in kv.rows(*u).unwrap() {
+            assert_eq!(kv.row(row.id).unwrap().unwrap().value, row.value);
+            assert_eq!(kv.owner_of_row(row.id).unwrap(), Some(*u));
         }
     }
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());

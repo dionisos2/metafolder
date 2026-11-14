@@ -592,7 +592,6 @@ pub fn field_rename(
     Ok(0)
 }
 
-/// `mf field get <id>` — print one field row (JSON) by its id.
 /// `mf field list [--type <value_type>]` — the repository's distinct field
 /// names with their value type (`GET …/fields`), one `name<TAB>type` per line,
 /// ordered by name. Optionally restricted to a single value type.
@@ -606,34 +605,6 @@ pub fn field_list(ctx: &Ctx, type_filter: Option<&str>) -> Result<i32, CliError>
         let ty = field["type"].as_str().unwrap_or_default();
         println!("{name}\t{ty}");
     }
-    Ok(0)
-}
-
-pub fn field_by_id_get(ctx: &Ctx, id: i64) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let row = ctx.client.get(&format!("{base}/fields/{id}"), &[])?;
-    print_pretty(&row);
-    Ok(0)
-}
-
-/// `mf field set <id> <spec>` — change a row's name and/or value, keeping its id.
-pub fn field_by_id_set(ctx: &Ctx, id: i64, spec: &str, force: bool) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let (name, value) = parse_spec(spec)?;
-    let body = json!({"name": name, "value": value, "force": force});
-    ctx.client.request("PATCH", &format!("{base}/fields/{id}"), &[], Some(&body))?;
-    Ok(0)
-}
-
-/// `mf field delete <id>` — remove a field row by its id.
-pub fn field_by_id_delete(ctx: &Ctx, id: i64, force: bool) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    ctx.client.request(
-        "DELETE",
-        &format!("{base}/fields/{id}"),
-        &[],
-        Some(&json!({"force": force})),
-    )?;
     Ok(0)
 }
 

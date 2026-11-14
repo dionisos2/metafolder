@@ -329,7 +329,6 @@ fn test_all_value_types_roundtrip() {
     for (orig, ret) in fields.iter().zip(got.fields.iter()) {
         assert_eq!(orig.name, ret.name);
         assert_eq!(orig.value, ret.value, "value mismatch for field '{}'", orig.name);
-        assert!(ret.id.is_some(), "field ids must be set in responses");
     }
 }
 
@@ -362,7 +361,6 @@ fn test_create_record_initial_state() {
     assert_eq!(m.version, version_of_content(&conn, m.uuid), "the create reports what it stored");
     assert_ne!(m.version, version::base(m.uuid), "and the field it carries is in there");
     assert_eq!(m.fields.len(), 1);
-    assert!(m.fields[0].id.is_some());
 }
 
 #[test]
@@ -444,7 +442,7 @@ fn test_append_field_keeps_existing_rows() {
 }
 
 #[test]
-fn test_replace_field_keeps_field_id() {
+fn test_replace_value_leaves_the_sibling() {
     let (mut conn, _dir) = test_conn();
     let m = create(
         &mut conn,
@@ -453,31 +451,34 @@ fn test_replace_field_keeps_field_id() {
             Field::new("tag", Value::String("live".into())),
         ],
     );
-    let target_id = m.fields[0].id.unwrap();
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.replace_field(m.uuid, target_id, Value::String("blues".into())).unwrap();
+    w.replace_value(m.uuid, "tag", &Value::String("jazz".into()), Value::String("blues".into()))
+        .unwrap();
     w.commit().unwrap();
 
     let got = conn.metarecord(m.uuid).unwrap().unwrap();
-    let replaced = got.fields.iter().find(|f| f.id == Some(target_id)).unwrap();
-    assert_eq!(replaced.value, Value::String("blues".into()));
-    assert_eq!(got.get_all("tag").len(), 2, "the sibling row must be untouched");
+    let mut tags = got.get_all("tag");
+    tags.sort_by_key(|v| format!("{v:?}"));
+    assert_eq!(tags, vec![&Value::String("blues".into()), &Value::String("live".into())]);
+    assert_eq!(got.version, version_of_content(&conn, m.uuid));
 }
 
 #[test]
-fn test_replace_field_rejects_foreign_field_id() {
+fn test_replace_value_rejects_a_value_the_field_does_not_hold() {
     let (mut conn, _dir) = test_conn();
     let m1 = create(&mut conn, vec![Field::new("a", Value::Int(1))]);
-    let m2 = create(&mut conn, vec![Field::new("a", Value::Int(2))]);
+    create(&mut conn, vec![Field::new("a", Value::Int(2))]);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let err = w.replace_field(m1.uuid, m2.fields[0].id.unwrap(), Value::Int(3)).unwrap_err();
-    assert!(err.to_string().contains("not found"), "unexpected error: {err}");
+    let err = w.replace_value(m1.uuid, "a", &Value::Int(2), Value::Int(3)).unwrap_err();
+    assert!(err.to_string().contains("does not hold"), "unexpected error: {err}");
+    let err = w.remove_value(m1.uuid, "a", &Value::Int(2)).unwrap_err();
+    assert!(err.to_string().contains("does not hold"), "unexpected error: {err}");
 }
 
 #[test]
-fn test_delete_field_removes_single_row() {
+fn test_remove_value_removes_single_row() {
     let (mut conn, _dir) = test_conn();
     let m = create(
         &mut conn,
@@ -486,10 +487,9 @@ fn test_delete_field_removes_single_row() {
             Field::new("tag", Value::String("live".into())),
         ],
     );
-    let target_id = m.fields[0].id.unwrap();
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.delete_field(m.uuid, target_id).unwrap();
+    w.remove_value(m.uuid, "tag", &Value::String("jazz".into())).unwrap();
     w.commit().unwrap();
 
     let got = conn.metarecord(m.uuid).unwrap().unwrap();
@@ -1340,7 +1340,7 @@ fn values_of(conn: &KvStore, uuid: Uuid, name: &str) -> Vec<Value> {
 fn test_append_of_an_identical_field_is_a_no_op() {
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("tag", s("jazz"))]);
-    let existing_id = m.fields[0].id.unwrap();
+    let existing_id = conn.rows_named(m.uuid, "tag").unwrap()[0].id;
     let revisions = conn.counts().unwrap().1;
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -1422,26 +1422,25 @@ fn test_set_record_collapses_repeated_fields() {
 }
 
 #[test]
-fn test_by_id_edit_that_would_duplicate_a_sibling_is_rejected() {
+fn test_replacing_onto_a_sibling_merges_and_renaming_onto_a_name_is_refused() {
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
-    let live = m.fields[1].id.unwrap();
 
+    // The value replaced goes, the one already there stays: the state asked
+    // for (doc "No duplicate rows").
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let err = w.replace_field(m.uuid, live, s("jazz")).unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("duplicate"), "got: {err}");
-    drop(w);
+    w.replace_value(m.uuid, "tag", &s("live"), s("jazz")).unwrap();
+    w.commit().unwrap();
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz")]);
 
-    // A rename onto a name that already holds the value is refused the same way.
+    // A rename onto a name the metarecord already holds is refused.
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let jazz = m.fields[0].id.unwrap();
-    w.append_field(m.uuid, "style", s("jazz")).unwrap();
-    let err = w.rename_field(m.uuid, jazz, "style", s("jazz")).unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("duplicate"), "got: {err}");
+    w.append_field(m.uuid, "style", s("bop")).unwrap();
+    let err = w.rename_record_field(m.uuid, "tag", "style").unwrap_err();
+    assert!(err.to_string().contains("already has a field"), "got: {err}");
     drop(w);
-
-    // Both rows are still there, untouched.
-    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz"), s("live")]);
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz")]);
+    assert!(values_of(&conn, m.uuid, "style").is_empty(), "the write was dropped");
 }
 
 #[test]

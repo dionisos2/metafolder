@@ -1,7 +1,7 @@
 title: No duplicate rows
 tags: [[Data model]] [[Key invariants]]
 kind: reference
-summary: A metarecord never holds the same (name, value) twice; writes collapse duplicates instead of failing, except an edit by row id.
+summary: A metarecord never holds the same (name, value) twice; writes collapse duplicates instead of failing.
 
 A metarecord's fields are a ''set'' of `(name, value)` pairs, not a bag: several
 `tag` rows are allowed because their values differ, but the same tag twice says
@@ -14,9 +14,10 @@ Every write enforces it by ''collapsing'', never by failing:
 * a ''retype'' that makes two rows equal keeps one ([[Changing a field's type]]).
 * ''replacing'' a value by one the field already holds (`PATCH …/metarecords/:uuid/fields/:name`, `mf … field replace`) leaves that one: the value replaced goes, which is the state asked for.
 
-The one exception is the edit ''by row id'' (`PATCH /fields/:id`, `mf field set <id>`):
-it names one row, so turning it into the twin of a sibling is refused with `400`
-rather than silently deleting the row the client addressed.
+There is no exception: a row has no identity beyond its name and value, so no
+write names "one row" that a collapse could delete behind the caller's back.
+Until November 2026 a row had an id, and the edit by that id was refused when it
+would have made the row the twin of a sibling.
 
 `nothing` is a value like any other here: a field holds at most one `nothing` row.
 

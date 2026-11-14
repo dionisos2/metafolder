@@ -329,58 +329,29 @@ async fn test_unknown_repo_is_not_found() {
 // ── MetaRecord CRUD ─────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_field_by_id_get_rename_and_delete() {
-    let (app, repo, root) = app_with_repo("field_by_id").await;
+async fn test_a_row_has_no_id_and_no_route_of_its_own() {
+    let (app, repo, _root) = app_with_repo("no_row_id").await;
     let created = create_metarecord(
         &app,
         &repo,
         json!([{"name": "rating", "value": {"type": "int", "value": 5}}]),
     )
     .await;
-    let id = created["fields"][0]["id"].as_i64().unwrap();
+    assert!(created["fields"][0].get("id").is_none(), "a field is its name and value: {created}");
+    let uuid = created["uuid"].as_str().unwrap();
+    let (_, read) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert!(read["fields"][0].get("id").is_none(), "a field is its name and value: {read}");
 
-    // GET one row by its id.
-    let (status, row) = request(&app, "GET", &format!("/repos/{repo}/fields/{id}"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(row["name"].as_str().unwrap(), "rating");
-    assert_eq!(row["value"]["value"].as_i64().unwrap(), 5);
-
-    // PATCH renames and revalues in place, keeping the id.
-    let (status, updated) = request(
-        &app,
-        "PATCH",
-        &format!("/repos/{repo}/fields/{id}"),
-        Some(json!({"name": "score", "value": {"type": "int", "value": 9}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rename failed: {updated}");
-    let fields = updated["fields"].as_array().unwrap();
-    assert_eq!(fields.len(), 1);
-    assert_eq!(fields[0]["id"].as_i64().unwrap(), id, "row id preserved on rename");
-    assert_eq!(fields[0]["name"].as_str().unwrap(), "score");
-    assert_eq!(fields[0]["value"]["value"].as_i64().unwrap(), 9);
-
-    // A value whose type clashes with the new name's type is rejected.
-    let (status, _) = request(
-        &app,
-        "PATCH",
-        &format!("/repos/{repo}/fields/{id}"),
-        Some(json!({"value": {"type": "string", "value": "nope"}})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "type must be validated against the name");
-
-    // DELETE by id.
-    let (status, _) = request(&app, "DELETE", &format!("/repos/{repo}/fields/{id}"), None).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/fields/{id}"), None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-
-    // An unknown id is 404.
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/fields/999999"), None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-
-    std::fs::remove_dir_all(root).unwrap();
+    // The routes by row id are gone (doc "Metarecord endpoints").
+    for method in ["GET", "PATCH", "DELETE"] {
+        let (status, _) = request(&app, method, &format!("/repos/{repo}/fields/1"), None).await;
+        assert!(
+            status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
+            "{method} /fields/1 got {status}"
+        );
+    }
+    let (_, read) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(read["fields"].as_array().unwrap().len(), 1, "nothing was written");
 }
 
 /// The `(name, value)` pairs of a metarecord answer, sorted: the order of
@@ -637,7 +608,6 @@ async fn test_create_get_delete_metarecord() {
     assert!(created["version"].is_u64(), "the create reports the version it stored");
     assert!(created.get("db_ids").is_none(), "db_ids is removed from the wire form");
     assert_eq!(created["fields"].as_array().unwrap().len(), 3);
-    assert!(created["fields"][0]["id"].is_i64(), "fields must carry their row id");
 
     let (status, got) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
@@ -788,35 +758,31 @@ async fn test_field_append_replace_delete() {
     assert_eq!(status, StatusCode::OK);
     let fields = updated["fields"].as_array().unwrap();
     assert_eq!(fields.len(), 2);
-    let live_id =
-        fields.iter().find(|f| f["value"]["value"] == "live").unwrap()["id"].as_i64().unwrap();
+    let tag = format!("/repos/{repo}/metarecords/{uuid}/fields/tag");
+    let string = |text: &str| json!({"type": "string", "value": text});
 
-    // PATCH replaces that single row by id, keeping its id.
+    // PATCH replaces that single value.
     let (status, updated) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/fields/{live_id}"),
-        Some(json!({"value": {"type": "string", "value": "studio"}})),
+        &tag,
+        Some(json!({"value": string("live"), "to": string("studio")})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "patch failed: {updated}");
-    let replaced =
-        updated["fields"].as_array().unwrap().iter().find(|f| f["id"] == live_id).unwrap();
-    assert_eq!(replaced["value"]["value"], "studio");
+    let fields = updated["fields"].as_array().unwrap();
+    assert_eq!(fields.len(), 2);
+    assert!(fields.iter().any(|f| f["value"]["value"] == "studio"));
+    assert!(!fields.iter().any(|f| f["value"]["value"] == "live"));
 
-    // An unknown field id → 404 (the id is repo-global, no metarecord scope).
-    let (status, _) = request(
-        &app,
-        "PATCH",
-        &format!("/repos/{repo}/fields/999999"),
-        Some(json!({"value": {"type": "int", "value": 2}})),
-    )
-    .await;
+    // A value the field does not hold → 404.
+    let (status, _) =
+        request(&app, "PATCH", &tag, Some(json!({"value": string("live"), "to": string("x")})))
+            .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // DELETE the row.
-    let (status, _) =
-        request(&app, "DELETE", &format!("/repos/{repo}/fields/{live_id}"), None).await;
+    // DELETE the value.
+    let (status, _) = request(&app, "DELETE", &tag, Some(json!({"value": string("studio")}))).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(got["fields"].as_array().unwrap().len(), 1);
@@ -882,19 +848,14 @@ async fn test_reserved_fields_require_force() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // Deleting a reserved field row requires force in the body.
+    // Removing a value of a reserved field requires force in the body.
     let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
-    let field_id = got["fields"][0]["id"].as_i64().unwrap();
-    let (status, _) =
-        request(&app, "DELETE", &format!("/repos/{repo}/fields/{field_id}"), None).await;
+    let held = got["fields"].as_array().unwrap().iter().find(|f| f["name"] == "mfr_size").unwrap();
+    let size = format!("/repos/{repo}/metarecords/{uuid}/fields/mfr_size");
+    let (status, _) = request(&app, "DELETE", &size, Some(json!({"value": held["value"]}))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = request(
-        &app,
-        "DELETE",
-        &format!("/repos/{repo}/fields/{field_id}"),
-        Some(json!({"force": true})),
-    )
-    .await;
+    let (status, _) =
+        request(&app, "DELETE", &size, Some(json!({"value": held["value"], "force": true}))).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -1689,17 +1650,20 @@ async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
     assert_eq!(status, StatusCode::OK, "append failed: {body}");
     assert_eq!(body["fields"].as_array().unwrap().len(), 2);
 
-    // Editing the `live` row into a second `jazz` is rejected, not collapsed.
-    let live_id = body["fields"][1]["id"].as_i64().unwrap();
-    let (status, err) = request(
+    // Replacing `live` by a second `jazz` collapses too: `live` goes.
+    let (status, body) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/fields/{live_id}"),
-        Some(json!({"value": {"type": "string", "value": "jazz"}})),
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"),
+        Some(json!({
+            "value": {"type": "string", "value": "live"},
+            "to": {"type": "string", "value": "jazz"}
+        })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "expected a duplicate refusal, got: {err}");
-    assert!(err["error"].as_str().unwrap().to_lowercase().contains("duplicate"), "got: {err}");
+    assert_eq!(status, StatusCode::OK, "replace failed: {body}");
+    assert_eq!(body["fields"].as_array().unwrap().len(), 1);
+    assert_eq!(body["fields"][0]["value"]["value"], "jazz");
 
     // A multi-valued set collapses repeats instead.
     let (status, body) = request(

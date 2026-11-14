@@ -16,9 +16,10 @@ mounts, the query source. `kvstore/` is the one implementation.
 |`Begin` |opens a transaction; also `check`, `reindex`, `backup_to`, and the interrupter a task's Stop uses |
 |`Database` |all of it: what a loaded repository holds (`store::Handle`) |
 
-''Row ids are part of the data model'': a field's `id` is in every API response,
-`…/fields/:id` addresses a row by it. So a backend allocates monotonic row ids, never
-reuses one, and can put a row back under its old one (a copy of a store).
+''Row ids are the store's own business'': nothing outside it names a row by one —
+the API knows a row as its metarecord, its name and its value. The traits still
+carry them (a backend allocates monotonic row ids, never reuses one, and can put a
+row back under its old one), until the store drops them.
 
 `tests/store_contract.rs` asks every method through the traits only — the file a
 second backend would have to pass — and holds every `Questions` override to its

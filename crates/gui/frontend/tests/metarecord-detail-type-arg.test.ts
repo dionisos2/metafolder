@@ -23,7 +23,7 @@ const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metareco
 const REPO = 'repo-1';
 const UUID = 'uuid-1';
 
-type Field = { id: number; name: string; value: { type: string; value?: unknown } };
+type Field = { name: string; value: { type: string; value?: unknown } };
 type Spec = { args?: ArgSpec[]; handler: (...args: string[]) => unknown };
 type Call = { method: string; path: string; body: unknown };
 
@@ -196,7 +196,7 @@ describe('metarecord:field — the type is an argument', () => {
   });
 
   test("a type the record's own row carries is not asked", async () => {
-    const fields = [{ id: 1, name: 'rating', value: { type: 'int', value: 3 } }];
+    const fields = [{ name: 'rating', value: { type: 'int', value: 3 } }];
     const { specs } = await mountPanel(fields);
     const { prompts } = await collect(specs.get('metarecord:field')!, ['set'], ['rating', '5']);
     expect(prompts).toEqual(['Field to set?', 'Value for "rating"?']);
@@ -223,7 +223,7 @@ describe('metarecord:field — the type is an argument', () => {
   });
 
   test('an operation that writes no value is unaffected', async () => {
-    const fields = [{ id: 7, name: 'tag', value: { type: 'string', value: 'jazz' } }];
+    const fields = [{ name: 'tag', value: { type: 'string', value: 'jazz' } }];
     const { specs } = await mountPanel(fields);
     const { prompts, args } = await collect(
       specs.get('metarecord:field')!,
@@ -238,7 +238,7 @@ describe('metarecord:field — the type is an argument', () => {
     // The type it is being given is only meaningful with a value, and there is
     // no row to re-encode into it — so the value follows the type as an
     // ordinary argument (it used to be a `window.prompt` popup).
-    const fields = [{ id: 9, name: 'rating', value: { type: 'nothing' } }];
+    const fields = [{ name: 'rating', value: { type: 'nothing' } }];
     const { specs, calls } = await mountPanel(fields);
     const { prompts, args } = await collect(
       specs.get('metarecord:field')!,
@@ -268,7 +268,7 @@ describe('metarecord:field — the type is an argument', () => {
   });
 
   test('retype keeps asking for a type as its own value argument', async () => {
-    const fields = [{ id: 7, name: 'rating', value: { type: 'string', value: '3' } }];
+    const fields = [{ name: 'rating', value: { type: 'string', value: '3' } }];
     const { specs } = await mountPanel(fields);
     const { prompts, args } = await collect(
       specs.get('metarecord:field')!,

@@ -26,8 +26,8 @@ describe('treeNameOf', () => {
   const record: Metafolder.Metarecord = {
     uuid: 'u1',
     fields: [
-      { id: 1, name: 'tag_path', value: { type: 'tree_ref', value: { parent: 'p', name: 'rock' } } },
-      { id: 2, name: 'rating', value: { type: 'int', value: 4 } },
+      { name: 'tag_path', value: { type: 'tree_ref', value: { parent: 'p', name: 'rock' } } },
+      { name: 'rating', value: { type: 'int', value: 4 } },
     ],
   };
 

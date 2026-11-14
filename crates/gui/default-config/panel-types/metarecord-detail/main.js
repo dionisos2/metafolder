@@ -19,7 +19,7 @@ import { createFieldCatalog, createValues } from './values.js';
  *
  * A metarecord with its fields, as `GET …/metarecords/:uuid` returns it.
  * @typedef {{uuid: string, version: number, fields: Field[]}} Loaded
- * @typedef {Metafolder.Field & {id: number}} Field
+ * @typedef {Metafolder.Field} Field
  *
  * A name/value pair read from the add-field form (no DB row, so no id).
  * @typedef {{name: string, value: Metafolder.Value}} FieldInput
@@ -58,8 +58,12 @@ export async function mount(root, metafolder) {
    *  wrong file. */
   /** @type {Metafolder.WirePath[]} */
   let currentPaths = [];
-  /** @type {number|null} field id being edited, or null */
+  /** @type {string|null} the row being edited (its `rowKey`), or null */
   let editingField = null;
+  /** What names a row: its name and its value — a metarecord never holds the
+   *  same pair twice (doc "No duplicate rows"), and a row has no id.
+   *  @param {Metafolder.Field} field */
+  const rowKey = (field) => JSON.stringify([field.name, field.value]);
   let cursorIndex = -1; // keyboard cursor over the field rows (-1 = none)
   // The records shown before this one, so `metarecord:back` can walk back out
   // of a chain of followed references.
@@ -366,7 +370,7 @@ export async function mount(root, metafolder) {
     const value = el('td', { class: 'value' });
     const ops = el('td', { class: 'ops' });
 
-    if (editingField === field.id) {
+    if (editingField === rowKey(field)) {
       // Inline editor: a type picker drives the value widget, so a `nothing`
       // field can be given a type+value and a typed field cleared back to
       // `nothing`. The picker is restricted to the field's established type
@@ -414,7 +418,7 @@ export async function mount(root, metafolder) {
           {
             disabled: readonly,
             onclick: () => {
-              editingField = field.id;
+              editingField = rowKey(field);
               render();
             },
           },
@@ -511,7 +515,7 @@ export async function mount(root, metafolder) {
   function editCursorRow() {
     const item = rowItems()[cursorIndex];
     if (!item || isRowReadonly(item)) return;
-    editingField = item.id;
+    editingField = rowKey(item);
     render();
   }
   function addToCursorRow() {

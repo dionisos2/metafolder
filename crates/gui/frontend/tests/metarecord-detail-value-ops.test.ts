@@ -31,7 +31,7 @@ const U_JAZZ = 'a'.repeat(32);
 const U_BLUES = 'b'.repeat(32);
 const U_PARENT = 'c'.repeat(32);
 
-type Field = { id: number; name: string; value: { type: string; value?: unknown } };
+type Field = { name: string; value: { type: string; value?: unknown } };
 type Spec = { args?: ArgSpec[]; handler: (...args: string[]) => unknown };
 type Call = { method: string; path: string; body: unknown };
 
@@ -222,8 +222,8 @@ beforeEach(() => {
 /** Two `tag` refs, seeded against a `path` forest — the ref case the
  *  completion seed exists for. */
 const tagFields = (): Field[] => [
-  { id: 1, name: 'tag', value: { type: 'ref', value: U_JAZZ } },
-  { id: 2, name: 'tag', value: { type: 'ref', value: U_BLUES } },
+  { name: 'tag', value: { type: 'ref', value: U_JAZZ } },
+  { name: 'tag', value: { type: 'ref', value: U_BLUES } },
 ];
 const tagSeeds = { tag: 'path' };
 const tagTree = { '/fruits/jazz': U_JAZZ, '/fruits/blues': U_BLUES };
@@ -285,9 +285,9 @@ describe('metarecord:field remove — the field, then the value', () => {
 
   test('every row equal to the value goes — the inverse of add', async () => {
     const fields: Field[] = [
-      { id: 3, name: 'rating', value: { type: 'int', value: 5 } },
-      { id: 4, name: 'rating', value: { type: 'int', value: 5 } },
-      { id: 5, name: 'rating', value: { type: 'int', value: 7 } },
+      { name: 'rating', value: { type: 'int', value: 5 } },
+      { name: 'rating', value: { type: 'int', value: 5 } },
+      { name: 'rating', value: { type: 'int', value: 7 } },
     ];
     const { specs, calls } = await mountPanel(fields);
     await specs.get('metarecord:field')!.handler('remove', 'rating', '5');
@@ -314,8 +314,8 @@ describe('metarecord:field remove — the field, then the value', () => {
 
   test('∅ names the explicit absences, alongside whatever reads exactly so', async () => {
     const fields: Field[] = [
-      { id: 6, name: 'note', value: { type: 'nothing' } },
-      { id: 7, name: 'note', value: { type: 'string', value: 'hi' } },
+      { name: 'note', value: { type: 'nothing' } },
+      { name: 'note', value: { type: 'string', value: 'hi' } },
     ];
     const { specs, calls } = await mountPanel(fields);
     const { completions } = await collect(specs.get('metarecord:field')!, ['remove'], ['note', '']);
@@ -328,7 +328,7 @@ describe('metarecord:field remove — the field, then the value', () => {
 
   test('a tree_ref value is named by its path, parent and name resolved back', async () => {
     const fields: Field[] = [
-      { id: 8, name: 'location', value: { type: 'tree_ref', value: { parent: U_PARENT, name: 'b' } } },
+      { name: 'location', value: { type: 'tree_ref', value: { parent: U_PARENT, name: 'b' } } },
     ];
     const { specs, calls } = await mountPanel(fields, { tree: { '/a': U_PARENT } });
     const { completions } = await collect(specs.get('metarecord:field')!, ['remove'], [
@@ -363,7 +363,7 @@ describe('metarecord:field remove — the field, then the value', () => {
 
 describe('metarecord:field edit — the field, the row, the new value', () => {
   test('one row is named by the field alone', async () => {
-    const fields = [{ id: 3, name: 'rating', value: { type: 'int', value: 5 } }];
+    const fields = [{ name: 'rating', value: { type: 'int', value: 5 } }];
     const { specs, calls } = await mountPanel(fields);
     const { prompts, args, initials } = await collect(specs.get('metarecord:field')!, ['edit'], [
       'rating',
@@ -412,7 +412,7 @@ describe('metarecord:field edit — the field, the row, the new value', () => {
   test('a Nothing row takes its type from the type argument', async () => {
     // An absence carries no type of its own: giving it a value is what
     // establishes one, so the type is asked — and the row needs no `which`.
-    const fields = [{ id: 9, name: 'rating', value: { type: 'nothing' } }];
+    const fields = [{ name: 'rating', value: { type: 'nothing' } }];
     const { specs, calls } = await mountPanel(fields);
     const { prompts, args } = await collect(specs.get('metarecord:field')!, ['edit'], [
       'rating',
@@ -445,9 +445,9 @@ describe('metarecord:field rename / retype — one revision', () => {
 
   test('rename moves every row of the field in one batch', async () => {
     const fields: Field[] = [
-      { id: 1, name: 'genre', value: { type: 'string', value: 'jazz' } },
-      { id: 2, name: 'genre', value: { type: 'nothing' } },
-      { id: 3, name: 'style', value: { type: 'string', value: 'bop' } },
+      { name: 'genre', value: { type: 'string', value: 'jazz' } },
+      { name: 'genre', value: { type: 'nothing' } },
+      { name: 'style', value: { type: 'string', value: 'bop' } },
     ];
     const { specs, calls } = await mountPanel(fields);
     await specs.get('metarecord:field')!.handler('rename', 'genre', 'style');
@@ -477,7 +477,7 @@ describe('metarecord:field rename / retype — one revision', () => {
   });
 
   test('renaming a field to its own name writes nothing', async () => {
-    const fields: Field[] = [{ id: 1, name: 'genre', value: { type: 'string', value: 'jazz' } }];
+    const fields: Field[] = [{ name: 'genre', value: { type: 'string', value: 'jazz' } }];
     const { specs, calls } = await mountPanel(fields);
     await specs.get('metarecord:field')!.handler('rename', 'genre', 'genre');
     expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
@@ -485,9 +485,9 @@ describe('metarecord:field rename / retype — one revision', () => {
 
   test('retype converts every value in one write, the absences kept', async () => {
     const fields: Field[] = [
-      { id: 1, name: 'rating', value: { type: 'string', value: '5' } },
-      { id: 2, name: 'rating', value: { type: 'string', value: '7' } },
-      { id: 3, name: 'rating', value: { type: 'nothing' } },
+      { name: 'rating', value: { type: 'string', value: '5' } },
+      { name: 'rating', value: { type: 'string', value: '7' } },
+      { name: 'rating', value: { type: 'nothing' } },
     ];
     const { specs, calls } = await mountPanel(fields);
     await specs.get('metarecord:field')!.handler('retype', 'rating', 'int');
@@ -515,7 +515,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 /** A tag placed under `sport`, the hierarchy a second parent is added to. */
 const maratonFields = (): Field[] => [
-  { id: 7, name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } } },
+  { name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } } },
 ];
 
 describe('adding a value to a field from its row (doc "metarecord-detail panel")', () => {
@@ -678,9 +678,9 @@ describe('a hierarchy node’s parents (doc "Hierarchy references")', () => {
 
 describe('a hierarchy node shown as one field: its name once, a line per parent', () => {
   const twoParents = (): Field[] => [
-    { id: 7, name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } } },
-    { id: 8, name: 'rating', value: { type: 'int', value: 3 } },
-    { id: 9, name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
+    { name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } } },
+    { name: 'rating', value: { type: 'int', value: 3 } },
+    { name: 'path', value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
   ];
   const opts = {
     catalog: { path: 'hierarchy_ref', rating: 'int' },
@@ -720,7 +720,7 @@ describe('a hierarchy node shown as one field: its name once, a line per parent'
 
   test('a root line reads as the root', async () => {
     const fields: Field[] = [
-      { id: 7, name: 'path', value: { type: 'hierarchy_ref', value: { parent: null, name: 'maraton' } } },
+      { name: 'path', value: { type: 'hierarchy_ref', value: { parent: null, name: 'maraton' } } },
     ];
     const { shadow } = await mountPanel(fields, opts);
     await settle();
@@ -733,9 +733,9 @@ describe('a hierarchy node shown as one field: its name once, a line per parent'
 describe('moving the field cursor', () => {
   test('keeps the rows', async () => {
     const fields: Field[] = [
-      { id: 1, name: 'a', value: { type: 'string', value: 'x' } },
-      { id: 2, name: 'b', value: { type: 'string', value: 'y' } },
-      { id: 3, name: 'c', value: { type: 'string', value: 'z' } },
+      { name: 'a', value: { type: 'string', value: 'x' } },
+      { name: 'b', value: { type: 'string', value: 'y' } },
+      { name: 'c', value: { type: 'string', value: 'z' } },
     ];
     const { shadow, cursorTo } = await mountPanel(fields);
     await settle();

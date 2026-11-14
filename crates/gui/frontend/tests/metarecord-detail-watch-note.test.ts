@@ -79,7 +79,7 @@ async function mountPanel(
       value: { type: 'tree_ref', value: { parent: 'u-root', name: 'notes.txt' } },
     },
     ...(mfWatchField
-      ? [{ id: 2, name: 'mf_watch', value: { type: 'bool', value: true } }]
+      ? [{ name: 'mf_watch', value: { type: 'bool', value: true } }]
       : []),
   ];
   const api = {

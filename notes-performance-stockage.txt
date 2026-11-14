@@ -371,14 +371,25 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       GET du champ puis DELETE {"value"} ; panneau detail (saveField,
       deleteField, commandes edit / remove) ; bench api.metarecord.
       field_replace / field_rename ; wiki. check.sh vert.
-      POINT OUVERT À POSER : la commande GUI `metarecord:field rename`
-      (field-commands.js) FUSIONNE aujourd'hui avec un nom déjà présent
-      (batch unset + set) ; la route et le CLI refusent (décision d). Non
-      modifiée : demander à l'utilisateur s'il veut le refus là aussi.
+      DÉCISION utilisateur (14 nov. 2026) : la commande GUI
+      `metarecord:field rename` (field-commands.js), qui fusionnait avec un
+      nom déjà présent (batch unset + set composé en JS), passe par la même
+      route que le CLI → refus aussi. Un seul code pour une règle.
       Pour 8b côté GUI : seul `editingField = field.id` (main.js) et les
       fixtures de 14 fichiers de test portent encore l'id.
   8b. retrait des routes `/fields/{id}`, de `mf field get|set|delete`, de
       `fields[].id` et de `field_id` (log_view) ; API_VERSION ; wiki.
+      FAIT (14 nov. 2026, API_VERSION 27) : core Field sans `id` (un `id`
+      envoyé par un ancien client est ignoré) ; routes et commandes par id
+      retirées ; `field_id` retiré des snapshots de /log ; panneau detail :
+      ligne en édition repérée par rowKey = JSON [nom, valeur] ; wiki.
+      RESTE POUR 8c côté Writer : replace_field / rename_field /
+      delete_field / reject_duplicate / twin_row / get_owned_row prennent
+      encore un id (lu dans Rows), ainsi que des tests (hierarchy_ref,
+      one_position, kv_derived, revert, store_contract, kv_layout).
+      Notes wiki encore à réécrire en 8c : "Store tables", "Log storage",
+      "What a revert writes", "Reverting onto the current state", "The
+      storage boundary" (phrase provisoire).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

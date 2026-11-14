@@ -10,7 +10,7 @@ import { withRuns } from './support/runs';
 
 type Call = { method: string; path: string; body: unknown };
 type Spec = { handler: (...args: string[]) => Promise<unknown> };
-type Row = { id: number; name: string; value: { type: string; value?: unknown } };
+type Row = { name: string; value: { type: string; value?: unknown } };
 
 function setup(fields: Row[], forced = false) {
   const calls: Call[] = [];
@@ -71,8 +71,8 @@ describe('metarecord:field', () => {
 
   test('removes the row a value names', async () => {
     const { field, calls } = setup([
-      { id: 7, name: 'tag', value: { type: 'string', value: 'jazz' } },
-      { id: 8, name: 'tag', value: { type: 'string', value: 'rock' } },
+      { name: 'tag', value: { type: 'string', value: 'jazz' } },
+      { name: 'tag', value: { type: 'string', value: 'rock' } },
     ]);
     await field.handler('remove', 'tag', 'rock');
     expect(calls).toContainEqual({
@@ -84,7 +84,7 @@ describe('metarecord:field', () => {
 
   test('renames as one batch on the shown record', async () => {
     const { field, calls } = setup([
-      { id: 7, name: 'tag', value: { type: 'string', value: 'jazz' } },
+      { name: 'tag', value: { type: 'string', value: 'jazz' } },
     ]);
     await field.handler('rename', 'tag', 'genre');
     const batch = calls.find((c) => c.path === '/repos/r/query/fields/batch');

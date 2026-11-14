@@ -268,14 +268,14 @@ describe('field', () => {
   const entry: Metafolder.Metarecord = {
     uuid: 'u1',
     fields: [
-      { id: 1, name: 'genre', value: { type: 'string', value: 'jazz' } },
-      { id: 2, name: 'genre', value: { type: 'string', value: 'bebop' } },
-      { id: 3, name: 'rating', value: { type: 'int', value: 5 } },
+      { name: 'genre', value: { type: 'string', value: 'jazz' } },
+      { name: 'genre', value: { type: 'string', value: 'bebop' } },
+      { name: 'rating', value: { type: 'int', value: 5 } },
     ],
   };
 
   test('returns the first field with the given name (multi-map)', () => {
-    expect(field(entry, 'genre')?.id).toBe(1);
+    expect(field(entry, 'genre')?.value).toEqual({ type: 'string', value: 'jazz' });
     expect(field(entry, 'rating')?.value).toEqual({ type: 'int', value: 5 });
   });
 
@@ -285,7 +285,10 @@ describe('field', () => {
   });
 
   test('fields returns every row of a multi-map field, in order', () => {
-    expect(fields(entry, 'genre').map((f) => f.id)).toEqual([1, 2]);
+    expect(fields(entry, 'genre').map((f) => f.value)).toEqual([
+      { type: 'string', value: 'jazz' },
+      { type: 'string', value: 'bebop' },
+    ]);
     expect(fields(entry, 'rating')).toHaveLength(1);
     expect(fields(entry, 'missing')).toEqual([]);
     expect(fields({ uuid: 'u2' }, 'genre')).toEqual([]);

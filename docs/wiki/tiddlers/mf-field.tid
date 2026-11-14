@@ -1,6 +1,6 @@
 title: mf field
 tags: [[CLI command]] [[Data model]]
 kind: reference
-summary: Field operations: list the repo's field names, or access a row by id
+summary: Field operations: list the repo's field names
 
-Lists the repository's field names (the default), or reads and changes one row by its id ([[Editing metarecords from the command line]]).
+Lists the repository's field names with their type ([[Editing metarecords from the command line]]). A row has no id to be read or changed by: one value of a field is replaced or removed with `mf metarecord -i … field`.

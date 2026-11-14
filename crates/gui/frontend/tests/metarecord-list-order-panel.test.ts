@@ -40,7 +40,7 @@ function memoryDaemon(initial: Record<string, number | null>) {
   const recordOf = (uuid: string) => ({
     uuid,
     version: 1,
-    fields: pos.get(uuid) == null ? [] : [{ id: 1, name: 'pos', value: int(pos.get(uuid)!) }],
+    fields: pos.get(uuid) == null ? [] : [{ name: 'pos', value: int(pos.get(uuid)!) }],
   });
   const sorted = (sort?: Sort) => {
     const uuids = [...pos.keys()].sort();

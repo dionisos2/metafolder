@@ -7,7 +7,7 @@ const ZERO_UUID = '0'.repeat(32);
 /**
  * One snapshot row of `GET /log/labels/:id`, in its raw column form
  * (null columns omitted).
- * @typedef {{field_id?: number, field_name?: string, value_type: string,
+ * @typedef {{field_name?: string, value_type: string,
  *            value_text?: string, value_int?: number, value_real?: number,
  *            value_uuid?: string, value_ref_repo?: string,
  *            value_name?: string}} Snapshot

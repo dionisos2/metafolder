@@ -179,7 +179,7 @@ enum Command {
         #[command(subcommand)]
         verb: Option<MetarecordVerb>,
     },
-    /// Field operations: list the repo's field names, or access a row by id
+    /// Field operations: list the repo's field names
     Field {
         #[command(subcommand)]
         command: Option<FieldCommand>,
@@ -842,22 +842,6 @@ enum FieldCommand {
         /// Restrict to one value type (e.g. tree_ref, ref, string, int)
         #[arg(long = "type")]
         type_filter: Option<String>,
-    },
-    /// Print a field row by its id
-    Get { id: i64 },
-    /// Change a row's name and/or value in place, keeping its id
-    Set {
-        id: i64,
-        /// Field spec name:type[=value] — the new name and value
-        spec: String,
-        #[arg(long, short = 'f')]
-        force: bool,
-    },
-    /// Delete a field row by its id
-    Delete {
-        id: i64,
-        #[arg(long, short = 'f')]
-        force: bool,
     },
 }
 
@@ -1814,11 +1798,6 @@ fn dispatch_field(ctx: &Ctx, command: Option<FieldCommand>) -> CmdResult {
         Some(FieldCommand::List { type_filter }) => {
             commands::field_list(ctx, type_filter.as_deref())
         }
-        Some(FieldCommand::Get { id }) => commands::field_by_id_get(ctx, id),
-        Some(FieldCommand::Set { id, spec, force }) => {
-            commands::field_by_id_set(ctx, id, &spec, force)
-        }
-        Some(FieldCommand::Delete { id, force }) => commands::field_by_id_delete(ctx, id, force),
     }
 }
 

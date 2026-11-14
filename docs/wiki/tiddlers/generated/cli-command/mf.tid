@@ -23,7 +23,7 @@ Commands:
   mount       Mount points: list the repository's removable volumes, or forget one
   watch       Watcher ingestion: show, pause or resume the recording of filesystem events, and check whether a path is watched
   metarecord  Metarecord operations: `mf metarecord [selector] <verb>`
-  field       Field operations: list the repo's field names, or access a row by id
+  field       Field operations: list the repo's field names
   retype      Convert a field's value type repository-wide, to any value type
   reconcile   Reconcile the database with the filesystem
   uuid        Print the UUID of the metarecord standing for each path (the inverse of `mf path`); exit 1 if one has none

@@ -17,7 +17,7 @@ const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metareco
 const REPO = 'repo-1';
 const UUID = 'uuid-1';
 
-type Field = { id: number; name: string; value: { type: string; value?: unknown } };
+type Field = { name: string; value: { type: string; value?: unknown } };
 type Spec = { args?: ArgSpec[]; handler: (...args: string[]) => unknown };
 type Call = { method: string; path: string; body: unknown };
 

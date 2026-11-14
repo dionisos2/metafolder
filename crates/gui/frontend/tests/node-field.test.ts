@@ -10,7 +10,7 @@ function placed(...fields: [string, 'tree_ref' | 'hierarchy_ref'][]): Metafolder
   return {
     uuid: 'u',
     fields: [
-      { id: 0, name: 'rating', value: { type: 'int', value: 3 } },
+      { name: 'rating', value: { type: 'int', value: 3 } },
       ...fields.map(([name, type], i) => ({
         id: i + 1,
         name,

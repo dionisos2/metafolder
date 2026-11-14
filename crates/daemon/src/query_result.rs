@@ -59,7 +59,7 @@ pub fn assemble_selected(
         let fields: Vec<Field> = own
             .into_iter()
             .filter(|r| fields_filter.is_none_or(|f| f.contains(&r.name)))
-            .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
+            .map(|r| Field { name: r.name, value: r.value })
             .collect();
         let metarecord = MetaRecord { uuid, version, fields };
         objects.push(serde_json::to_value(metarecord).expect("metarecord serialization"));

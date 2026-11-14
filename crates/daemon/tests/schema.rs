@@ -167,7 +167,7 @@ async fn test_field_catalog_includes_schema_declared_fields() {
 async fn test_edit_nothing_field_in_place_under_min_max_one() {
     // The GUI's in-place field edit: a `path` constrained to exactly one row
     // (min=1, max=1) and currently `Nothing` must be settable to a real value by
-    // editing the row in place (PATCH /fields/:id) — delete+add is impossible
+    // replacing the value in one write (PATCH …/fields/:name) — delete+add is impossible
     // here (delete would drop below min, add would exceed max). A `Nothing` row
     // counts toward cardinality, so the row count never changes.
     let schema = json!({
@@ -187,35 +187,25 @@ async fn test_edit_nothing_field_in_place_under_min_max_one() {
     .await;
     assert_eq!(status, StatusCode::OK, "create with path=nothing must be valid: {m}");
     let uuid = m["uuid"].as_str().unwrap();
-    let path_id = m["fields"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["name"] == "path")
-        .and_then(|f| f["id"].as_i64())
-        .expect("path row id");
+    let path_url = format!("/repos/{repo}/metarecords/{uuid}/fields/path");
+    let music = json!({"type": "tree_ref", "value": {"parent": null, "name": "music"}});
 
-    // nothing → tree_ref, in place (id kept, still one row).
+    // nothing → tree_ref, in one write (still one row).
     let (status, body) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/fields/{path_id}"),
-        Some(json!({"value": {"type": "tree_ref", "value": {"parent": null, "name": "music"}}})),
+        &path_url,
+        Some(json!({"value": {"type": "nothing"}, "to": music.clone()})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "edit nothing→tree_ref must be accepted: {body}");
     let path = body["fields"].as_array().unwrap().iter().find(|f| f["name"] == "path").unwrap();
     assert_eq!(path["value"]["type"], "tree_ref");
-    assert_eq!(path["id"].as_i64().unwrap(), path_id, "row id preserved");
 
     // tree_ref → nothing, in place (still one row, min/max satisfied).
-    let (status, body) = request(
-        &app,
-        "PATCH",
-        &format!("/repos/{repo}/fields/{path_id}"),
-        Some(json!({"value": {"type": "nothing"}})),
-    )
-    .await;
+    let (status, body) =
+        request(&app, "PATCH", &path_url, Some(json!({"value": music, "to": {"type": "nothing"}})))
+            .await;
     assert_eq!(status, StatusCode::OK, "edit tree_ref→nothing must be accepted: {body}");
     let path = body["fields"].as_array().unwrap().iter().find(|f| f["name"] == "path").unwrap();
     assert_eq!(path["value"]["type"], "nothing");
@@ -396,12 +386,16 @@ async fn test_per_type_cardinality() {
     // min = 1 on name: deleting the last name row is rejected.
     let (_, film_now) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{film_uuid}"), None).await;
-    let name_id =
-        film_now["fields"].as_array().unwrap().iter().find(|f| f["name"] == "name").unwrap()["id"]
-            .as_i64()
-            .unwrap();
-    let (status, body) =
-        request(&app, "DELETE", &format!("/repos/{repo}/fields/{name_id}"), None).await;
+    let name =
+        &film_now["fields"].as_array().unwrap().iter().find(|f| f["name"] == "name").unwrap()
+            ["value"];
+    let (status, body) = request(
+        &app,
+        "DELETE",
+        &format!("/repos/{repo}/metarecords/{film_uuid}/fields/name"),
+        Some(json!({"value": name})),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "removing the last name must fail: {body}");
     assert_eq!(body["violations"][0]["kind"], "min_cardinality");
 

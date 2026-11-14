@@ -29,7 +29,7 @@ function shadowFor(): ShadowRoot {
 const record = {
   uuid: 'a',
   version: 1,
-  fields: [{ id: 1, name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'a' } } }],
+  fields: [{ name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'a' } } }],
 } as Metafolder.Metarecord;
 
 function setup({

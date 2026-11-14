@@ -255,7 +255,6 @@ pub fn snapshots_json(log: &dyn Log, op_id: i64, after: bool) -> Result<serde_js
         // Raw column form (doc "Log endpoints" examples), null columns omitted.
         let encoded = rows::encode_value(&row.value);
         let mut snapshot = json!({
-            "field_id": row.id,
             "field_name": row.name,
             "value_type": encoded.value_type,
         });

@@ -18,7 +18,7 @@ import { CONCRETE_TYPES, NOTHING, distinctValues, sameValue } from './values.js'
 
 /**
  * @typedef {{uuid: string, repo: string}} Selection
- * @typedef {Metafolder.Field & {id: number}} Field
+ * @typedef {Metafolder.Field} Field
  * @typedef {{uuid: string, version: number, fields: Field[]}} Loaded
  *
  * @param {{

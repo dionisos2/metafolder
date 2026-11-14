@@ -85,7 +85,7 @@ async function mountPanel(
           return {
             uuid,
             version: 1,
-            fields: [{ id: 1, name: 'title', value: { type: 'string', value: title } }],
+            fields: [{ name: 'title', value: { type: 'string', value: title } }],
           };
         }
         return null;

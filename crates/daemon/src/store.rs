@@ -389,10 +389,7 @@ pub trait Rows {
         }
         let rows = self.rows(uuid)?;
         let version = crate::version::of_rows(uuid, &rows);
-        let fields = rows
-            .into_iter()
-            .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
-            .collect();
+        let fields = rows.into_iter().map(|r| Field { name: r.name, value: r.value }).collect();
         Ok(Some(MetaRecord { uuid, version, fields }))
     }
     /// A metarecord's positions in `field`'s forest, `(parent, name)` (`None`

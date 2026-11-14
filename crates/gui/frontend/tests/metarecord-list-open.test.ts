@@ -32,17 +32,17 @@ const RECORDS = [
     uuid: 'aaaa',
     version: 1,
     fields: [
-      { id: 1, name: 'title', value: { type: 'string', value: 'first' } },
-      { id: 3, name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'a.txt' } } },
+      { name: 'title', value: { type: 'string', value: 'first' } },
+      { name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'a.txt' } } },
     ],
   },
-  { uuid: 'bbbb', version: 1, fields: [{ id: 2, name: 'title', value: { type: 'string', value: 'second' } }] },
+  { uuid: 'bbbb', version: 1, fields: [{ name: 'title', value: { type: 'string', value: 'second' } }] },
   {
     uuid: 'cccc',
     version: 1,
     fields: [
-      { id: 4, name: 'mfr_type', value: { type: 'string', value: 'dir' } },
-      { id: 5, name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'photos' } } },
+      { name: 'mfr_type', value: { type: 'string', value: 'dir' } },
+      { name: 'mfr_path', value: { type: 'tree_ref', value: { parent: null, name: 'photos' } } },
     ],
   },
 ];

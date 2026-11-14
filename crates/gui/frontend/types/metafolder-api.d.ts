@@ -46,8 +46,6 @@ declare namespace Metafolder {
 
   /** One field row. Fields are a multi-map: several may share a name. */
   interface Field {
-    /** The DB row id, present in API responses. */
-    id?: number;
     name: string;
     value: Value;
   }
