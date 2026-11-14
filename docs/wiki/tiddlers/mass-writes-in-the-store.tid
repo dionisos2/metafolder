@@ -1,0 +1,73 @@
+title: Mass writes in the store
+tags: Storage
+kind: rationale
+audience: dev
+summary: A write to many records files one event per operation in the field's list instead of an entry per record; reads replay the pending events, a fold writes them in. The rows and the log are still written record by record.
+
+Setting a tag on ten thousand files (`mf … field set|add|remove` on a query,
+[[Query endpoints]]) is one write to many records. Indexing it record by record has
+two costs. Filing each record under the value it gains is cheap — the holders of one
+value are neighbours in the store. Taking each record ''out'' of the value it loses is
+not: that value has to be known, so every record is read first.
+
+!! One event per operation
+
+A field has a list of ''pending events'' (table `events`, keyed by field and a
+number). A write to many records appends one, naming the operation and the records
+— a bitmap of dense ids — and files nothing per record:
+
+|!Event |!A value's holders become |
+|add `v` to `B` |`∪ B`, for `v` |
+|remove `v` from `B` |`∖ B`, for `v` |
+|replace by `vals` on `B` |`∖ B`, then `∪ B` for the values of `vals` |
+
+A replacement never names the values it removes. The holders of a value are what is
+''stored'' — its run of the value partition or its posting, and for a `ref` its
+referrers ([[Store tables]]) — with the field's events replayed over it, in order.
+
+What cannot wait is kept exact at once, by set operations whatever the number of
+records: the count of values of each record (an increment on a set of ids is a carry
+from bit to bit, [[Store tables]]), the `absent` and long-text sets, the trigrams
+([[Text search in the store]]: a new text's entries by value, or the ids pending by
+metarecord), and the histograms for a value added or removed.
+
+!! What reads do
+
+* ''Equality, referrers, a text search by value'': the value's stored holders, replayed.
+* ''A range, a `!=`, a scan'': the values an event names are left out of the scan of what is stored and read one by one, replayed; every other value has only lost the records a replacement was written on, which are subtracted once.
+* ''A sort by walking the values'': not while the field has events pending — the page is fetched from the rows ([[Sorting and postings]]). Merging the named values into the walk is not built.
+
+A field without pending events — nearly all of them, nearly always — is read as
+before, for one read of its (empty) list.
+
+!! Order
+
+While a field has events pending, a write to ''one'' record of it is an event too, of
+one id: written into what is stored, it would be overwritten by the replay of an older
+event. The counts and the sets above are kept at each write, in order, and never
+replayed.
+
+!! The fold
+
+`KvStore::fold` — and a reindex, and a write that leaves a field more than 64 events
+(`EVENTS_MAX`, to be measured) — writes the events into what is stored, oldest first,
+and empties the list. A replacement is where its removed values are found: the
+field's stored values are walked for the records it was written on, and the
+histograms give back the rows they held. Until then the histogram of a field with
+events counts those rows, so `mf repo check` does not hold it to the rows; the
+partition and the referrers are held to them as replayed
+([[Checking and reindexing a repository]]).
+
+!! What is not there yet
+
+The ''rows'' of each record and the ''log'' are still written record by record: a
+mass write reads and writes every record it changes, as before. Filing the rows by
+part of the id space and the log as bitmaps are the next steps of the storage
+redesign; this one is their footing, and saves nothing by itself.
+
+Positions (`tree_ref`, `hierarchy_ref`) are never part of an event: each is written
+on its own ([[One position per forest]]). Nor is a `Nothing` or a text over 512 bytes
+added or removed.
+
+`tests/kv_events.rs` holds every reader to the oracle with events pending, after a
+fold and after a reindex.

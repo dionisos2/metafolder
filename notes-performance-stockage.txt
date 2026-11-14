@@ -173,8 +173,7 @@ values » ; tests crates/daemon/tests/kv_counts.rs ; DERIVED_VERSION 9) :
   se lisent sur les bits (derived::counted_over), sans lire de ligne
   (192 144 clés → < 300 sur 16 000 fichiers à 3 tags).
 
-ÉTAPE 7 EN COURS — conception d'implémentation (14 nov. 2026, annoncée à
-l'utilisateur ; rien n'est encore codé à l'écriture de cette note) :
+Conception d'implémentation de l'étape 7 (annoncée à l'utilisateur) :
 - Découpage : l'étape 7 ne change QUE le sens valeur → ids. Les routes de
   masse (/query/fields/set|add|remove|unset, routes/query.rs + write_matches
   dans routes/mod.rs) passent par une opération de masse du Writer ; les
@@ -215,6 +214,87 @@ l'utilisateur ; rien n'est encore codé à l'écriture de cette note) :
 - Exclus : tree_ref / hierarchy_ref (positions toujours individuelles), une
   valeur Nothing ou un texte long (> 512 octets) en ajout/retrait de masse →
   chemin individuel.
+
+ÉTAPE 7 FAITE (14 nov. 2026 ; doc "Mass writes in the store" ; code
+crates/daemon/src/kvstore/events.rs ; tests crates/daemon/tests/kv_events.rs ;
+table `events`, TABLES 25, DERIVED_VERSION 10) — conforme à la conception
+ci-dessous, avec ces écarts :
+- TRI : pas de fusion des valeurs nommées dans le parcours. Quand le champ
+  trié a des événements en attente, walk_values rend false et la page est
+  produite par « lire chaque résultat » (correct, plus cher). À FAIRE si la
+  mesure le demande (ou laisser le repli régler le cas).
+- Les routes de masse (batch_set/add/remove/unset et batch_writes) passent
+  par Writer::mass_add / mass_remove / mass_set / mass_unset ; write_matches
+  reçoit la liste des uuid d'un coup. La validation de schéma reste faite
+  metarecord par metarecord sur ceux qui ont changé (À REVOIR À L'ÉTAPE 8 :
+  c'est une lecture par metarecord).
+- Seule, l'étape ne fait gagner aucun temps (lignes et journal encore par
+  metarecord) : pas de mesure à attendre avant l'étape 8.
+
+Conception d'implémentation de l'étape 7 (annoncée à l'utilisateur) :
+- Découpage : l'étape 7 ne change QUE le sens valeur → ids. Les routes de
+  masse (/query/fields/set|add|remove|unset, routes/query.rs + write_matches
+  dans routes/mod.rs) passent par une opération de masse du Writer ; les
+  LIGNES et le JOURNAL restent écrits metarecord par metarecord (étapes 8-9).
+  Seule, l'étape 7 n'apporte donc pas de gain mesurable : c'est le socle de 8.
+- Stockage : nouvelle table dérivée `events` (TABLES 25, DERIVED_VERSION 10),
+  clé = champ · numéro (8 octets, compteur meta), valeur = événement encodé :
+  genre (ajouter / retirer / remplacer), valeur(s) (codec put_value), bitmap
+  B d'ids denses. Fichier prévu : crates/daemon/src/kvstore/events.rs.
+- « Stocké » d'une valeur = sa suite dans la partition `value` ou son posting
+  (pas de bitmap par valeur) ; pour un champ ref, aussi `referrers`(champ,
+  id cible). Effectif = stocké puis événements rejoués dans l'ordre
+  (ajouter v : |= B ; retirer v : -= B ; remplacer : -= B puis |= B si v ∈
+  vals).
+- Écriture de masse (txn.mass_event) : 1 clé d'événement ; compteurs de
+  valeurs par opérations de bitmap (+1 sur B − effectif(v), −1 sur
+  B ∩ effectif(v), := n sur B) — à écrire (retenue), cf. étape 6 ; `absent` et
+  `long texts` : exacts (remplacer : −= B puis |= B selon vals) ; trigrammes :
+  par valeur = entrées si texte nouveau, par metarecord = pending |= B ;
+  histogrammes : ajouter/retirer tout de suite, la partie « anciennes
+  valeurs » d'un remplacement au repli (check : histogramme non vérifié pour
+  un champ avec événements).
+- Écriture individuelle sur un champ qui a des événements en attente :
+  derive_row ajoute un événement d'un seul id au lieu d'écrire partition /
+  posting / referrers (règle d'ordre des notes).
+- Lectures à faire passer par l'effectif (kvstore/source.rs) : bucket /
+  equal, posting / posted, scan_part / part_ids (algorithme des valeurs
+  SUIVIES pour les intervalles), walk (tri : valeurs présentes seulement dans
+  la liste fusionnées), same_as, referrers_of, gram_values → bucket.
+- Repli (fold_events, appelé par KvStore::fold, reindex, et quand un champ
+  dépasse 64 événements — seuil À MESURER) : rejoue dans la partition /
+  postings / referrers / histogrammes ; un remplacement parcourt les valeurs
+  du champ pour retirer B des anciennes.
+- check_derived : côté « stocké », chaque entrée de partition / referrer d'un
+  champ avec événements est filtrée par le rejeu, et les entrées qui
+  n'existent que par les événements sont ajoutées (valeurs nommées par
+  ajouter / remplacer).
+- Exclus : tree_ref / hierarchy_ref (positions toujours individuelles), une
+  valeur Nothing ou un texte long (> 512 octets) en ajout/retrait de masse →
+  chemin individuel.
+
+ÉTAPE 7 — ÉTAT AU MOMENT DE L'ARRÊT (14 nov. 2026, travail NON COMMITÉ dans
+l'arbre de travail, compile avec 4 avertissements « jamais utilisé ») :
+- FAIT : crates/daemon/src/kvstore/events.rs (encodage, replay, replay_one,
+  named, replaced, by_target, mass_eligible / mass_begin / mass_end,
+  single_event, count_step par retenue, stored_holders, effective,
+  fold_events, fold_all_events, KvStore::pending_events) ; table `events`
+  (TABLES 25) ; DERIVED_VERSION 10 ; derive_row (retour immédiat en mode
+  masse, événement d'un id si le champ a des événements) ; clear_derived ;
+  KvStore::fold replie les événements ; store::MassKind + WriteTxn::
+  mass_begin / mass_end ; Writer::mass_add / mass_remove / mass_set /
+  mass_unset ; tests écrits : crates/daemon/tests/kv_events.rs (JAMAIS
+  LANCÉS).
+- RESTE : (1) lectures dans kvstore/source.rs : bucket / scan_part (valeurs
+  nommées + `replaced`), referrers_of (by_target), walk (retomber sur
+  « fetch » si le champ a des événements, puis fusion des valeurs nommées) ;
+  (2) check_derived : filtrer les entrées de partition / referrer par
+  replay_one, ajouter celles qui n'existent que par les événements, ne pas
+  vérifier l'histogramme d'un champ avec événements ; (3) brancher les
+  routes de masse (routes/query.rs batch_* et batch_writes, write_matches
+  dans routes/mod.rs) sur Writer::mass_* ; (4) note wiki « Mass writes in the
+  store » (citée par le code, pas encore écrite → `doc check` échouera) +
+  store-tables ; (5) lancer kv_events puis le contrôle complet, commiter.
 
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :

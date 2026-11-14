@@ -38,6 +38,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+#[path = "events.rs"]
+pub(super) mod events;
+
 use anyhow::{Context, Result};
 use heed::RoTxn;
 use metafolder_core::metarecord::Value;
@@ -54,8 +57,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets.
-pub(super) const DERIVED_VERSION: i64 = 9;
+/// sets; 10: the fields' pending events.
+pub(super) const DERIVED_VERSION: i64 = 10;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -938,7 +941,14 @@ impl KvTxn<'_> {
         value: &Value,
         delta: i64,
     ) -> Result<()> {
+        // A write to many records: its event derives for all of them.
+        if self.mass.borrow().as_deref() == Some(field) {
+            return Ok(());
+        }
         let id = self.id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
+        // A field with events pending takes this row as one more, of one
+        // id: what is stored is behind, and is not written past them.
+        let eventful = self.eventful(field)? > 0;
         // Before the partitions learn of the row: whether its text is one
         // the field does not hold yet.
         let text = match search_text(value) {
@@ -950,8 +960,12 @@ impl KvTxn<'_> {
             None => None,
         };
         if let Some(k) = value_key(value) {
-            self.bump(self.t.parts, &part_key(field, VALUE, &k, id), delta)?;
-            self.derive_posting(field, &k, id)?;
+            if eventful {
+                self.single_event(field, value, id, delta > 0)?;
+            } else {
+                self.bump(self.t.parts, &part_key(field, VALUE, &k, id), delta)?;
+                self.derive_posting(field, &k, id)?;
+            }
             if let Some(bucket) = hist_bucket(&k) {
                 self.bump(self.t.hist, &hist_key(field, &bucket), delta)?;
             }
@@ -990,7 +1004,7 @@ impl KvTxn<'_> {
                 rows.iter().filter_map(|r| search_text(&r.value)).any(|t| t.len() > TRIGRAM_MAX);
             self.set_member(LONG_TEXTS, Some(field), id, long)?;
         }
-        if let Some((target, tid)) = target {
+        if let (Some((target, tid)), false) = (target, eventful) {
             let held = rows.iter().any(|r| target_of(&r.value) == Some(target));
             self.chunk_member(SETS, &referrers_prefix(field, tid), id, held)?;
         }
@@ -1310,9 +1324,10 @@ impl KvTxn<'_> {
         self.universe.borrow_mut().clear();
         self.grams.borrow_mut().clear();
         self.grams_changed.borrow_mut().clear();
+        self.events.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams, t.hist] {
+        for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams, t.hist, t.events] {
             db.clear(&mut w)?;
         }
         Ok(())
@@ -1504,6 +1519,7 @@ impl KvStore {
     /// store"). A reindex does as much.
     pub fn fold(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
+        txn.fold_all_events()?;
         txn.fold_grams()?;
         txn.finish()
     }
@@ -1744,6 +1760,21 @@ impl KvStore {
         }
         drop(parent_of);
 
+        // The fields with events pending (doc "Mass writes in the store"):
+        // what is stored of their values is behind by them, and is held to
+        // the rows as replayed — each event list as it reads on the value
+        // partition, and on the referrers.
+        let mut pending: HashMap<String, (Vec<events::Event>, Vec<events::Event>)> = HashMap::new();
+        for entry in t.events.iter(r)? {
+            let (name, _) = unesc(entry?.0)?;
+            let field = String::from_utf8(name).context("a field name")?;
+            if let std::collections::hash_map::Entry::Vacant(slot) = pending.entry(field) {
+                let list = events::read_events(t, r, slot.key())?;
+                let by_target = events::by_target(&list, |uuid| id_of(t, r, uuid))?;
+                slot.insert((list, by_target));
+            }
+        }
+
         // Got: the derived tables, as they are.
         for entry in t.sets.iter(r)? {
             let (k, v) = entry?;
@@ -1763,7 +1794,11 @@ impl KvStore {
                 COUNT => (SET, COUNT_TAG + rest[0], &rest[..0]),
                 _ => (SET, kind, &rest[..0]),
             };
+            let replayed = pending.get(field).filter(|_| kind == REFERRERS);
             for id in decode_set(v)? {
+                if replayed.is_some_and(|(_, e)| !events::replay_one(e, key, id, true)) {
+                    continue;
+                }
                 if kind == UNIVERSE || !sifted(id) {
                     sink(Side::Got, Entry { space, tag, field, key, id, count: 1 })?;
                 }
@@ -1780,8 +1815,46 @@ impl KvStore {
                 id: dense(&rest[rest.len() - 4..]),
                 count: from_be(v),
             };
+            let replayed = pending.get(entry.field).filter(|_| entry.tag == VALUE);
+            if replayed.is_some_and(|(e, _)| !events::replay_one(e, entry.key, entry.id, true)) {
+                continue;
+            }
             if !sifted(entry.id) {
                 sink(Side::Got, entry)?;
+            }
+        }
+        // What the events add and nothing stores yet, under the values they
+        // name.
+        for (field, (list, by_target)) in &pending {
+            for key in events::named(list) {
+                let run = [&part_prefix(field, VALUE)[..], &key].concat();
+                let mut stored = RoaringBitmap::new();
+                for entry in t.parts.prefix_iter(r, &run)? {
+                    let k = entry?.0;
+                    if k.len() == run.len() + 4 {
+                        stored.insert(dense(&k[run.len()..]));
+                    }
+                }
+                for id in events::replay(list, &key, stored.clone()) - stored {
+                    if !sifted(id) {
+                        let entry =
+                            Entry { space: PART, tag: VALUE, field, key: &key, id, count: 1 };
+                        sink(Side::Got, entry)?;
+                    }
+                }
+            }
+            for key in events::named(by_target) {
+                let mut stored = RoaringBitmap::new();
+                for entry in t.sets.prefix_iter(r, &referrers_prefix(field, dense(&key)))? {
+                    stored |= decode_set(entry?.1)?;
+                }
+                for id in events::replay(by_target, &key, stored.clone()) - stored {
+                    if !sifted(id) {
+                        let entry =
+                            Entry { space: REFERRER, tag: 0, field, key: &key, id, count: 1 };
+                        sink(Side::Got, entry)?;
+                    }
+                }
             }
         }
         for entry in t.kids.iter(r)? {
@@ -1903,9 +1976,20 @@ impl KvStore {
             let (name, bucket) = unesc(key)?;
             Ok(format!("({:?}, {bucket:?})", String::from_utf8_lossy(&name)))
         };
-        let mut expected = expected.into_iter().peekable();
+        // A field with events pending counts the rows a replacement removed
+        // until its fold: its histogram is not held to the rows.
+        let mut behind: BTreeSet<Vec<u8>> = BTreeSet::new();
+        for entry in self.t.events.iter(r)? {
+            let (name, _) = unesc(entry?.0)?;
+            behind.insert(name);
+        }
+        let settled = |key: &[u8]| unesc(key).is_ok_and(|(name, _)| !behind.contains(&name));
+        let mut expected = expected.into_iter().filter(|(k, _)| settled(k)).peekable();
         for entry in self.t.hist.iter(r)? {
             let (k, v) = entry?;
+            if !settled(k) {
+                continue;
+            }
             let got = from_be(v);
             while let Some((want_k, want)) = expected.next_if(|(want_k, _)| want_k[..] < *k) {
                 diff.push(format!("histogram missing: {}: {want}", show(&want_k)?));

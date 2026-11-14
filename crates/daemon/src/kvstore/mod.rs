@@ -64,7 +64,7 @@ use uuid::Uuid;
 use crate::error::DomainError;
 use crate::log::{OpRow, Retention};
 use crate::rows::{self, FieldRow, RawValue, TreeRow};
-use crate::store::{Begin, LabelMeta, Log, NewOp, Questions, Rows, WriteTxn};
+use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Questions, Rows, WriteTxn};
 
 mod derived;
 pub mod memory;
@@ -104,6 +104,7 @@ struct Tables {
     kids: Db,
     grams: Db,
     hist: Db,
+    events: Db,
 }
 
 /// The tables' names, in `Tables`' order.
@@ -132,6 +133,7 @@ const NAMES: [&str; table::TABLES] = [
     "kids",
     "grams",
     "hist",
+    "events",
 ];
 
 impl Tables {
@@ -145,13 +147,13 @@ impl Tables {
             for name in NAMES {
                 dbs.push(dbo.create_database::<Bytes, Bytes>(w, Some(name))?);
             }
-            let dbs: [_; 24] = dbs.try_into().expect("one database per name");
+            let dbs: [_; table::TABLES] = dbs.try_into().expect("one database per name");
             Ok(CommitOrAbort::<_, ()>::Commit(dbs))
         })?;
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [meta, metarecords, cells, row_owner, by_field, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist] =
+        let [meta, metarecords, cells, row_owner, by_field, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist, events] =
             dbs;
         Ok(Tables {
             meta,
@@ -178,11 +180,12 @@ impl Tables {
             kids,
             grams,
             hist,
+            events,
         })
     }
 
     /// Every table, in the order of their indexes (see [`table::Change`]).
-    fn all(&self) -> [Db; 24] {
+    fn all(&self) -> [Db; table::TABLES] {
         [
             self.meta,
             self.metarecords,
@@ -208,6 +211,7 @@ impl Tables {
             self.kids,
             self.grams,
             self.hist,
+            self.events,
         ]
     }
 }
@@ -1485,6 +1489,11 @@ pub struct KvTxn<'e> {
     /// the fields whose state it changed, written at commit.
     grams: RefCell<HashMap<String, derived::GramState>>,
     grams_changed: RefCell<std::collections::HashSet<String>>,
+    /// The field a write to many records is being written on: its rows
+    /// derive nothing, the event that ends it does (`derived::events`).
+    mass: RefCell<Option<String>>,
+    /// How many events each field has pending, as read or changed.
+    events: RefCell<HashMap<String, usize>>,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
@@ -1799,6 +1808,8 @@ impl<'e> KvTxn<'e> {
             universe: RefCell::new(HashMap::new()),
             grams: RefCell::new(HashMap::new()),
             grams_changed: RefCell::new(Default::default()),
+            mass: RefCell::new(None),
+            events: RefCell::new(HashMap::new()),
         })
     }
 
@@ -1946,6 +1957,24 @@ impl KvTxn<'_> {
 }
 
 impl WriteTxn for KvTxn<'_> {
+    fn mass_begin(&self, field: &str, kind: MassKind, values: &[Value]) -> Result<bool> {
+        if !self.mass_eligible(field, kind, values)? {
+            return Ok(false);
+        }
+        KvTxn::mass_begin(self, field);
+        Ok(true)
+    }
+
+    fn mass_end(
+        &self,
+        field: &str,
+        kind: MassKind,
+        values: Vec<Value>,
+        uuids: &[Uuid],
+    ) -> Result<()> {
+        KvTxn::mass_end(self, field, kind, values, uuids)
+    }
+
     fn create_metarecord(&self, uuid: Uuid) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         if self.t.metarecords.get(&w, uuid.as_bytes())?.is_some() {

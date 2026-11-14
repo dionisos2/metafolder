@@ -15,7 +15,7 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::error::DomainError;
 use crate::rows::{self, FieldRow};
-use crate::store::{Begin, Database, LabelMeta, Log, NewOp, Store, WriteTxn};
+use crate::store::{Begin, Database, LabelMeta, Log, MassKind, NewOp, Store, WriteTxn};
 
 /// The `origin` of an operation the daemon writes on the filesystem's
 /// behalf — the watcher's flush (doc "Operations and their origin").
@@ -1183,6 +1183,70 @@ impl<'c> Writer<'c> {
     pub fn delete_fields_named(&mut self, uuid: Uuid, name: &str) -> Result<usize> {
         let rows = self.tx.rows_named(uuid, name)?;
         self.delete_field_rows(uuid, name, rows)
+    }
+
+    /// Adds `value` to `name` on every one of `uuids` that lacks it, as one
+    /// write to many records (doc "Mass writes in the store"); the records it
+    /// changed.
+    pub fn mass_add(&mut self, name: &str, value: Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        let one = value.clone();
+        self.mass(MassKind::Add, name, vec![value], uuids, move |w, uuid| {
+            Ok(w.append_field(uuid, name, one.clone())?.created())
+        })
+    }
+
+    /// Removes `value` from `name` on every one of `uuids` that holds it; the
+    /// records it changed.
+    pub fn mass_remove(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        self.mass(MassKind::Remove, name, vec![value.clone()], uuids, |w, uuid| {
+            Ok(w.delete_fields_valued(uuid, name, value)? > 0)
+        })
+    }
+
+    /// Replaces the rows of `name` by `values` on every one of `uuids`, which
+    /// all count as changed.
+    pub fn mass_set(
+        &mut self,
+        name: &str,
+        values: Vec<Value>,
+        uuids: &[Uuid],
+    ) -> Result<Vec<Uuid>> {
+        let (kept, _) = collapse_duplicates(&values);
+        self.mass(MassKind::Replace, name, kept, uuids, move |w, uuid| {
+            w.set_field_multi(uuid, name, values.clone())?;
+            Ok(true)
+        })
+    }
+
+    /// Removes `name` from every one of `uuids`; the records that held it.
+    pub fn mass_unset(&mut self, name: &str, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        self.mass(MassKind::Replace, name, Vec::new(), uuids, |w, uuid| {
+            Ok(w.delete_fields_named(uuid, name)? > 0)
+        })
+    }
+
+    /// One operation on a field of many records: `one` writes each record's
+    /// rows and its log entry, as a write to it alone would, while the store
+    /// indexes the lot as one event when it can ([`WriteTxn::mass_begin`]).
+    fn mass(
+        &mut self,
+        kind: MassKind,
+        name: &str,
+        values: Vec<Value>,
+        uuids: &[Uuid],
+        mut one: impl FnMut(&mut Self, Uuid) -> Result<bool>,
+    ) -> Result<Vec<Uuid>> {
+        let massed = self.tx.mass_begin(name, kind, &values)?;
+        let mut changed = Vec::new();
+        for &uuid in uuids {
+            if one(self, uuid)? {
+                changed.push(uuid);
+            }
+        }
+        if massed {
+            self.tx.mass_end(name, kind, values, uuids)?;
+        }
+        Ok(changed)
     }
 
     /// Flushes the remaining buffered operations, writes the final HEAD and

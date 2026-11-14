@@ -849,6 +849,17 @@ pub fn version_before_label<S: Rows + Log + ?Sized>(
     Ok(Some(version))
 }
 
+/// What a write to many records does to a field.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MassKind {
+    /// Adds one value to the records that lack it.
+    Add,
+    /// Removes one value from the records that hold it.
+    Remove,
+    /// Replaces the field's rows by the given values — none, to remove it.
+    Replace,
+}
+
 /// One operation a write transaction appends to the log.
 pub struct NewOp {
     pub op_type: OpType,
@@ -868,6 +879,25 @@ pub struct NewOp {
 pub trait WriteTxn: Store {
     /// A new metarecord, with no row yet.
     fn create_metarecord(&self, uuid: Uuid) -> Result<()>;
+    /// Opens a write of `values` to many records of `field` (doc "Mass writes
+    /// in the store"): until [`Self::mass_end`], the rows written to that
+    /// field are not indexed one by one. `false` when the store indexes this
+    /// one row by row after all — nothing is opened, and no `mass_end` is
+    /// owed.
+    fn mass_begin(&self, _field: &str, _kind: MassKind, _values: &[Value]) -> Result<bool> {
+        Ok(false)
+    }
+    /// Closes the write [`Self::mass_begin`] opened: `uuids` are the records
+    /// it was asked on, whether each changed or not.
+    fn mass_end(
+        &self,
+        _field: &str,
+        _kind: MassKind,
+        _values: Vec<Value>,
+        _uuids: &[Uuid],
+    ) -> Result<()> {
+        Ok(())
+    }
     /// Removes a metarecord and every row it holds.
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()>;
     /// Inserts a row and returns its id: a fresh one, never reused, or `id`

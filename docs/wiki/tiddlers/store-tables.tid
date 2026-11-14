@@ -63,6 +63,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |
 |`grams` |`2` · field |the field's trigram state: its mode, its counts |
 |`hist` |field · bucket |rows (count) |
+|`events` |field · number |a pending event of the field's values: kind · values · a bitmap of dense ids ([[Mass writes in the store]]) |
 
 ''Dense ids'' come first: each metarecord gets a small integer, allocated in
 discovery order and never reused. Bitmaps hold these ids, not uuids. A deleted

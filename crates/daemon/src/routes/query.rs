@@ -472,9 +472,8 @@ pub(super) async fn batch_set(
     let field = body.name.clone();
     // A whole-field overwrite always rewrites the rows, so every match counts as
     // updated — unlike the append/remove forms, which report what they changed.
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
-        writer.set_field_multi(uuid, &field, rows.clone())?;
-        Ok(true)
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
+        Ok(writer.mass_set(&field, rows.clone(), uuids)?)
     })
     .await
 }
@@ -494,8 +493,8 @@ pub(super) async fn batch_add(
     let field = body.name.clone();
     // A match that already holds the value gains nothing, so it is not counted
     // (doc "No duplicate rows").
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
-        Ok(writer.append_field(uuid, &field, value.clone())?.created())
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
+        Ok(writer.mass_add(&field, value.clone(), uuids)?)
     })
     .await
 }
@@ -513,8 +512,8 @@ pub(super) async fn batch_remove(
     let repo_uuid = parse_uuid(&repo)?;
     let value = single_value(body.value, body.values)?;
     let field = body.name.clone();
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
-        Ok(writer.delete_fields_valued(uuid, &field, &value)? > 0)
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
+        Ok(writer.mass_remove(&field, &value, uuids)?)
     })
     .await
 }
@@ -539,8 +538,8 @@ pub(super) async fn batch_unset(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let field = body.name.clone();
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
-        Ok(writer.delete_fields_named(uuid, &field)? > 0)
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
+        Ok(writer.mass_unset(&field, uuids)?)
     })
     .await
 }
@@ -594,8 +593,8 @@ pub(super) struct BatchBody {
     ops: Vec<BatchOp>,
 }
 
-/// Writes one metarecord of a batch op; answers whether it changed.
-type WriteOne = Box<dyn FnMut(&mut Writer, Uuid) -> Result<bool, ApiError>>;
+/// Writes the matches of a batch op at once; answers which of them changed.
+type WriteOne = Box<dyn FnMut(&mut Writer, &[Uuid]) -> Result<Vec<Uuid>, ApiError>>;
 
 /// A batch op made ready to apply: its query already resolved.
 enum Ready {
@@ -692,9 +691,8 @@ pub(super) async fn batch_writes(
                     (
                         uuids,
                         name,
-                        Box::new(move |w: &mut Writer, u| {
-                            w.set_field_multi(u, &field, rows.clone())?;
-                            Ok(true)
+                        Box::new(move |w: &mut Writer, u: &[Uuid]| {
+                            Ok(w.mass_set(&field, rows.clone(), u)?)
                         }),
                     )
                 }
@@ -703,8 +701,8 @@ pub(super) async fn batch_writes(
                     (
                         uuids,
                         name,
-                        Box::new(move |w: &mut Writer, u| {
-                            Ok(w.append_field(u, &field, value.clone())?.created())
+                        Box::new(move |w: &mut Writer, u: &[Uuid]| {
+                            Ok(w.mass_add(&field, value.clone(), u)?)
                         }),
                     )
                 }
@@ -713,8 +711,8 @@ pub(super) async fn batch_writes(
                     (
                         uuids,
                         name,
-                        Box::new(move |w: &mut Writer, u| {
-                            Ok(w.delete_fields_valued(u, &field, &value)? > 0)
+                        Box::new(move |w: &mut Writer, u: &[Uuid]| {
+                            Ok(w.mass_remove(&field, &value, u)?)
                         }),
                     )
                 }
@@ -723,20 +721,16 @@ pub(super) async fn batch_writes(
                     (
                         uuids,
                         name,
-                        Box::new(
-                            move |w: &mut Writer, u| Ok(w.delete_fields_named(u, &field)? > 0),
-                        ),
+                        Box::new(move |w: &mut Writer, u: &[Uuid]| Ok(w.mass_unset(&field, u)?)),
                     )
                 }
             };
-            let mut updated = 0usize;
-            for uuid in uuids {
-                if write(&mut writer, uuid)? {
-                    updated += 1;
-                    touch(uuid, &name);
-                }
+            // One write to many records (doc "Mass writes in the store").
+            let changed = write(&mut writer, &uuids)?;
+            for uuid in &changed {
+                touch(*uuid, &name);
             }
-            results.push(json!({ "updated": updated }));
+            results.push(json!({ "updated": changed.len() }));
         }
         drop(writing);
         for (uuid, names) in &touched {

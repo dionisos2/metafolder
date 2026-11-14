@@ -25,6 +25,7 @@ use metafolder_core::metarecord::Value;
 use roaring::{MultiOps, RoaringBitmap};
 use uuid::Uuid;
 
+use super::derived::events::{self, Event};
 use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, part_prefix, read_set, text_key,
     type_tag, value_key, NAME, VALUE,
@@ -50,6 +51,9 @@ pub struct KvSource<'s> {
     /// The universe's chunks read one at a time, before anything needed it
     /// whole ([`KvSource::is_live`]).
     live_chunks: RefCell<BTreeMap<u16, RoaringBitmap>>,
+    /// Each field's pending events, read once (doc "Mass writes in the
+    /// store"): what is stored of the field's values is behind by them.
+    events: RefCell<BTreeMap<String, std::rc::Rc<Vec<Event>>>>,
 }
 
 impl KvStore {
@@ -63,6 +67,7 @@ impl KvStore {
             store_reads: &self.reads,
             live: std::cell::OnceCell::new(),
             live_chunks: RefCell::new(BTreeMap::new()),
+            events: RefCell::new(BTreeMap::new()),
         })
     }
 }
@@ -264,6 +269,21 @@ impl KvSource<'_> {
         self.reads.get()
     }
 
+    /// `field`'s pending events, oldest first; a read each, once.
+    fn events(&self, field: &str) -> std::rc::Rc<Vec<Event>> {
+        if let Some(known) = self.events.borrow().get(field) {
+            return known.clone();
+        }
+        let read = || -> Result<Vec<Event>> {
+            let found = events::read_events(&self.t, &self.r, field)?;
+            self.read_keys(1 + found.len() as u64)?;
+            Ok(found)
+        };
+        let found = std::rc::Rc::new(self.ok(read(), Vec::new()));
+        self.events.borrow_mut().insert(field.to_string(), found.clone());
+        found
+    }
+
     /// How `field`'s trigrams are kept; a read.
     fn gram_state(&self, field: &str) -> derived::GramState {
         let read = || -> Result<derived::GramState> {
@@ -375,7 +395,17 @@ impl KvSource<'_> {
                     out |= derived::decode_set(v)?;
                 }
             }
-            Ok(out)
+            // A reference's referrers are its value's holders: behind by the
+            // field's pending events, as the value partition is.
+            let pending = self.events(field);
+            if pending.is_empty() {
+                return Ok(out);
+            }
+            let by_target = events::by_target(&pending, |uuid| {
+                self.read_keys(1)?;
+                Ok(self.t.ids.get(&self.r, uuid)?.map(dense))
+            })?;
+            Ok(events::replay(&by_target, &target.to_be_bytes(), out))
         };
         self.ok(read(), RoaringBitmap::new())
     }
@@ -539,8 +569,51 @@ impl KvSource<'_> {
         self.scan_part(field, part, from, to, keep, &posted)
     }
 
-    /// [`Self::part_ids`], the values with a posting given.
+    /// [`Self::part_ids`], the values with a posting given — with the
+    /// field's pending events replayed, in the value partition (doc "Mass
+    /// writes in the store"). The values an event names are left out of the
+    /// scan of what is stored and read one by one, replayed; any other value
+    /// has only lost the records a replacement was written on.
     fn scan_part(
+        &self,
+        field: &str,
+        part: u8,
+        from: Bound<&[u8]>,
+        to: Bound<&[u8]>,
+        keep: &dyn Fn(&[u8]) -> bool,
+        posted: &std::collections::BTreeSet<Vec<u8>>,
+    ) -> RoaringBitmap {
+        let pending = if part == VALUE { self.events(field) } else { Default::default() };
+        if pending.is_empty() {
+            return self.scan_stored(field, part, from, to, keep, posted);
+        }
+        let named = events::named(&pending);
+        let unnamed = |k: &[u8]| !named.contains(k) && keep(k);
+        let mut out = self.scan_stored(field, part, from, to, &unnamed, posted);
+        out -= events::replaced(&pending);
+        // A key is in the range when its entries are: a key, then an id.
+        let within = |k: &[u8]| {
+            let (first, last) = ([k, &[0; 4][..]].concat(), [k, &ID_MAX[..]].concat());
+            let above = match from {
+                Bound::Included(a) => last.as_slice() >= a,
+                Bound::Excluded(a) => last.as_slice() > a,
+                Bound::Unbounded => true,
+            };
+            let below = match to {
+                Bound::Included(b) => first.as_slice() <= b,
+                Bound::Excluded(b) => first.as_slice() < b,
+                Bound::Unbounded => true,
+            };
+            above && below
+        };
+        for key in named.iter().filter(|k| within(k) && keep(k)) {
+            out |= events::replay(&pending, key, self.bucket_stored(field, part, key));
+        }
+        out
+    }
+
+    /// [`Self::scan_part`] over what is stored.
+    fn scan_stored(
         &self,
         field: &str,
         part: u8,
@@ -625,9 +698,20 @@ impl KvSource<'_> {
         self.ok(read(), None)
     }
 
-    /// The ids holding exactly `key` in a partition — a posting, where the
-    /// value has one.
+    /// The ids holding exactly `key` in a partition: what is stored, with the
+    /// field's pending events replayed.
     fn bucket(&self, field: &str, part: u8, key: &[u8]) -> RoaringBitmap {
+        let stored = self.bucket_stored(field, part, key);
+        let pending = if part == VALUE { self.events(field) } else { Default::default() };
+        if pending.is_empty() {
+            return stored;
+        }
+        events::replay(&pending, key, stored)
+    }
+
+    /// The ids stored under exactly `key` in a partition — a posting, where
+    /// the value has one.
+    fn bucket_stored(&self, field: &str, part: u8, key: &[u8]) -> RoaringBitmap {
         if part == VALUE {
             if let Some(ids) = self.posting(field, key) {
                 return ids;
@@ -636,7 +720,7 @@ impl KvSource<'_> {
         // No posting: the value's run, read holder by holder.
         let hi = [key, &ID_MAX[..]].concat();
         let (from, to) = (Bound::Included(key), Bound::Excluded(hi.as_slice()));
-        self.scan_part(field, part, from, to, &|k| k == key, &Default::default())
+        self.scan_stored(field, part, from, to, &|k| k == key, &Default::default())
     }
 
     /// The ids holding a key other than `key` in a partition.
@@ -1571,6 +1655,11 @@ impl Source for KvSource<'_> {
         // The value partition sorts like the values (its keys are built for
         // it) on a scalar field; a reference or a forest sorts otherwise.
         if !matches!(self.kind(field), Some(Kind::Categorical | Kind::Numeric | Kind::Datetime)) {
+            return false;
+        }
+        // The stored order is behind by the field's pending events: the page
+        // is fetched, from the rows.
+        if !self.events(field).is_empty() {
             return false;
         }
         let start_key = match start {

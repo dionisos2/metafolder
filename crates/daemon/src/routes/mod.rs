@@ -430,10 +430,10 @@ where
 /// `batch_add`, `batch_remove`, `batch_unset`): runs on the blocking pool,
 /// gates on repository writability and on the field name being writable,
 /// resolves the query to its match set, then opens **one** logged [`Writer`]
-/// and lets `write` mutate each match in turn — the whole batch is a single
-/// write.
+/// and hands `write` the matches at once — a write to many records (doc "Mass
+/// writes in the store"), the whole batch a single write.
 ///
-/// `write` answers whether that metarecord actually changed: a match it left
+/// `write` answers which metarecords actually changed: a match it left
 /// alone is neither schema-validated nor counted, which is what makes the
 /// reported `updated` the number of metarecords the call really touched
 /// (doc "No duplicate rows"). Any closure error drops the Writer,
@@ -448,7 +448,7 @@ async fn write_matches<F>(
     mut write: F,
 ) -> Result<Json<serde_json::Value>, ApiError>
 where
-    F: FnMut(&mut Writer, Uuid) -> Result<bool, ApiError> + Send + 'static,
+    F: FnMut(&mut Writer, &[Uuid]) -> Result<Vec<Uuid>, ApiError> + Send + 'static,
 {
     with_repo(state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
@@ -460,12 +460,9 @@ where
 
         let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.fields");
-        let mut updated = 0usize;
-        for uuid in &uuids {
-            if !write(&mut writer, *uuid)? {
-                continue;
-            }
-            updated += 1;
+        let changed = write(&mut writer, &uuids)?;
+        let updated = changed.len();
+        for uuid in &changed {
             slowlog::timed("validate.schema", || {
                 validate_schema(repo_state, writer.store(), *uuid, std::slice::from_ref(&name))
             })?;
