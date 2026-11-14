@@ -338,7 +338,17 @@ POINTS À PRÉSENTER À L'UTILISATEUR, UN À LA FOIS, avant de coder :
        CHAMP ENTIER sur ce metarecord (toutes ses valeurs ; l'utilisateur a
        voulu remplacer et renommer en deux formes distinctes, et le
        renommage d'une seule ligne disparaît — retirer + ajouter).
-  b. le CLI (`mf field get|set|delete`) ;
+  b. TRANCHÉ (14 nov. 2026) — CLI : `mf field get|set|delete <id>`
+     supprimés (`mf field list` reste) ; `field remove` sur un uuid passe par
+     la nouvelle route DELETE {"value"} ; deux verbes nouveaux, -i exigé :
+     - `mf metarecord -i U field replace tag:string=jazz blues` : 1re spec =
+       la valeur à remplacer ; 2e argument = la nouvelle valeur SEULE, lue
+       avec le type de la 1re (l'utilisateur ne veut pas répéter le type) ;
+       le 2e argument peut aussi être une spec complète du même nom, pour
+       changer de type (`field replace rating:nothing rating:int=4`) — il
+       est lu comme spec seulement s'il commence par `<même nom>:<type
+       connu>`, sinon comme valeur nue ;
+     - `mf metarecord -i U field rename tag genre`.
   c. l'ordre des lignes ;
   d. remplacer A par B quand B existe déjà : refus 400 (comme l'édition par
      id aujourd'hui) ou fusion.
