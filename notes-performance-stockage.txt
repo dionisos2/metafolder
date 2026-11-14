@@ -297,35 +297,43 @@ l'arbre de travail, compile avec 4 avertissements « jamais utilisé ») :
   store » (citée par le code, pas encore écrite → `doc check` échouera) +
   store-tables ; (5) lancer kv_events puis le contrôle complet, commiter.
 
-PROCHAINE ACTION — ÉTAPE 8, QUESTION EN ATTENTE DE L'UTILISATEUR (posée le
-14 nov. 2026, PAS ENCORE TRANCHÉE ; ne rien coder de l'étape 8 avant sa
-réponse) : que deviennent les IDS DE LIGNE ?
-Contexte : chaque ligne a un id (`fields[].id` dans le JSON, route
-`/repos/{repo}/fields/{id}` — id seul, sans uuid —, `mf field get|set|delete
-<id>`, Writer::replace_field / delete_field), tenu par deux tables :
-`row_owner` (id → uuid · champ) et `by_field` (champ · id → uuid). Une ligne
-créée par une opération de masse (liste par partie) n'aurait pas d'id, sauf à
-en écrire un par metarecord, ce qui annule le gain. C'est la question A.1
-laissée ouverte (« retirer les ids de ligne seulement si une étape y gagne »).
-Options présentées :
-  1. (RECOMMANDÉE) l'id devient un HASH DU CONTENU de la ligne (nom, type,
-     valeur — c'est déjà le terme version::row, 53 bits), calculé à la
-     lecture ; rien de stocké, `row_owner` et `by_field` disparaissent ; la
-     route devient `/metarecords/{uuid}/fields/{id}` (un hash ne retrouve pas
-     le metarecord) ; API_VERSION incrémentée, CLI et GUI adaptés ; l'id
-     change quand la valeur change (il n'était déjà pas stable).
-  2. supprimer les ids de ligne : ligne désignée par (uuid, nom, valeur) ;
-     même gain store, changement plus large de l'API, du CLI et du panneau
-     de détail.
-  3. garder les ids stockés, ids des lignes de masse pris dans des blocs
-     réservés par partie (table de blocs : base → partie · événement) ; aucun
-     changement d'API, mais `row_owner` et `by_field` restent.
-Gain de 1 et 2 au-delà des écritures de masse : chaque ligne écrite coûte une
-clé `row_owner` et une clé `by_field` (~15 endroits dispersés par fichier
-créé, un par champ) → allège aussi le premier reconcile et le watcher.
-À vérifier avant de coder l'option retenue : les usages de by_field
-(Questions::holders / field_rows / for_each_row, retype_field, rename_field)
-— holders(champ) peut venir des compteurs (présent ∪ absent).
+PROCHAINE ACTION — ÉTAPE 8. DÉCISION utilisateur (14 nov. 2026) : LES IDS DE
+LIGNE SONT SUPPRIMÉS (option 2 des trois présentées ; l'option « hash du
+contenu » recommandée et l'option « blocs d'ids réservés » sont écartées).
+Une ligne est désignée par (uuid, nom, valeur). `row_owner` et `by_field`
+disparaissent (2 clés de moins par ligne écrite : allège aussi le premier
+reconcile et le watcher).
+Recensement de ce qui s'appuie sur l'id (fait, rien de codé) :
+- API : `fields[].id` dans chaque réponse (core Field.id, query_result.rs,
+  store.rs) ; routes GET / PATCH / DELETE `/repos/{repo}/fields/{id}`
+  (routes/records.rs, doc "Metarecord endpoints", 3 notes de route, bench
+  regression/api.rs, doc_gen.rs) ; log_view.rs expose `field_id`.
+- CLI : `mf field get|set|delete <id>` (commands/records.rs, main.rs
+  FieldCommand) ; `mf … remove` sur un uuid lit le metarecord puis supprime
+  par id (pas de route « retirer une valeur » pour un seul metarecord).
+- GUI : panel metarecord-detail (main.js saveField / deleteField / état
+  `editingField = field.id` ; field-commands.js set / remove).
+- Writer (log.rs) : replace_field, rename_field, delete_field,
+  reject_duplicate / twin_row, validate_one_position(…, Some(row id)),
+  get_owned_row, retype_field ; tx.delete_row(id).
+- Store : cellule `field_cells` = uuid · nom · id de ligne ; valeur de
+  `forest` = uuid · id de ligne · id dense ; Rows « insérer (le store alloue
+  l'id) / remettre AVEC son id (restauration de sauvegarde) » ; codec du
+  journal (chaque ligne garde son id d'origine).
+- Wiki à réécrire : "No duplicate rows" (exception « édition par id »),
+  "The storage boundary" (« Row ids are part of the data model »), "Store
+  tables", "Log storage", "What a revert writes", "Reverting onto the current
+  state", "Metarecord endpoints", "Editing metarecords from the command line".
+CONSÉQUENCE À FAIRE VALIDER : l'ordre des lignes d'un metarecord est
+aujourd'hui l'ordre des ids (= ordre de création, KvStore::rows trie par id).
+Sans id, l'ordre naturel devient nom puis valeur.
+POINTS À PRÉSENTER À L'UTILISATEUR, UN À LA FOIS, avant de coder :
+  a. la forme de remplacement dans l'API (retirer UNE valeur d'un metarecord,
+     remplacer une valeur par une autre / renommer en une écriture atomique) ;
+  b. le CLI (`mf field get|set|delete`) ;
+  c. l'ordre des lignes ;
+  d. remplacer A par B quand B existe déjà : refus 400 (comme l'édition par
+     id aujourd'hui) ou fusion.
 
 Réflexions déjà faites pour l'étape 8 (non validées par l'utilisateur, à lui
 présenter un point à la fois) :
