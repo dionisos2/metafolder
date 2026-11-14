@@ -263,7 +263,11 @@ describe('metarecord:field remove — the field, then the value', () => {
     const { specs, calls } = await mountPanel(tagFields(), { seeds: tagSeeds, tree: tagTree });
     await specs.get('metarecord:field')!.handler('remove', 'tag', '/fruits/jazz');
     expect(calls.filter((c) => c.method === 'DELETE')).toEqual([
-      { method: 'DELETE', path: `/repos/${REPO}/fields/1`, body: null },
+      {
+        method: 'DELETE',
+        path: `/repos/${REPO}/metarecords/${UUID}/fields/tag`,
+        body: { value: { type: 'ref', value: U_JAZZ } },
+      },
     ]);
   });
 
@@ -271,7 +275,11 @@ describe('metarecord:field remove — the field, then the value', () => {
     const { specs, calls } = await mountPanel(tagFields(), { seeds: tagSeeds, tree: tagTree });
     await specs.get('metarecord:field')!.handler('remove', 'tag', U_BLUES);
     expect(calls.filter((c) => c.method === 'DELETE')).toEqual([
-      { method: 'DELETE', path: `/repos/${REPO}/fields/2`, body: null },
+      {
+        method: 'DELETE',
+        path: `/repos/${REPO}/metarecords/${UUID}/fields/tag`,
+        body: { value: { type: 'ref', value: U_BLUES } },
+      },
     ]);
   });
 
@@ -313,8 +321,8 @@ describe('metarecord:field remove — the field, then the value', () => {
     const { completions } = await collect(specs.get('metarecord:field')!, ['remove'], ['note', '']);
     expect(await completions[1]).toEqual(['∅', 'hi']);
     await specs.get('metarecord:field')!.handler('remove', 'note', '∅');
-    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([
-      `/repos/${REPO}/fields/6`,
+    expect(calls.filter((c) => c.method === 'DELETE')).toEqual([
+      { method: 'DELETE', path: `/repos/${REPO}/metarecords/${UUID}/fields/note`, body: { value: { type: 'nothing' } } },
     ]);
   });
 
@@ -330,7 +338,11 @@ describe('metarecord:field remove — the field, then the value', () => {
     expect(await completions[1]).toEqual(['/a/b']);
     await specs.get('metarecord:field')!.handler('remove', 'location', '/a/b');
     expect(calls.filter((c) => c.method === 'DELETE')).toEqual([
-      { method: 'DELETE', path: `/repos/${REPO}/fields/8`, body: null },
+      {
+        method: 'DELETE',
+        path: `/repos/${REPO}/metarecords/${UUID}/fields/location`,
+        body: { value: { type: 'tree_ref', value: { parent: U_PARENT, name: 'b' } } },
+      },
     ]);
   });
 
@@ -364,8 +376,8 @@ describe('metarecord:field edit — the field, the row, the new value', () => {
     await specs.get('metarecord:field')!.handler(...args!);
     expect(calls).toContainEqual({
       method: 'PATCH',
-      path: `/repos/${REPO}/fields/3`,
-      body: { value: { type: 'int', value: 7 } },
+      path: `/repos/${REPO}/metarecords/${UUID}/fields/rating`,
+      body: { value: { type: 'int', value: 5 }, to: { type: 'int', value: 7 } },
     });
   });
 
@@ -392,8 +404,8 @@ describe('metarecord:field edit — the field, the row, the new value', () => {
     await specs.get('metarecord:field')!.handler('edit', 'tag', '/fruits/jazz', '/fruits/blues');
     expect(calls).toContainEqual({
       method: 'PATCH',
-      path: `/repos/${REPO}/fields/1`,
-      body: { value: { type: 'ref', value: U_BLUES } },
+      path: `/repos/${REPO}/metarecords/${UUID}/fields/tag`,
+      body: { value: { type: 'ref', value: U_JAZZ }, to: { type: 'ref', value: U_BLUES } },
     });
   });
 
@@ -415,8 +427,8 @@ describe('metarecord:field edit — the field, the row, the new value', () => {
     await specs.get('metarecord:field')!.handler(...args!);
     expect(calls).toContainEqual({
       method: 'PATCH',
-      path: `/repos/${REPO}/fields/9`,
-      body: { value: { type: 'int', value: 5 } },
+      path: `/repos/${REPO}/metarecords/${UUID}/fields/rating`,
+      body: { value: { type: 'nothing' }, to: { type: 'int', value: 5 } },
     });
   });
 
@@ -569,8 +581,11 @@ describe('adding a value to a field from its row (doc "metarecord-detail panel")
     await settle();
     expect(calls).toContainEqual({
       method: 'PATCH',
-      path: `/repos/${REPO}/fields/7`,
-      body: { value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
+      path: `/repos/${REPO}/metarecords/${UUID}/fields/path`,
+      body: {
+        value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } },
+        to: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } },
+      },
     });
   });
 });
@@ -652,8 +667,11 @@ describe('a hierarchy node’s parents (doc "Hierarchy references")', () => {
     await specs.get('metarecord:field')!.handler(...args!);
     expect(calls).toContainEqual({
       method: 'PATCH',
-      path: `/repos/${REPO}/fields/7`,
-      body: { value: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } } },
+      path: `/repos/${REPO}/metarecords/${UUID}/fields/path`,
+      body: {
+        value: { type: 'hierarchy_ref', value: { parent: U_PARENT, name: 'maraton' } },
+        to: { type: 'hierarchy_ref', value: { parent: U_BLUES, name: 'maraton' } },
+      },
     });
   });
 });

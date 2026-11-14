@@ -1,0 +1,32 @@
+title: $:/mf/gen/CLI command/mf metarecord field replace
+catalog: CLI command
+target: mf metarecord field replace
+summary: Replace one value of the field by another (requires -i)
+
+!! Reference
+
+```
+Replace one value of the field by another (requires -i)
+
+Usage: mf metarecord field replace [OPTIONS] <SPEC> [VALUE]
+
+Arguments:
+  <SPEC>
+          Field spec name:type[=value] — the value to replace
+
+  [VALUE]
+          The new value alone, read as the type of the value replaced
+
+Options:
+      --nothing
+          The new value is an absence (name:nothing)
+
+      --type <VALUE_TYPE>
+          The type of the new value, when the one replaced is `nothing`
+
+  -f, --force
+          
+
+  -h, --help
+          Print help
+```

@@ -436,7 +436,11 @@ export function registerFieldCommand({
             ? await vocab.parseParent(cur.repo, field, raw, pathText(row.value.value.name))
             : await vocab.parse(cur.repo, field, as, raw);
         const force = forceFor(field);
-        await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
+        await daemon.call('PATCH', api(`/fields/${encodeURIComponent(field)}`), {
+          value: row.value,
+          to: value,
+          ...force,
+        });
         await load();
         await dirty(mf);
       },
@@ -479,11 +483,10 @@ export function registerFieldCommand({
         if (matches.length === 0) throw new Error(`no value "${raw}" on "${field}"`);
         const force = forceFor(field);
         if (matches.length === 1) {
-          await daemon.call(
-            'DELETE',
-            `/repos/${cur.repo}/fields/${matches[0].id}`,
-            forceBodyFor(field),
-          );
+          await daemon.call('DELETE', api(`/fields/${encodeURIComponent(field)}`), {
+            value: matches[0].value,
+            ...force,
+          });
         } else {
           // Several rows: one write, so one write and one undo. A value
           // names every row equal to it, which is what the daemon's `remove`

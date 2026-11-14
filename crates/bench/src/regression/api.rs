@@ -97,6 +97,8 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.metarecord.field_append", &[(P, "/repos/:repo/metarecords/:uuid/fields")]),
     s("api.metarecord.field_set", &[("PUT", "/repos/:repo/metarecords/:uuid/fields/:name")]),
     s("api.metarecord.field_unset", &[("DELETE", "/repos/:repo/metarecords/:uuid/fields/:name")]),
+    s("api.metarecord.field_replace", &[("PATCH", "/repos/:repo/metarecords/:uuid/fields/:name")]),
+    s("api.metarecord.field_rename", &[(P, "/repos/:repo/metarecords/:uuid/fields/:name/rename")]),
     s("api.metarecord.refresh", &[(P, "/repos/:repo/metarecords/:uuid/refresh")]),
     s("api.field.patch", &[("PATCH", "/repos/:repo/fields/:id")]),
     s("api.field.delete", &[("DELETE", "/repos/:repo/fields/:id")]),
@@ -416,6 +418,19 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             let field = format!("{base}/metarecords/{sample}/fields/bench_unset");
             send("PUT", &field, Some(&json!({"value": int(1)}))).await?;
             send("DELETE", &field, None).await?;
+        }
+        "api.metarecord.field_replace" => {
+            let field = format!("{base}/metarecords/{sample}/fields/bench_replace");
+            send("PUT", &field, Some(&json!({"value": int(1)}))).await?;
+            send("PATCH", &field, Some(&json!({"value": int(1), "to": int(2)}))).await?;
+        }
+        "api.metarecord.field_rename" => {
+            // Renamed, then removed under its new name: the next repetition
+            // finds neither name.
+            let fields = format!("{base}/metarecords/{sample}/fields");
+            send("PUT", &format!("{fields}/bench_rename"), Some(&json!({"value": int(1)}))).await?;
+            post(&format!("{fields}/bench_rename/rename"), json!({"to": "bench_renamed"})).await?;
+            send("DELETE", &format!("{fields}/bench_renamed"), None).await?;
         }
         "api.metarecord.refresh" => {
             post(&format!("{base}/metarecords/{sample}/refresh"), json!({})).await?;

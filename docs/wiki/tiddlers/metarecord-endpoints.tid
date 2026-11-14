@@ -18,7 +18,9 @@ query ([[Query endpoints]]). They overlap only on one metarecord (its URL, or a 
 |<<cmd "POST /repos/:repo/metarecords/:uuid/fields">> |appends one row: `{"name", "value", "force"?}` → the metarecord (unchanged when the value was there) |
 |<<cmd "GET /repos/:repo/metarecords/:uuid/fields/:name">> |`{"name", "values": […]}` — empty when the field is unknown |
 |<<cmd "PUT /repos/:repo/metarecords/:uuid/fields/:name">> |sets the field: `{"value"}` or `{"values": […]}`, exactly one, `"force"?` → the metarecord |
-|<<cmd "DELETE /repos/:repo/metarecords/:uuid/fields/:name">> |unsets it (every row goes; the field becomes unknown) → `204` |
+|<<cmd "PATCH /repos/:repo/metarecords/:uuid/fields/:name">> |replaces one value by another, the others staying: `{"value", "to", "force"?}` → the metarecord; `404` when the field does not hold `value` |
+|<<cmd "DELETE /repos/:repo/metarecords/:uuid/fields/:name">> |unsets it (every row goes; the field becomes unknown) → `204`; with `{"value"}`, removes that value alone (`404` when the field does not hold it) |
+|<<cmd "POST /repos/:repo/metarecords/:uuid/fields/:name/rename">> |renames the field on this metarecord, every value moving: `{"to", "force"?}` → the metarecord; `404` when it has no such field, `400` when it already holds `to` |
 |<<cmd "POST /repos/:repo/metarecords/:uuid/refresh">> |re-reads its file now, as the watcher would → the metarecord ([[Refreshing a record]]) |
 |<<cmd "GET /repos/:repo/fields/:id">> |one row by its id alone: `{"id", "name", "value"}`; `404` when unknown |
 |<<cmd "PATCH /repos/:repo/fields/:id">> |changes its name and/or value, keeping the id: `{"name"?, "value"?, "force"?}`; `400` if it would duplicate a sibling |
@@ -34,6 +36,14 @@ schema violation is a `400` with a `violations` array ([[Delta validation]]). A 
 name is free text, so `:name` is percent-encoded as a path segment (`my%20note`,
 `a%2Fb`): unencoded, a space makes the URL invalid and a `/`, `?` or `#` names another
 route.
+
+!! One value of a field
+
+A row has no address of its own in these three routes: it is the value it holds.
+
+* The `PATCH` replaces `value` by `to` in one write, so one undo. When the field already holds `to`, the two merge: `value` goes, and the metarecord is in the state asked for ([[No duplicate rows]]). `to` is checked like any value written to the field (its type, a forest's rules).
+* The `DELETE` reads its body when there is one, and refuses one it cannot read (`400`): a `value` lost to a syntax error would unset the whole field.
+* The rename moves ''every'' value of the field, `nothing` rows included. Onto a name the metarecord already holds it is refused rather than merged: that name was most likely forgotten, and a merge would hide it. Each value is checked against the new name's type ([[One value type per field name]]); a reserved name on either side needs `force`.
 
 !! Bulk create
 

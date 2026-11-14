@@ -67,31 +67,22 @@ pub fn add(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliE
 }
 
 /// Removes field rows equal to the spec's `(name, value)` — the inverse of `add`.
-/// A predicate target uses the atomic `POST /remove`; a UUID target has no
-/// dedicated endpoint, so it deletes each matching row by id. Both print the
-/// number of metarecords changed (0 or 1 for a UUID).
+/// A predicate target uses the atomic `POST /remove`; a UUID target removes
+/// that one value of the field, after reading that the field holds it. Both
+/// print the number of metarecords changed (0 or 1 for a UUID).
 pub fn remove(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let (name, value) = parse_spec(spec)?;
     match parse_target(target)? {
         Target::Entry(uuid) => {
-            let entry = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
-            let ids: Vec<i64> = entry["fields"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|f| f["name"] == name && f["value"] == value)
-                .filter_map(|f| f["id"].as_i64())
-                .collect();
-            for id in &ids {
-                ctx.client.request(
-                    "DELETE",
-                    &format!("{base}/fields/{id}"),
-                    &[],
-                    Some(&json!({"force": force})),
-                )?;
+            let url = field_url(&base, uuid, &name);
+            let held = ctx.client.get(&url, &[])?;
+            let holds = held["values"].as_array().is_some_and(|values| values.contains(&value));
+            if holds {
+                let body = json!({"value": value, "force": force});
+                ctx.client.request("DELETE", &url, &[], Some(&body))?;
             }
-            println!("{}", if ids.is_empty() { 0 } else { 1 });
+            println!("{}", u8::from(holds));
         }
         Target::Predicate(query) => {
             let body = json!({"query": query, "name": name, "value": value, "force": force});
@@ -530,6 +521,74 @@ pub fn field_unset(ctx: &Ctx, selector: &str, name: &str, force: bool) -> Result
             println!("{}", resp["updated"].as_u64().unwrap_or(0));
         }
     }
+    Ok(0)
+}
+
+/// The one metarecord `field replace` and `field rename` work on: they have
+/// no form over a query.
+fn one_metarecord(selector: &str, verb: &str) -> Result<uuid::Uuid, CliError> {
+    match parse_target(selector)? {
+        Target::Entry(uuid) => Ok(uuid),
+        Target::Predicate(_) => {
+            Err(CliError::Usage(format!("field {verb} works on one metarecord: give -i <uuid>")))
+        }
+    }
+}
+
+/// `mf metarecord -i <uuid> field replace <spec> (<value> | --nothing)` —
+/// replaces the value the spec names by another, the field's other values
+/// staying. `to` is the new value alone, read as the type of the one replaced
+/// (as `value_type` when that one is `nothing`); `None` replaces by an absence.
+pub fn field_replace(
+    ctx: &Ctx,
+    selector: &str,
+    spec: &str,
+    to: Option<&str>,
+    value_type: Option<&str>,
+    force: bool,
+) -> Result<i32, CliError> {
+    let uuid = one_metarecord(selector, "replace")?;
+    let (name, from) = parse_spec(spec)?;
+    let from_type = from["type"].as_str().unwrap_or_default();
+    let read_as = match (from_type, value_type) {
+        ("nothing", Some(given)) if to.is_some() => given,
+        ("nothing", None) if to.is_some() => {
+            return Err(CliError::Usage(
+                "replacing a nothing: give the type of the new value with --type".into(),
+            ));
+        }
+        (_, Some(_)) => {
+            return Err(CliError::Usage(
+                "--type is only for replacing a nothing by a value: the new value is read as \
+                 the type of the one replaced"
+                    .into(),
+            ));
+        }
+        (own, None) => own,
+    };
+    let to = match to {
+        Some(text) => parse_spec(&format!("{name}:{read_as}={text}"))?.1,
+        None => json!({"type": "nothing"}),
+    };
+    let base = ctx.repo_base()?;
+    let body = json!({"value": from, "to": to, "force": force});
+    ctx.client.request("PATCH", &field_url(&base, uuid, &name), &[], Some(&body))?;
+    Ok(0)
+}
+
+/// `mf metarecord -i <uuid> field rename <name> <to>` — renames the field on
+/// that metarecord: every value moves.
+pub fn field_rename(
+    ctx: &Ctx,
+    selector: &str,
+    name: &str,
+    to: &str,
+    force: bool,
+) -> Result<i32, CliError> {
+    let uuid = one_metarecord(selector, "rename")?;
+    let base = ctx.repo_base()?;
+    let body = json!({"to": to, "force": force});
+    ctx.client.post(&format!("{}/rename", field_url(&base, uuid, name)), &body)?;
     Ok(0)
 }
 

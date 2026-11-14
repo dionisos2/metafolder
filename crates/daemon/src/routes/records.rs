@@ -463,27 +463,109 @@ pub(super) async fn set_record_field(
     .map(Json)
 }
 
+#[derive(Deserialize, Default)]
+pub(super) struct RemoveFieldBody {
+    #[serde(default)]
+    value: Option<Value>,
+    #[serde(default)]
+    force: bool,
+}
+
 /// `DELETE /repos/:repo/metarecords/:uuid/fields/:name` — unset: removes every
-/// row of `name` (one `DeleteField` op), leaving the field unknown.
+/// row of `name` (one `DeleteField` op), leaving the field unknown. With a
+/// `value`, removes that value alone (`404` when the field does not hold it).
+///
+/// The body is optional, but one that is there must be readable: a `value`
+/// lost to a syntax error would turn "remove one value" into "unset".
 pub(super) async fn unset_record_field(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid, name)): Path<(String, String, String)>,
     Query(ev): Query<ExpectedVersion>,
-    payload: Result<Option<Json<ForceBody>>, JsonRejection>,
+    body: axum::body::Bytes,
 ) -> Result<StatusCode, ApiError> {
-    // As axum 0.7 read an optional body: absent or unreadable alike.
-    let payload = payload.ok().flatten();
-    let force = payload.map(|Json(b)| b.force).unwrap_or(false);
+    let body: RemoveFieldBody = if body.is_empty() {
+        RemoveFieldBody::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("unreadable body: {e}")))?
+    };
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
-        check_writable(&name, force)?;
+        check_writable(&name, body.force)?;
         ensure_exists(writer.store(), uuid)?;
-        writer.delete_fields_named(uuid, &name)?;
+        match &body.value {
+            Some(value) => writer.remove_value(uuid, &name, value)?,
+            None => {
+                writer.delete_fields_named(uuid, &name)?;
+            }
+        }
         Ok(vec![name])
     })
     .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReplaceValueBody {
+    value: Value,
+    to: Value,
+    #[serde(default)]
+    force: bool,
+}
+
+/// `PATCH /repos/:repo/metarecords/:uuid/fields/:name` — replaces the value
+/// `value` of the field by `to`, the other values staying: one write. `404`
+/// when the field does not hold `value`; onto a value it already holds, the
+/// two merge (doc "No duplicate rows").
+pub(super) async fn replace_record_value(
+    State(state): State<Arc<AppState>>,
+    Path((repo, uuid, name)): Path<(String, String, String)>,
+    Query(ev): Query<ExpectedVersion>,
+    payload: Result<Json<ReplaceValueBody>, JsonRejection>,
+) -> Result<Json<MetaRecord>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuid = parse_uuid(&uuid)?;
+    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
+        check_writable(&name, body.force)?;
+        slowlog::note("field", name.as_str());
+        ensure_exists(writer.store(), uuid)?;
+        writer.replace_value(uuid, &name, &body.value, body.to)?;
+        Ok(vec![name])
+    })
+    .await
+    .map(Json)
+}
+
+#[derive(Deserialize)]
+pub(super) struct RenameFieldBody {
+    to: String,
+    #[serde(default)]
+    force: bool,
+}
+
+/// `POST /repos/:repo/metarecords/:uuid/fields/:name/rename` — renames the
+/// field on this metarecord: every value moves to `to`. `404` when it has no
+/// such field, `400` when it already holds `to`.
+pub(super) async fn rename_record_field(
+    State(state): State<Arc<AppState>>,
+    Path((repo, uuid, name)): Path<(String, String, String)>,
+    Query(ev): Query<ExpectedVersion>,
+    payload: Result<Json<RenameFieldBody>, JsonRejection>,
+) -> Result<Json<MetaRecord>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuid = parse_uuid(&uuid)?;
+    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
+        check_writable(&name, body.force)?;
+        check_writable(&body.to, body.force)?;
+        ensure_exists(writer.store(), uuid)?;
+        writer.rename_record_field(uuid, &name, &body.to)?;
+        Ok(vec![name, body.to])
+    })
+    .await
+    .map(Json)
 }
 
 /// `POST /repos/:repo/metarecords/:uuid/refresh` — re-read the record's file

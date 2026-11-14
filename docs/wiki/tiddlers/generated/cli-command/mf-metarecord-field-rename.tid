@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf metarecord field rename
+catalog: CLI command
+target: mf metarecord field rename
+summary: Rename the field on this metarecord: every value moves (requires -i)
+
+!! Reference
+
+```
+Rename the field on this metarecord: every value moves (requires -i)
+
+Usage: mf metarecord field rename [OPTIONS] <NAME> <TO>
+
+Arguments:
+  <NAME>
+          
+
+  <TO>
+          
+
+Options:
+  -f, --force
+          
+
+  -h, --help
+          Print help
+```

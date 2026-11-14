@@ -1185,6 +1185,59 @@ impl<'c> Writer<'c> {
         self.delete_field_rows(uuid, name, rows)
     }
 
+    /// Removes `value` from `(uuid, name)`, the other values staying; not
+    /// found when the field does not hold it.
+    pub fn remove_value(&mut self, uuid: Uuid, name: &str, value: &Value) -> Result<()> {
+        if self.delete_fields_valued(uuid, name, value)? == 0 {
+            return Err(no_such_value(uuid, name));
+        }
+        Ok(())
+    }
+
+    /// Replaces the value `from` of `(uuid, name)` by `to`, the other values
+    /// staying; not found when the field does not hold `from`. Onto a value
+    /// the field already holds, the two merge: `from` goes, and the state is
+    /// the one asked for (doc "No duplicate rows").
+    pub fn replace_value(&mut self, uuid: Uuid, name: &str, from: &Value, to: Value) -> Result<()> {
+        let rows = self.tx.rows_named(uuid, name)?;
+        let Some(old) = rows.iter().find(|r| &r.value == from) else {
+            return Err(no_such_value(uuid, name));
+        };
+        if from == &to {
+            return Ok(());
+        }
+        if rows.iter().any(|r| r.value == to) {
+            return self.delete_field(uuid, old.id);
+        }
+        self.replace_field(uuid, old.id, to)
+    }
+
+    /// Renames the field `name` of `uuid` to `to`: every value moves. Not
+    /// found when the metarecord has no such field; refused when it already
+    /// holds `to` — a name the caller most likely forgot, which a merge would
+    /// hide.
+    pub fn rename_record_field(&mut self, uuid: Uuid, name: &str, to: &str) -> Result<()> {
+        let rows = self.tx.rows_named(uuid, name)?;
+        if rows.is_empty() {
+            return Err(
+                DomainError::NotFound(format!("no field '{name}' on metarecord {uuid}")).into()
+            );
+        }
+        if name == to {
+            return Ok(());
+        }
+        if !self.tx.rows_named(uuid, to)?.is_empty() {
+            return Err(DomainError::BadRequest(format!(
+                "metarecord {uuid} already has a field '{to}'"
+            ))
+            .into());
+        }
+        for row in rows {
+            self.rename_field(uuid, row.id, to, row.value)?;
+        }
+        Ok(())
+    }
+
     /// Adds `value` to `name` on every one of `uuids` that lacks it, as one
     /// write to many records (doc "Mass writes in the store"); the records it
     /// changed.
@@ -1619,4 +1672,10 @@ fn collapse_duplicate_fields(fields: Vec<Field>) -> Vec<Field> {
         }
     }
     kept
+}
+
+/// The refusal of a write naming a value the field does not hold.
+fn no_such_value(uuid: Uuid, name: &str) -> anyhow::Error {
+    DomainError::NotFound(format!("field '{name}' of metarecord {uuid} does not hold that value"))
+        .into()
 }

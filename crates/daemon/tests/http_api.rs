@@ -383,6 +383,242 @@ async fn test_field_by_id_get_rename_and_delete() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// The `(name, value)` pairs of a metarecord answer, sorted: the order of
+/// `fields` is unspecified.
+fn pairs(record: &Value) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = record["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["name"].as_str().unwrap().to_string(), f["value"].to_string()))
+        .collect();
+    out.sort();
+    out
+}
+
+fn string(text: &str) -> Value {
+    json!({"type": "string", "value": text})
+}
+
+fn pair(name: &str, text: &str) -> (String, String) {
+    (name.to_string(), string(text).to_string())
+}
+
+#[tokio::test]
+async fn test_removing_one_value_leaves_the_others() {
+    let (app, repo, _root) = app_with_repo("value_remove").await;
+    let created = create_metarecord(
+        &app,
+        &repo,
+        json!([
+            {"name": "tag", "value": string("jazz")},
+            {"name": "tag", "value": string("live")},
+        ]),
+    )
+    .await;
+    let uuid = created["uuid"].as_str().unwrap();
+    let field = format!("/repos/{repo}/metarecords/{uuid}/fields/tag");
+
+    let (status, _) = request(&app, "DELETE", &field, Some(json!({"value": string("jazz")}))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, values) = request(&app, "GET", &field, None).await;
+    assert_eq!(values["values"], json!([string("live")]));
+
+    // A value the field does not hold is not found, and nothing goes.
+    let (status, _) = request(&app, "DELETE", &field, Some(json!({"value": string("jazz")}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, values) = request(&app, "GET", &field, None).await;
+    assert_eq!(values["values"], json!([string("live")]));
+
+    // A body that cannot be read is refused: it must not unset the field.
+    let raw = Request::builder()
+        .method("DELETE")
+        .uri(&field)
+        .header("content-type", "application/json")
+        .body(Body::from("{\"value\": "))
+        .unwrap();
+    let response = app.clone().oneshot(raw).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let (_, values) = request(&app, "GET", &field, None).await;
+    assert_eq!(values["values"], json!([string("live")]));
+
+    // Without a value, the whole field goes, as before.
+    let (status, _) = request(&app, "DELETE", &field, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, values) = request(&app, "GET", &field, None).await;
+    assert_eq!(values["values"], json!([]));
+}
+
+#[tokio::test]
+async fn test_replacing_a_value_by_another() {
+    let (app, repo, _root) = app_with_repo("value_replace").await;
+    let created = create_metarecord(
+        &app,
+        &repo,
+        json!([
+            {"name": "tag", "value": string("jazz")},
+            {"name": "tag", "value": string("live")},
+            {"name": "note", "value": {"type": "nothing"}},
+        ]),
+    )
+    .await;
+    let uuid = created["uuid"].as_str().unwrap();
+    let field = format!("/repos/{repo}/metarecords/{uuid}/fields/tag");
+
+    let (status, record) = request(
+        &app,
+        "PATCH",
+        &field,
+        Some(json!({"value": string("jazz"), "to": string("blues")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "replace failed: {record}");
+    let nothing = ("note".to_string(), json!({"type": "nothing"}).to_string());
+    assert_eq!(pairs(&record), [nothing.clone(), pair("tag", "blues"), pair("tag", "live")]);
+
+    // Onto a value the field already holds: the two merge (doc "No duplicate
+    // rows").
+    let (status, record) = request(
+        &app,
+        "PATCH",
+        &field,
+        Some(json!({"value": string("blues"), "to": string("live")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "merge failed: {record}");
+    assert_eq!(pairs(&record), [nothing.clone(), pair("tag", "live")]);
+
+    // A value the field does not hold is not found.
+    let (status, _) = request(
+        &app,
+        "PATCH",
+        &field,
+        Some(json!({"value": string("jazz"), "to": string("rock")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The field's type is still checked.
+    let (status, _) = request(
+        &app,
+        "PATCH",
+        &field,
+        Some(json!({"value": string("live"), "to": {"type": "int", "value": 3}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // An absence takes a value, and a value becomes an absence.
+    let note = format!("/repos/{repo}/metarecords/{uuid}/fields/note");
+    let (status, record) = request(
+        &app,
+        "PATCH",
+        &note,
+        Some(json!({"value": {"type": "nothing"}, "to": string("seen")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "from nothing failed: {record}");
+    assert_eq!(pairs(&record), [pair("note", "seen"), pair("tag", "live")]);
+    let (status, record) = request(
+        &app,
+        "PATCH",
+        &note,
+        Some(json!({"value": string("seen"), "to": {"type": "nothing"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "to nothing failed: {record}");
+    assert_eq!(pairs(&record), [nothing, pair("tag", "live")]);
+
+    // Both values are required.
+    let (status, _) = request(&app, "PATCH", &field, Some(json!({"value": string("live")}))).await;
+    assert!(status.is_client_error(), "a replace without `to` got {status}");
+}
+
+#[tokio::test]
+async fn test_a_replace_is_undone_as_one_write() {
+    let (app, repo, _root) = app_with_repo("value_replace_log").await;
+    let created =
+        create_metarecord(&app, &repo, json!([{"name": "tag", "value": string("jazz")}])).await;
+    let uuid = created["uuid"].as_str().unwrap();
+    let (_, before) = request(&app, "GET", &format!("/repos/{repo}/log?limit=1000"), None).await;
+    let (status, _) = request(
+        &app,
+        "PATCH",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"),
+        Some(json!({"value": string("jazz"), "to": string("blues")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, after) = request(&app, "GET", &format!("/repos/{repo}/log?limit=1000"), None).await;
+    let labels = |log: &Value| {
+        let mut ids: Vec<i64> = log["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["label_id"].as_i64().unwrap())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.len()
+    };
+    assert_eq!(labels(&after), labels(&before) + 1, "a replace is one write, under one label");
+}
+
+#[tokio::test]
+async fn test_renaming_a_field_moves_every_value() {
+    let (app, repo, _root) = app_with_repo("field_rename").await;
+    let created = create_metarecord(
+        &app,
+        &repo,
+        json!([
+            {"name": "tag", "value": string("jazz")},
+            {"name": "tag", "value": string("live")},
+            {"name": "genre", "value": string("bop")},
+            {"name": "rating", "value": {"type": "int", "value": 4}},
+        ]),
+    )
+    .await;
+    let uuid = created["uuid"].as_str().unwrap();
+    let base = format!("/repos/{repo}/metarecords/{uuid}/fields");
+    let rating = ("rating".to_string(), json!({"type": "int", "value": 4}).to_string());
+
+    let (status, record) =
+        request(&app, "POST", &format!("{base}/tag/rename"), Some(json!({"to": "label"}))).await;
+    assert_eq!(status, StatusCode::OK, "rename failed: {record}");
+    assert_eq!(
+        pairs(&record),
+        [pair("genre", "bop"), pair("label", "jazz"), pair("label", "live"), rating.clone()]
+    );
+
+    // Onto a name the metarecord already holds: refused, nothing moves.
+    let (status, _) =
+        request(&app, "POST", &format!("{base}/label/rename"), Some(json!({"to": "genre"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, record) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(
+        pairs(&record),
+        [pair("genre", "bop"), pair("label", "jazz"), pair("label", "live"), rating]
+    );
+
+    // A field the metarecord does not hold is not found.
+    let (status, _) =
+        request(&app, "POST", &format!("{base}/tag/rename"), Some(json!({"to": "other"}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The new name's established type is checked: `rating` is an int
+    // elsewhere in the repository.
+    create_metarecord(&app, &repo, json!([{"name": "score", "value": string("high")}])).await;
+    let (status, _) =
+        request(&app, "POST", &format!("{base}/rating/rename"), Some(json!({"to": "score"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A reserved name needs force, on either side.
+    let (status, _) =
+        request(&app, "POST", &format!("{base}/genre/rename"), Some(json!({"to": "mf_x"}))).await;
+    assert!(status.is_client_error(), "a reserved target got {status}");
+}
+
 #[tokio::test]
 async fn test_create_get_delete_metarecord() {
     let (app, repo, root) = app_with_repo("crud").await;

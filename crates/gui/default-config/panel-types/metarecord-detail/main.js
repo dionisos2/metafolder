@@ -617,9 +617,11 @@ export async function mount(root, metafolder) {
     if (!current) return;
     try {
       const value = await newValue;
-      // A field row by its repo-global id (PATCH /repos/:repo/fields/:id).
-      await daemon.call('PATCH', `/repos/${current.repo}/fields/${field.id}`, {
-        value,
+      // One value of the field replaced by another: the row is named by the
+      // value it holds.
+      await daemon.call('PATCH', api(`/fields/${encodeURIComponent(field.name)}`), {
+        value: field.value,
+        to: value,
         ...forceFor(field.name),
       });
       editingField = null;
@@ -635,11 +637,10 @@ export async function mount(root, metafolder) {
     if (!current) return;
     if (!confirm(`Delete field "${field.name}"?`)) return;
     try {
-      await daemon.call(
-        'DELETE',
-        `/repos/${current.repo}/fields/${field.id}`,
-        forceBodyFor(field.name),
-      );
+      await daemon.call('DELETE', api(`/fields/${encodeURIComponent(field.name)}`), {
+        value: field.value,
+        ...forceFor(field.name),
+      });
       await load();
       await dirty(mf);
     } catch (error) {

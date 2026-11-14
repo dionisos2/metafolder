@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/PATCH /repos/:repo/metarecords/:uuid/fields/:name
+catalog: HTTP endpoint
+target: PATCH /repos/:repo/metarecords/:uuid/fields/:name
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``replace_record_value`` |

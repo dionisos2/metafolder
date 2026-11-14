@@ -1,0 +1,7 @@
+title: PATCH /repos/:repo/metarecords/:uuid/fields/:name
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Replaces one value of a field of a metarecord by another, the field's other values staying.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

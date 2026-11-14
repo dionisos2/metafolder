@@ -79,8 +79,12 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/metarecords/{uuid}/fields", post(append_field))
         .route(
             "/repos/{repo}/metarecords/{uuid}/fields/{name}",
-            get(get_record_field).put(set_record_field).delete(unset_record_field),
+            get(get_record_field)
+                .put(set_record_field)
+                .patch(replace_record_value)
+                .delete(unset_record_field),
         )
+        .route("/repos/{repo}/metarecords/{uuid}/fields/{name}/rename", post(rename_record_field))
         .route(
             "/repos/{repo}/metarecords/{uuid}/fields/{name}/resolve-tree",
             get(resolve_record_field_tree),

@@ -810,6 +810,29 @@ enum FieldVerb {
         #[arg(long, short = 'f')]
         force: bool,
     },
+    /// Replace one value of the field by another (requires -i)
+    Replace {
+        /// Field spec name:type[=value] — the value to replace
+        spec: String,
+        /// The new value alone, read as the type of the value replaced
+        #[arg(required_unless_present = "nothing", conflicts_with = "nothing")]
+        value: Option<String>,
+        /// The new value is an absence (name:nothing)
+        #[arg(long)]
+        nothing: bool,
+        /// The type of the new value, when the one replaced is `nothing`
+        #[arg(long = "type")]
+        value_type: Option<String>,
+        #[arg(long, short = 'f')]
+        force: bool,
+    },
+    /// Rename the field on this metarecord: every value moves (requires -i)
+    Rename {
+        name: String,
+        to: String,
+        #[arg(long, short = 'f')]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1762,6 +1785,23 @@ fn dispatch_metarecord(
                 FieldVerb::Add { spec, force } => commands::add(ctx, &sel, &spec, force),
                 FieldVerb::Remove { spec, force } => commands::remove(ctx, &sel, &spec, force),
                 FieldVerb::Unset { name, force } => commands::field_unset(ctx, &sel, &name, force),
+                FieldVerb::Replace { spec, value, nothing, value_type, force } => {
+                    let to = match (value, nothing) {
+                        (Some(value), false) => Some(value),
+                        _ => None,
+                    };
+                    commands::field_replace(
+                        ctx,
+                        &sel,
+                        &spec,
+                        to.as_deref(),
+                        value_type.as_deref(),
+                        force,
+                    )
+                }
+                FieldVerb::Rename { name, to, force } => {
+                    commands::field_rename(ctx, &sel, &name, &to, force)
+                }
             }
         }
     }

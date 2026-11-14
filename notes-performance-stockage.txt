@@ -363,6 +363,20 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
   8a. les trois routes par valeur + Writer (retirer une valeur, remplacer,
       renommer le champ) + verbes CLI replace / rename + panneau detail
       branché dessus ; les routes par id existent encore.
+      FAIT (14 nov. 2026) : Writer::remove_value / replace_value /
+      rename_record_field (log.rs, encore bâtis sur les ids en dessous) ;
+      routes dans routes/records.rs ; le DELETE lit son corps en octets et
+      REFUSE (400) un corps illisible (sinon « retirer une valeur » devenait
+      « unset ») ; CLI field replace / rename, `field remove` sur un uuid =
+      GET du champ puis DELETE {"value"} ; panneau detail (saveField,
+      deleteField, commandes edit / remove) ; bench api.metarecord.
+      field_replace / field_rename ; wiki. check.sh vert.
+      POINT OUVERT À POSER : la commande GUI `metarecord:field rename`
+      (field-commands.js) FUSIONNE aujourd'hui avec un nom déjà présent
+      (batch unset + set) ; la route et le CLI refusent (décision d). Non
+      modifiée : demander à l'utilisateur s'il veut le refus là aussi.
+      Pour 8b côté GUI : seul `editingField = field.id` (main.js) et les
+      fixtures de 14 fichiers de test portent encore l'id.
   8b. retrait des routes `/fields/{id}`, de `mf field get|set|delete`, de
       `fields[].id` et de `field_id` (log_view) ; API_VERSION ; wiki.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,

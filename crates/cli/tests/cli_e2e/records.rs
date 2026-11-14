@@ -505,6 +505,92 @@ fn test_remove_by_uuid_drops_only_matching_value_rows() {
     assert_eq!(tags[0]["value"]["value"], "keep");
 }
 
+#[test]
+fn test_remove_by_uuid_of_a_value_not_held_prints_zero() {
+    let (repo, _root) = init_repo("remove_uuid_absent");
+    let uuid = create_metarecord(&repo, &["tag:string=keep"]);
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "remove", "tag:string=gone"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "0");
+    assert_eq!(values_of(&repo, &uuid, "tag"), ["\"keep\""]);
+}
+
+/// The values of one field of a metarecord, as JSON text, sorted (`null` for
+/// a `nothing` row): the order of `fields` is unspecified.
+fn values_of(repo: &str, uuid: &str, name: &str) -> Vec<String> {
+    let entries = get_entries(repo, uuid);
+    let mut out: Vec<String> = entries[0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["name"] == name)
+        .map(|f| f["value"]["value"].to_string())
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn test_field_replace_changes_one_value() {
+    let (repo, _root) = init_repo("field_replace");
+    let uuid = create_metarecord(&repo, &["tag:string=jazz", "tag:string=live", "rating:int=4"]);
+    let field = ["-u", &repo, "metarecord", "-i", &uuid, "field"];
+    let run = |args: &[&str]| mf(&[&field[..], args].concat());
+
+    // The new value is bare: it is read as the type of the value replaced.
+    assert_ok(&run(&["replace", "tag:string=jazz", "blues"]));
+    assert_eq!(values_of(&repo, &uuid, "tag"), ["\"blues\"", "\"live\""]);
+    assert_ok(&run(&["replace", "rating:int=4", "5"]));
+    assert_eq!(values_of(&repo, &uuid, "rating"), ["5"]);
+
+    // To an absence, and back from one: the type has to be said then.
+    assert_ok(&run(&["replace", "rating:int=5", "--nothing"]));
+    assert_eq!(values_of(&repo, &uuid, "rating"), ["null"]);
+    assert_ok(&run(&["replace", "rating:nothing", "3", "--type", "int"]));
+    assert_eq!(values_of(&repo, &uuid, "rating"), ["3"]);
+
+    // A value the field does not hold fails, and changes nothing.
+    let out = run(&["replace", "tag:string=jazz", "rock"]);
+    assert_ne!(out.code, 0, "replacing a value not held must fail");
+    assert_eq!(values_of(&repo, &uuid, "tag"), ["\"blues\"", "\"live\""]);
+
+    // Usage errors: no new value, two of them, a type that is not needed, a
+    // type that is missing.
+    assert_eq!(run(&["replace", "tag:string=blues"]).code, 2);
+    assert_eq!(run(&["replace", "tag:string=blues", "rock", "--nothing"]).code, 2);
+    assert_eq!(run(&["replace", "tag:string=blues", "rock", "--type", "string"]).code, 2);
+    let out = run(&["replace", "rating:int=3", "--nothing"]);
+    assert_ok(&out);
+    assert_eq!(run(&["replace", "rating:nothing", "3"]).code, 2);
+    assert_eq!(values_of(&repo, &uuid, "tag"), ["\"blues\"", "\"live\""]);
+}
+
+#[test]
+fn test_field_rename_moves_every_value() {
+    let (repo, _root) = init_repo("field_rename");
+    let uuid = create_metarecord(&repo, &["tag:string=jazz", "tag:string=live", "genre:string=x"]);
+    let field = ["-u", &repo, "metarecord", "-i", &uuid, "field"];
+    let run = |args: &[&str]| mf(&[&field[..], args].concat());
+
+    assert_ok(&run(&["rename", "tag", "label"]));
+    assert_eq!(values_of(&repo, &uuid, "label"), ["\"jazz\"", "\"live\""]);
+    assert!(values_of(&repo, &uuid, "tag").is_empty());
+
+    // Onto a name the metarecord already holds: refused.
+    let out = run(&["rename", "label", "genre"]);
+    assert_ne!(out.code, 0, "renaming onto an existing field must fail");
+    assert_eq!(values_of(&repo, &uuid, "label"), ["\"jazz\"", "\"live\""]);
+}
+
+#[test]
+fn test_field_replace_and_rename_need_one_metarecord() {
+    let (repo, _root) = init_repo("field_replace_q");
+    create_metarecord(&repo, &["tag:string=jazz"]);
+    let query = ["-u", &repo, "metarecord", "-q", "tag IS PRESENT", "field"];
+    assert_eq!(mf(&[&query[..], &["replace", "tag:string=jazz", "blues"]].concat()).code, 2);
+    assert_eq!(mf(&[&query[..], &["rename", "tag", "label"]].concat()).code, 2);
+}
+
 /// One vocabulary across the daemon, the CLI and the GUI: `set` / `add` /
 /// `remove` / `unset` take a *value* out of a multi-map field, while `delete`
 /// stays reserved for destroying an entity (`mf metarecord delete`, and the

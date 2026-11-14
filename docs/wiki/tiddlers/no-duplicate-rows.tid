@@ -12,6 +12,7 @@ Every write enforces it by ''collapsing'', never by failing:
 * ''add'' of a value the metarecord already holds under that name is a no-op: no row, no new version, nothing logged. The set form's `updated` count counts only the metarecords that gained a row — re-running a tagging prints `0`.
 * ''set'' (one field, or a whole metarecord) keeps the first occurrence of each value and drops the later ones.
 * a ''retype'' that makes two rows equal keeps one ([[Changing a field's type]]).
+* ''replacing'' a value by one the field already holds (`PATCH …/metarecords/:uuid/fields/:name`, `mf … field replace`) leaves that one: the value replaced goes, which is the state asked for.
 
 The one exception is the edit ''by row id'' (`PATCH /fields/:id`, `mf field set <id>`):
 it names one row, so turning it into the twin of a sibling is refused with `400`

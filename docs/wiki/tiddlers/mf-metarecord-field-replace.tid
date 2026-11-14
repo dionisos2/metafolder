@@ -1,0 +1,6 @@
+title: mf metarecord field replace
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Replace one value of the field by another (requires -i)
+
+Changes the value the spec names and leaves the field's other values; the new value is given alone and read as the same type ([[Editing metarecords from the command line]]).

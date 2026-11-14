@@ -75,7 +75,11 @@ describe('metarecord:field', () => {
       { id: 8, name: 'tag', value: { type: 'string', value: 'rock' } },
     ]);
     await field.handler('remove', 'tag', 'rock');
-    expect(calls).toContainEqual({ method: 'DELETE', path: '/repos/r/fields/8', body: null });
+    expect(calls).toContainEqual({
+      method: 'DELETE',
+      path: '/repos/r/metarecords/u1/fields/tag',
+      body: { value: { type: 'string', value: 'rock' } },
+    });
   });
 
   test('renames as one batch on the shown record', async () => {
