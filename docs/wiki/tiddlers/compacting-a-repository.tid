@@ -16,6 +16,10 @@ the deletion of much of a repository, the file can be far larger than what it ho
 (438 MB for 274 MB used, measured on one bulk load). `compact` gives that room back.
 On a store that only grows, it gains little.
 
+After a large deletion, run `mf repo reindex` first: the indexes keep what they held
+about the deleted metarecords until then ([[Deleting a metarecord in the store]]),
+and a compact copies it with the rest.
+
 What it does not shrink: the operation log, which keeps what each operation changed
 — a deleted metarecord's rows included — until retention drops it ([[Automatic retention]],
 [[The operation log]]).

@@ -106,37 +106,39 @@ struct Tables {
     hist: Db,
 }
 
+/// The tables' names, in `Tables`' order.
+const NAMES: [&str; table::TABLES] = [
+    "meta",
+    "metarecords",
+    "field_cells",
+    "row_owner",
+    "by_field",
+    "field_types",
+    "forest",
+    "ops",
+    "snaps",
+    "ops_by_label",
+    "ops_by_entity",
+    "labels",
+    "label_kids",
+    "label_keys",
+    "reverted_by",
+    "watcher_ops",
+    "user_ops",
+    "ids",
+    "uuids",
+    "sets",
+    "parts",
+    "kids",
+    "grams",
+    "hist",
+];
+
 impl Tables {
     /// Opens (creating them if needed) the store's tables in `env`.
     fn open(env: &Env<WithoutTls>) -> Result<Tables> {
         // In `Tables`' order. heed hands a database out for good (`'static`)
         // only once the transaction that created it has committed.
-        const NAMES: [&str; 24] = [
-            "meta",
-            "metarecords",
-            "field_cells",
-            "row_owner",
-            "by_field",
-            "field_types",
-            "forest",
-            "ops",
-            "snaps",
-            "ops_by_label",
-            "ops_by_entity",
-            "labels",
-            "label_kids",
-            "label_keys",
-            "reverted_by",
-            "watcher_ops",
-            "user_ops",
-            "ids",
-            "uuids",
-            "sets",
-            "parts",
-            "kids",
-            "grams",
-            "hist",
-        ];
         let w = env.write_txn()?;
         let created = env.create_databases_and_commit(w, |dbo, w| -> heed::Result<_> {
             let mut dbs = Vec::with_capacity(NAMES.len());
@@ -230,6 +232,9 @@ pub struct KvStore {
     /// Keys read so far by the store's reads and its query sources — what
     /// the cost assertions count (`tests/kv_cost.rs`).
     reads: std::sync::atomic::AtomicU64,
+    /// The keys the last committed write transaction wrote, per table — what
+    /// the write cost assertions count ([`KvStore::last_write_keys`]).
+    written: std::sync::Mutex<[u64; table::TABLES]>,
     /// Where the copy is, shared with whoever reports it, so that reading it
     /// never waits on the store.
     resident: memory::ResidencyHandle,
@@ -308,8 +313,14 @@ fn cell_prefix(uuid: &[u8], field: &str) -> Vec<u8> {
 /// (absent: the first one, rows keyed `uuid · row id` in `cells`; 2: the
 /// history tree, operations chained to a parent; 3: the sequence, before the
 /// operations were split by origin; 4: operations grouped by write; 5:
-/// before the reverts of an operation were indexed).
-const LAYOUT: i64 = 6;
+/// before the reverts of an operation were indexed; 6: a forest entry
+/// without its metarecord's dense id).
+const LAYOUT: i64 = 7;
+
+/// Where the dense id starts in a forest entry's value: uuid · row id ·
+/// dense id. The id is what tells a position from one a deleted metarecord
+/// left behind, without a read (doc "Deleting a metarecord in the store").
+const FOREST_ID: usize = 24;
 
 /// A name inside a composite key: escaped, then terminated.
 fn name_key(name: &str) -> Vec<u8> {
@@ -626,12 +637,29 @@ impl KvStore {
             _lock: lock,
             dir: dir.to_path_buf(),
             reads: Default::default(),
+            written: Default::default(),
             memory: None,
             resident: Default::default(),
             durable,
         };
         if layout != Some(LAYOUT) {
-            store.migrate_layout().context("migrate the key-value store's rows")?;
+            // Layout 6 differs by its forest entries alone; an older one is
+            // brought to it first (and loses its log).
+            if layout != Some(6) {
+                store.migrate_layout().context("migrate the key-value store's rows")?;
+            }
+            // The ids come from the derived data: a store about to be
+            // reindexed gets them written then.
+            if derived == Some(derived::DERIVED_VERSION) {
+                let txn = KvTxn::new(&mut store)?;
+                txn.stamp_forest_ids().context("write the forest's dense ids")?;
+                txn.meta_put("layout", LAYOUT)?;
+                txn.finish()?;
+            } else if layout == Some(6) {
+                let txn = KvTxn::new(&mut store)?;
+                txn.meta_put("layout", LAYOUT)?;
+                txn.finish()?;
+            }
         }
         // A store from before the derived key spaces (or of another format of
         // them) gets them derived now: their migration.
@@ -672,6 +700,12 @@ struct Read<'a> {
     r: &'a RoTxn<'a>,
     /// The store's read counter; `None` where nothing counts.
     reads: Option<&'a std::sync::atomic::AtomicU64>,
+    /// Whether a dense id is in the universe as a write transaction sees it
+    /// (its own changes included); `None` for a read of the committed store,
+    /// which reads the universe itself ([`Read::live`]).
+    live: Option<&'a dyn Fn(u32) -> Result<bool>>,
+    /// The universe's chunks read so far, when the read looks them up itself.
+    universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
 }
 
 impl Read<'_> {
@@ -682,6 +716,32 @@ impl Read<'_> {
     fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
         self.count(1)?;
         Ok(self.t.metarecords.get(self.r, uuid.as_bytes())?.map(|b| from_be(b) as u64))
+    }
+
+    /// Whether the metarecord of a dense id exists: whether the id is in the
+    /// universe. What a deletion leaves behind — a forest key, index entries
+    /// — names an id that is not (doc "Deleting a metarecord in the store").
+    fn live(&self, id: u32) -> Result<bool> {
+        if let Some(live) = self.live {
+            return live(id);
+        }
+        let chunk = (id >> 16) as u16;
+        let mut seen = self.universe.borrow_mut();
+        if let std::collections::hash_map::Entry::Vacant(slot) = seen.entry(chunk) {
+            self.count(1)?;
+            let k = derived::set_key(derived::UNIVERSE, None, chunk);
+            slot.insert(match self.t.sets.get(self.r, &k)? {
+                Some(bytes) => derived::decode_set(bytes)?,
+                None => roaring::RoaringBitmap::new(),
+            });
+        }
+        Ok(seen[&chunk].contains(id))
+    }
+
+    /// Whether a forest entry (`v`: uuid · row id · dense id) is the position
+    /// of a metarecord that exists.
+    fn placed(&self, v: &[u8]) -> Result<bool> {
+        self.live(derived::dense(&v[FOREST_ID..]))
     }
 
     /// A record's rows, in row-id order (they are kept in field order).
@@ -738,7 +798,10 @@ impl Read<'_> {
             let (k, owner) = e?;
             let id = from_be(&k[k.len() - 8..]);
             let cell = self.t.cells.get(self.r, &key(&[&cell_prefix(owner, name), &be(id)]))?;
-            out.push((uuid_of(owner), dec_row(cell.context("a row the field index names")?)?));
+            // No cell: an entry a deleted metarecord left behind.
+            if let Some(cell) = cell {
+                out.push((uuid_of(owner), dec_row(cell)?));
+            }
         }
         Ok(out)
     }
@@ -751,10 +814,13 @@ impl Read<'_> {
             // Counted as read, not after: a folder can hold the repository,
             // and a query stopped meanwhile stops here (`crate::interrupt`).
             self.count(1)?;
+            if !self.placed(v)? {
+                continue;
+            }
             out.push((
                 uuid_of(v),
                 self.node_name(field, &k[prefix.len()..], v)?,
-                from_be(&v[16..]),
+                from_be(&v[16..24]),
             ));
         }
         self.count(1)?;
@@ -795,6 +861,9 @@ impl Read<'_> {
             if !k.starts_with(&prefix) {
                 break;
             }
+            if !self.placed(v)? {
+                continue;
+            }
             out.push((uuid_of(v), self.node_name(field, &k[prefix.len()..], v)?));
             if out.len() >= limit {
                 break;
@@ -810,7 +879,7 @@ impl Read<'_> {
         if key_end.len() <= NODE_MAX {
             return Ok(key_end.to_vec());
         }
-        let cell = key(&[&cell_prefix(&v[..16], field), &v[16..24]]);
+        let cell = key(&[&cell_prefix(&v[..16], field), &v[16..FOREST_ID]]);
         self.count(1)?;
         let row = self.t.cells.get(self.r, &cell)?.context("a forest position without its row")?;
         match dec_row(row)?.value.position() {
@@ -984,10 +1053,7 @@ macro_rules! kv_reads {
             }
             fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>> {
                 let $me = self;
-                $with(&mut |$read: &Read| {
-                    $read.count(1)?;
-                    Ok($read.t.row_owner.get($read.r, &be(id))?.map(uuid_of))
-                })
+                $with(&mut |$read: &Read| Ok($read.row(id)?.map(|(owner, _)| owner)))
             }
             fn metarecords(&self) -> Result<Vec<Uuid>> {
                 let $me = self;
@@ -1010,11 +1076,10 @@ macro_rules! kv_reads {
                     for e in $read.t.row_owner.iter($read.r)? {
                         $read.count(2)?;
                         let (k, prefix) = e?;
-                        let cell = $read.t.cells.get($read.r, &key(&[prefix, k]))?;
-                        f(
-                            uuid_of(prefix),
-                            dec_row(cell.context("a row its owner does not hold")?)?,
-                        )?;
+                        // No cell: an entry a deleted metarecord left behind.
+                        if let Some(cell) = $read.t.cells.get($read.r, &key(&[prefix, k]))? {
+                            f(uuid_of(prefix), dec_row(cell)?)?;
+                        }
                     }
                     Ok(())
                 })
@@ -1045,8 +1110,17 @@ macro_rules! kv_reads {
                     let mut out = Vec::new();
                     for e in $read.t.by_field.prefix_iter($read.r, &name_key(name))? {
                         $read.count(1)?;
-                        let u = uuid_of(e?.1);
-                        if seen.insert(u) {
+                        let (k, owner) = e?;
+                        let u = uuid_of(owner);
+                        if seen.contains(&u) {
+                            continue;
+                        }
+                        // The row itself: a deleted metarecord leaves its
+                        // entries here, without their cells.
+                        $read.count(1)?;
+                        let cell = key(&[&cell_prefix(owner, name), &k[k.len() - 8..]]);
+                        if $read.t.cells.get($read.r, &cell)?.is_some() {
+                            seen.insert(u);
                             out.push(u);
                         }
                     }
@@ -1098,6 +1172,9 @@ macro_rules! kv_reads {
                     let k = key(&[&name_key(field), &p, &node_key(name)]);
                     $read.count(1)?;
                     let Some(v) = $read.t.forest.get($read.r, &k)? else { return Ok(None) };
+                    if !$read.placed(v)? {
+                        return Ok(None);
+                    }
                     // A hashed key names the right position only if the name
                     // read back is the one asked for.
                     let found = $read.node_name(field, &k[k.len() - node_key(name).len()..], v)?;
@@ -1135,6 +1212,9 @@ macro_rules! kv_reads {
                     for e in $read.t.forest.iter($read.r)? {
                         $read.count(1)?;
                         let (k, v) = e?;
+                        if !$read.placed(v)? {
+                            continue;
+                        }
                         // field · parent · name bytes: the field's end is its
                         // `00 00` terminator.
                         let end = (0..k.len() - 1)
@@ -1150,7 +1230,7 @@ macro_rules! kv_reads {
                         let parent = uuid_of(&k[end + 2..end + 18]);
                         let name = $read.node_name(&field, &k[end + 18..], v)?;
                         out.push(TreeRow {
-                            id: from_be(&v[16..]),
+                            id: from_be(&v[16..24]),
                             field_name: field,
                             uuid: uuid_of(v),
                             parent: (!parent.is_nil()).then_some(parent),
@@ -1323,7 +1403,7 @@ macro_rules! kv_reads {
 
 kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     let r = me.env.read_txn()?;
-    f(&Read { t: &me.t, r: &r, reads: Some(&me.reads) })
+    f(&Read { t: &me.t, r: &r, reads: Some(&me.reads), live: None, universe: Default::default() })
 });
 
 /// A write transaction is answered by `store::derive`: no query source reads
@@ -1356,6 +1436,15 @@ impl KvStore {
         self.reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The keys the last committed write wrote, by table name (the tables it
+    /// wrote nothing to left out). A write is held to the *tables* it may
+    /// touch: on a hard disk each scattered key is a seek, whatever its size
+    /// (`tests/kv_cost.rs`).
+    pub fn last_write_keys(&self) -> std::collections::BTreeMap<&'static str, u64> {
+        let written = self.written.lock().unwrap_or_else(|e| e.into_inner());
+        NAMES.iter().copied().zip(*written).filter(|(_, n)| *n > 0).collect()
+    }
+
     fn kv_store(&self) -> Option<&KvStore> {
         Some(self)
     }
@@ -1365,6 +1454,19 @@ impl KvTxn<'_> {
     /// A write transaction is not a store a query can read a snapshot of.
     fn kv_store(&self) -> Option<&KvStore> {
         None
+    }
+
+    /// Runs `f` on the transaction's reads: its own writes, and the universe
+    /// as it changed it.
+    fn read_in<T>(&self, txn: &Wtxn<'_>, f: &mut dyn FnMut(&Read) -> Result<T>) -> Result<T> {
+        let live = |id: u32| self.live_in(txn, id);
+        f(&Read {
+            t: &self.t,
+            r: txn,
+            reads: Some(self.reads),
+            live: Some(&live),
+            universe: Default::default(),
+        })
     }
 }
 
@@ -1385,11 +1487,16 @@ pub struct KvTxn<'e> {
     /// The store's read counter: a write's reads count as much as a query's
     /// (`tests/log_cost.rs` holds the trim to it).
     reads: &'e std::sync::atomic::AtomicU64,
+    /// Where the store keeps what its last write wrote.
+    written: &'e std::sync::Mutex<[u64; table::TABLES]>,
+    /// The universe's chunks the transaction read without changing them
+    /// (a changed one is in `sets`).
+    universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     let txn = me.txn.borrow();
-    f(&Read { t: &me.t, r: &txn, reads: Some(me.reads) })
+    me.read_in(&txn, f)
 });
 
 impl Begin for KvStore {
@@ -1695,6 +1802,8 @@ impl<'e> KvTxn<'e> {
             sets: RefCell::new(HashMap::new()),
             cached_chunks: RefCell::new(HashMap::new()),
             reads: &store.reads,
+            written: &store.written,
+            universe: RefCell::new(HashMap::new()),
         })
     }
 
@@ -1706,7 +1815,9 @@ impl<'e> KvTxn<'e> {
     /// Writes what the transaction still holds in memory, and commits.
     fn finish(self) -> Result<()> {
         metafolder_core::slowlog::timed("commit.derived", || self.flush_sets())?;
-        let (txn, changes) = self.txn.into_inner().into_parts();
+        let wtxn = self.txn.into_inner();
+        let written = wtxn.written();
+        let (txn, changes) = wtxn.into_parts();
         // The store's own commit: writing the dirty pages, the free-page list,
         // and the fsync.
         metafolder_core::slowlog::timed("commit.store", || -> Result<()> {
@@ -1719,6 +1830,7 @@ impl<'e> KvTxn<'e> {
         // Every write commits here: an operation that never did is a read,
         // held to its own threshold in the slow-operation log.
         metafolder_core::slowlog::mark_write();
+        *self.written.lock().unwrap_or_else(|e| e.into_inner()) = written;
         Ok(())
     }
 }
@@ -1781,7 +1893,13 @@ impl KvTxn<'_> {
         while let Some(label) = next {
             let (empty, parent) = {
                 let txn = self.txn.borrow();
-                let read = Read { t: &self.t, r: &txn, reads: Some(self.reads) };
+                let read = Read {
+                    t: &self.t,
+                    r: &txn,
+                    reads: Some(self.reads),
+                    live: None,
+                    universe: Default::default(),
+                };
                 let Some(meta) = self.t.labels.get(&txn, &be(label))? else { break };
                 let meta = dec_label(meta)?;
                 let empty = read.label_first_op(label)?.is_none()
@@ -1843,8 +1961,32 @@ impl WriteTxn for KvTxn<'_> {
         self.derive_created(uuid)
     }
 
+    /// Removes a metarecord: its rows, its existence and its place in the
+    /// universe — and nothing of what the indexes hold about it, which every
+    /// read sifts through the universe (doc "Deleting a metarecord in the
+    /// store"). On a hard disk each index entry is a seek, and a file has
+    /// dozens.
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()> {
-        self.delete_rows(uuid, None)?;
+        // A parent of metarecords that exist is unpicked row by row: its
+        // subtree leaves its ancestors' descendants, which no universe sifts.
+        // The `Writer` refuses to commit that; a write deleting a folder
+        // before its files passes here.
+        if self.has_live_children(uuid)? {
+            self.delete_rows(uuid, None)?;
+        } else {
+            let rows = Rows::rows(self, uuid)?;
+            {
+                let mut w = self.txn.borrow_mut();
+                for row in &rows {
+                    let prefix = cell_prefix(uuid.as_bytes(), &row.name);
+                    self.t.cells.delete(&mut w, &key(&[&prefix, &be(row.id)]))?;
+                }
+            }
+            for row in &rows {
+                self.count_type(&row.name, &row.value, -1)?;
+                self.derive_dropped(uuid, &row.name, &row.value)?;
+            }
+        }
         self.t.metarecords.delete(&mut self.txn.borrow_mut(), uuid.as_bytes())?;
         self.derive_removed(uuid)
     }
@@ -1871,7 +2013,14 @@ impl WriteTxn for KvTxn<'_> {
         }
         let forest = Self::forest_key(name, value);
         if let Some(k) = &forest {
-            if self.t.forest.get(&self.txn.borrow(), k)?.is_some() {
+            // Occupied by a metarecord that exists: what a deleted one left
+            // there is written over.
+            let txn = self.txn.borrow();
+            let occupied = match self.t.forest.get(&txn, k)? {
+                Some(v) => self.live_in(&txn, derived::dense(&v[FOREST_ID..]))?,
+                None => false,
+            };
+            if occupied {
                 return Err(DomainError::BadRequest(format!(
                     "tree position already occupied for field '{name}'"
                 ))
@@ -1880,7 +2029,9 @@ impl WriteTxn for KvTxn<'_> {
         }
         let id = match id {
             Some(id) => {
-                if self.t.row_owner.get(&self.txn.borrow(), &be(id))?.is_some() {
+                // A row put back under its own id; the owner entry of a
+                // deleted metarecord's row is still there, without its cell.
+                if Rows::row(self, id)?.is_some() {
                     bail!("row {id} already exists");
                 }
                 self.bump_past("next_row", id)?;
@@ -1889,6 +2040,13 @@ impl WriteTxn for KvTxn<'_> {
             None => self.next("next_row")?,
         };
         let row = FieldRow { id, name: name.to_string(), value: value.clone() };
+        let dense = match &forest {
+            Some(_) => self
+                .dense_id(uuid.as_bytes())?
+                .with_context(|| format!("no dense id for {uuid}"))?
+                .to_be_bytes(),
+            None => [0; 4],
+        };
         {
             let mut w = self.txn.borrow_mut();
             let t = self.t;
@@ -1897,7 +2055,7 @@ impl WriteTxn for KvTxn<'_> {
             t.row_owner.put(&mut w, &be(id), &prefix)?;
             t.by_field.put(&mut w, &key(&[&name_key(name), &be(id)]), uuid.as_bytes())?;
             if let Some(k) = &forest {
-                t.forest.put(&mut w, k, &key(&[uuid.as_bytes(), &be(id)]))?;
+                t.forest.put(&mut w, k, &key(&[uuid.as_bytes(), &be(id), &dense]))?;
             }
         }
         self.count_type(name, value, 1)?;
@@ -1908,7 +2066,7 @@ impl WriteTxn for KvTxn<'_> {
     fn delete_row(&self, id: i64) -> Result<()> {
         let Some((owner, row)) = ({
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.row(id)?
+            self.read_in(&txn, &mut |read: &Read| read.row(id))?
         }) else {
             return Ok(());
         };

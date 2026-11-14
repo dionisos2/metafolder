@@ -31,12 +31,23 @@ pub(super) enum Change {
 pub(super) struct Wtxn<'e> {
     txn: RwTxn<'e>,
     journal: Option<Vec<Change>>,
+    /// Keys put or deleted so far, per table (a clear counts one): what the
+    /// write cost assertions count (`KvStore::last_write_keys`).
+    written: [u64; TABLES],
 }
+
+/// How many tables the store has.
+pub(super) const TABLES: usize = 24;
 
 impl<'e> Wtxn<'e> {
     /// `journaled`: whether the changes are noted, to be replayed elsewhere.
     pub(super) fn new(txn: RwTxn<'e>, journaled: bool) -> Self {
-        Wtxn { txn, journal: journaled.then(Vec::new) }
+        Wtxn { txn, journal: journaled.then(Vec::new), written: [0; TABLES] }
+    }
+
+    /// The keys written so far, per table index.
+    pub(super) fn written(&self) -> [u64; TABLES] {
+        self.written
     }
 
     /// The transaction, and the changes it made when they were noted.
@@ -120,6 +131,7 @@ impl Db {
 
     pub(super) fn put(&self, w: &mut Wtxn<'_>, k: &[u8], v: &[u8]) -> heed::Result<()> {
         self.raw.put(&mut w.txn, k, v)?;
+        w.written[self.index as usize] += 1;
         w.note(|| Change::Put(self.index, k.to_vec(), v.to_vec()));
         Ok(())
     }
@@ -127,6 +139,7 @@ impl Db {
     pub(super) fn delete(&self, w: &mut Wtxn<'_>, k: &[u8]) -> heed::Result<bool> {
         let deleted = self.raw.delete(&mut w.txn, k)?;
         if deleted {
+            w.written[self.index as usize] += 1;
             w.note(|| Change::Delete(self.index, k.to_vec()));
         }
         Ok(deleted)
@@ -134,6 +147,7 @@ impl Db {
 
     pub(super) fn clear(&self, w: &mut Wtxn<'_>) -> heed::Result<()> {
         self.raw.clear(&mut w.txn)?;
+        w.written[self.index as usize] += 1;
         w.note(|| Change::Clear(self.index));
         Ok(())
     }

@@ -101,8 +101,8 @@ to four values of a `tag` drawn from 200 (a few held by most files), a `mfr_mime
 
 Each scenario is timed three times; a write is never warmed (each run is a new write).
 `--dir DIR` generates the repositories in `DIR` (a hard disk, say) instead of
-`target/bench-data`; `--in-memory` loads them in memory ([[Holding a repository in
-memory]]); `--cold` makes every timed run cold, ''the writes too'': the repository is
+`target/bench-data`; `--in-memory` loads them in memory
+([[Holding a repository in memory]]); `--cold` makes every timed run cold, ''the writes too'': the repository is
 unloaded, its store dropped from the page cache, and loaded again before it. The
 conditions are part of the size label (`S-storage-mem-ext`), so each combination is a
 series of its own.

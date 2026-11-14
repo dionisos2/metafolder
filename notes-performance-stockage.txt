@@ -38,6 +38,35 @@ Règles du projet à respecter à chaque étape (CLAUDE.md) :
 - avant de commiter : cargo test du crate touché, cargo clippy, et à la fin
   d'une étape scripts/dev/check.sh (~10 min, en arrière-plan, sans sonder).
 
+AVANCEMENT (14 nov. 2026) : étape 1 FAITE (doc "Deleting a metarecord in the
+store", tests crates/daemon/tests/kv_delete.rs). Ce qui a été fait autrement
+que prévu, ou appris en route :
+- `forest` : la clé périmée reste, sa valeur porte l'id dense de l'enfant
+  (LAYOUT 7, conversion à l'ouverture qui garde le journal) ; listing et
+  résolution de chemin testent cet id dans universe.
+- `row_owner` et `by_field` restent périmés aussi (15 endroits dispersés par
+  fichier pour by_field) : un lecteur saute l'entrée dont la cellule manque.
+- `ids` / `uuids` ne sont plus effacés ; un metarecord recréé sous le même
+  uuid (revert d'une suppression) reçoit un NOUVEL id dense.
+- Tenus exacts à la suppression, car universe ne peut pas les filtrer :
+  field_types, les histogrammes (petites tables), et l'ensemble `parents`
+  (le parent d'un dernier enfant supprimé) — lu dans les referrers du parent
+  ∩ universe.
+- Un metarecord qui a encore des enfants vivants est défait ligne par ligne
+  comme avant (son sous-arbre doit quitter les descendants de ses ancêtres).
+  Le Writer refuse de commiter ça ; seul cas réel : dossier supprimé avant
+  ses fichiers dans la même écriture.
+- Filtrage : KvSource::sift (chaque feuille ∩ universe, lu une fois par
+  requête) ; `mf repo check` compare sur les ids vivants ; reindex purge les
+  restes primaires et réécrit les ids de `forest`.
+- Conséquence : après une grosse suppression, `compact` ne rend la place
+  qu'après un reindex (doc "Compacting a repository").
+- Outil de test ajouté : KvStore::last_write_keys() = clés écrites par table
+  par la dernière écriture (à réutiliser pour les étapes suivantes).
+- Non traité : le parcours de tri lit encore la représentante d'un id
+  supprimé avant de le sauter (lectures perdues tant qu'il n'y a pas eu de
+  reindex) ; disparaît avec l'étape 4.
+
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :
      résolution de chemin et clés de forêt vérifient universe, un nouveau
@@ -76,6 +105,15 @@ Commandes de mesure :
   résultats arrivent dans benchmarks/history/dionisos_portable.jsonl.
 - Dans le conteneur, /dev/shm ne fait que 63 Mo : --in-memory y est refusé
   pour S-storage (87 Mo). Tester sans --in-memory ici.
+
+DÉCISION utilisateur (14 nov. 2026) : dans la nouvelle version, TOUT dans la
+base se range par id dense (clés et valeurs des tables, primaires comprises) ;
+l'uuid ne sert plus qu'à l'entrée (table uuid → id dense) et à la sortie.
+Première application, étape 1 : la valeur d'une clé de `forest` porte l'id
+dense de l'enfant, pour que le listing d'un dossier et la résolution de
+chemin filtrent les clés périmées par ∩ universe sans lecture en plus.
+Conséquence : l'id dense devient une donnée primaire, d'où la question
+« reindex et ids denses » ci-dessous.
 
 Questions laissées ouvertes :
 - reindex et ids denses (À TRANCHER AVANT L'ÉTAPE 5) : `mf repo reindex`

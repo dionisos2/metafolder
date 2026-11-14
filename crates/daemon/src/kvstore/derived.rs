@@ -387,6 +387,78 @@ impl KvTxn<'_> {
         id_of(&self.t, &self.txn.borrow(), uuid)
     }
 
+    /// The dense id of a metarecord, as the transaction sees it.
+    pub(super) fn dense_id(&self, uuid: &[u8]) -> Result<Option<u32>> {
+        self.id(uuid)
+    }
+
+    /// Runs `f` on one chunk of the universe as the transaction sees it: the
+    /// chunk it changed, or the stored one — read once, and not put among the
+    /// changed chunks, which the commit writes.
+    fn with_universe<T>(
+        &self,
+        r: &RoTxn<'_>,
+        chunk: u16,
+        f: impl FnOnce(&RoaringBitmap) -> T,
+    ) -> Result<T> {
+        let k = set_key(UNIVERSE, None, chunk);
+        let cached = [&[SETS][..], &k].concat();
+        if let Some(bm) = self.sets.borrow().get(&cached) {
+            return Ok(f(bm));
+        }
+        let mut seen = self.universe.borrow_mut();
+        if let std::collections::hash_map::Entry::Vacant(slot) = seen.entry(chunk) {
+            slot.insert(match self.t.sets.get(r, &k)? {
+                Some(bytes) => decode_set(bytes)?,
+                None => RoaringBitmap::new(),
+            });
+        }
+        Ok(f(&seen[&chunk]))
+    }
+
+    /// Whether the metarecord of `id` exists, as the transaction sees it.
+    pub(super) fn live_in(&self, r: &RoTxn<'_>, id: u32) -> Result<bool> {
+        self.with_universe(r, (id >> 16) as u16, |bm| bm.contains(id))
+    }
+
+    /// Whether any of `ids` is a metarecord that exists — a chunk of the
+    /// universe at a time, not an id at a time: a folder emptied by one
+    /// write asks it once per file.
+    fn any_live(&self, ids: &RoaringBitmap) -> Result<bool> {
+        let (Some(lo), Some(hi)) = (ids.min(), ids.max()) else { return Ok(false) };
+        let r = self.txn.borrow();
+        for chunk in (lo >> 16)..=(hi >> 16) {
+            if ids.range_cardinality((chunk << 16)..=((chunk << 16) | 0xFFFF)) == 0 {
+                continue;
+            }
+            if self.with_universe(&r, chunk as u16, |bm| !bm.is_disjoint(ids))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether a metarecord that exists, other than `except`, is placed
+    /// under `parent` in `field` — read off the parent's referrers, among
+    /// which the children deleted since the last reindex still are.
+    fn has_live_kids(&self, parent: &[u8; 16], field: &str, except: Option<u32>) -> Result<bool> {
+        let mut kids = self.read_chunked(SETS, &referrers_prefix(field, parent))?;
+        if let Some(id) = except {
+            kids.remove(id);
+        }
+        self.any_live(&kids)
+    }
+
+    /// Whether a metarecord that exists is placed under `uuid`, in any field.
+    pub(super) fn has_live_children(&self, uuid: Uuid) -> Result<bool> {
+        for field in self.parent_fields(uuid.as_bytes())? {
+            if self.has_live_kids(uuid.as_bytes(), &field, None)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Adds `id` to (or removes it from) a set, in the transaction's chunk
     /// cache: a bulk write touches each chunk many times and writes it once,
     /// at [`Self::flush_sets`].
@@ -564,12 +636,6 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// Whether any row of `field` still has `parent` as its parent.
-    fn has_kids(&self, parent: &[u8; 16], field: &str) -> Result<bool> {
-        let prefix = [&parent[..], &name_key(field)].concat();
-        Ok(self.t.kids.prefix_iter(&self.txn.borrow(), &prefix)?.next().is_some())
-    }
-
     /// The fields in which `uuid` has children.
     fn parent_fields(&self, uuid: &[u8; 16]) -> Result<BTreeSet<String>> {
         let mut out = BTreeSet::new();
@@ -593,22 +659,40 @@ impl KvTxn<'_> {
         }
         self.set_member(UNIVERSE, None, id, true)?;
         for field in self.parent_fields(uuid.as_bytes())? {
-            self.set_member(PARENTS, Some(&field), id, true)?;
+            if self.has_live_kids(uuid.as_bytes(), &field, None)? {
+                self.set_member(PARENTS, Some(&field), id, true)?;
+            }
         }
         Ok(())
     }
 
-    /// A metarecord was removed (its rows first): its id leaves everything.
+    /// A metarecord was removed (its rows first): its id leaves the universe,
+    /// and stays wherever else it is — its mapping to its uuid included. An
+    /// id is never given again, so what still names it names nothing: every
+    /// reader sifts its answers through the universe, and a reindex drops the
+    /// lot (doc "Deleting a metarecord in the store"). A metarecord created
+    /// again under the same uuid (a revert) gets a new id.
     pub(super) fn derive_removed(&self, uuid: Uuid) -> Result<()> {
         let Some(id) = self.id(uuid.as_bytes())? else { return Ok(()) };
-        {
-            let mut w = self.txn.borrow_mut();
-            self.t.ids.delete(&mut w, uuid.as_bytes())?;
-            self.t.uuids.delete(&mut w, &id.to_be_bytes())?;
+        self.set_member(UNIVERSE, None, id, false)
+    }
+
+    /// A row of `uuid` goes with its metarecord, which is being removed whole
+    /// (not [`Self::derive_row`], which unpicks every entry of the row): only
+    /// what no universe can sift is kept exact — the histograms, which count
+    /// rows, and whether the row's parent still has a child.
+    pub(super) fn derive_dropped(&self, uuid: Uuid, field: &str, value: &Value) -> Result<()> {
+        if let Some(bucket) = value_key(value).as_deref().and_then(hist_bucket) {
+            self.bump(self.t.hist, &hist_key(field, &bucket), -1)?;
         }
-        self.set_member(UNIVERSE, None, id, false)?;
-        for field in self.parent_fields(uuid.as_bytes())? {
-            self.set_member(PARENTS, Some(&field), id, false)?;
+        if value.position().is_some() {
+            let parent = target_of(value).expect("a position has a parent key");
+            let (Some(id), Some(pid)) = (self.id(uuid.as_bytes())?, self.id(&parent)?) else {
+                return Ok(());
+            };
+            if !self.has_live_kids(&parent, field, Some(id))? {
+                self.set_member(PARENTS, Some(field), pid, false)?;
+            }
         }
         Ok(())
     }
@@ -636,15 +720,19 @@ impl KvTxn<'_> {
         if let Some(target) = target_of(value) {
             self.bump(self.t.parts, &part_key(field, TARGET, &target, id), delta)?;
         }
+        let rows = Rows::rows_named(self, uuid, field)?;
         if value.position().is_some() {
             let parent = target_of(value).expect("a position has a parent key");
             self.bump(self.t.kids, &kids_key(&parent, field, id), delta)?;
             if let Some(pid) = self.id(&parent)? {
-                let member = delta > 0 || self.has_kids(&parent, field)?;
+                // The parent's referrers still hold `id` (they are brought up
+                // to date below): it counts only if it keeps a row there.
+                let stays = rows.iter().any(|r| target_of(&r.value) == Some(parent));
+                let member =
+                    delta > 0 || self.has_live_kids(&parent, field, (!stays).then_some(id))?;
                 self.set_member(PARENTS, Some(field), pid, member)?;
             }
         }
-        let rows = Rows::rows_named(self, uuid, field)?;
         let present = rows.iter().any(|r| !matches!(r.value, Value::Nothing));
         let absent = rows.iter().any(|r| matches!(r.value, Value::Nothing));
         self.set_member(PRESENT, Some(field), id, present)?;
@@ -812,12 +900,95 @@ impl KvTxn<'_> {
     pub(super) fn clear_derived(&self) -> Result<()> {
         self.sets.borrow_mut().clear();
         self.cached_chunks.borrow_mut().clear();
+        self.universe.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
         for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams, t.hist] {
             db.clear(&mut w)?;
         }
         Ok(())
+    }
+}
+
+impl KvTxn<'_> {
+    /// Removes from the primary tables what the deleted metarecords left
+    /// there (doc "Deleting a metarecord in the store"): the owner and field
+    /// entries of rows that are gone, and the forest keys that are no row's
+    /// position any more. Held against the rows themselves, not the universe
+    /// — a reindex is also what repairs the derived data.
+    pub(super) fn drop_left_behind(&self) -> Result<()> {
+        let t = self.t;
+        let mut gone: Vec<(super::Db, Vec<u8>)> = Vec::new();
+        {
+            let r = self.txn.borrow();
+            for entry in t.row_owner.iter(&r)? {
+                let (id, prefix) = entry?;
+                if t.cells.get(&r, &[prefix, id].concat())?.is_none() {
+                    gone.push((t.row_owner, id.to_vec()));
+                }
+            }
+            for entry in t.by_field.iter(&r)? {
+                let (k, owner) = entry?;
+                if t.cells.get(&r, &[owner, k].concat())?.is_none() {
+                    gone.push((t.by_field, k.to_vec()));
+                }
+            }
+            for entry in t.forest.iter(&r)? {
+                let (k, v) = entry?;
+                let (field, _) = unesc(k)?;
+                let field = String::from_utf8(field).context("a field name")?;
+                let cell = [&v[..16], &name_key(&field)[..], &v[16..24]].concat();
+                let placed = match t.cells.get(&r, &cell)? {
+                    Some(row) => {
+                        KvTxn::forest_key(&field, &dec_row(row)?.value).as_deref() == Some(k)
+                    }
+                    None => false,
+                };
+                if !placed {
+                    gone.push((t.forest, k.to_vec()));
+                }
+            }
+        }
+        let mut w = self.txn.borrow_mut();
+        for (db, k) in gone {
+            db.delete(&mut w, &k)?;
+        }
+        Ok(())
+    }
+
+    /// Writes into every forest entry the dense id its metarecord has now:
+    /// after a reindex, which numbers the metarecords again, and for a store
+    /// from before the entries held one. A batch of entries in memory at a
+    /// time.
+    pub(super) fn stamp_forest_ids(&self) -> Result<()> {
+        const BATCH: usize = 10_000;
+        let t = self.t;
+        let mut after: Option<Vec<u8>> = None;
+        loop {
+            let batch: Vec<(Vec<u8>, Vec<u8>)> = {
+                let r = self.txn.borrow();
+                let lo = match &after {
+                    Some(k) => std::ops::Bound::Excluded(k.as_slice()),
+                    None => std::ops::Bound::Unbounded,
+                };
+                let range = (lo, std::ops::Bound::Unbounded);
+                let mut batch = Vec::new();
+                for entry in t.forest.range(&r, &range)?.take(BATCH) {
+                    let (k, v) = entry?;
+                    let id = id_of(&t, &r, &v[..16])?.with_context(|| {
+                        format!("a position of {}, which has no dense id", uuid_of(v))
+                    })?;
+                    batch.push((k.to_vec(), [&v[..24], &id.to_be_bytes()[..]].concat()));
+                }
+                batch
+            };
+            let Some((last, _)) = batch.last() else { return Ok(()) };
+            after = Some(last.clone());
+            let mut w = self.txn.borrow_mut();
+            for (k, v) in &batch {
+                t.forest.put(&mut w, k, v)?;
+            }
+        }
     }
 }
 
@@ -878,6 +1049,7 @@ impl KvStore {
     /// one's first row (then the metarecords without rows).
     pub fn reindex(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
+        txn.drop_left_behind()?;
         txn.clear_derived()?;
         txn.meta_put("next_id", 1)?;
         let order = {
@@ -906,6 +1078,7 @@ impl KvStore {
         for &uuid in &order {
             txn.derive_created(uuid)?;
         }
+        txn.stamp_forest_ids()?;
         for &uuid in &order {
             for row in Rows::rows(&txn, uuid)? {
                 txn.derive_row(uuid, &row.name, &row.value, 1)?;
@@ -969,13 +1142,21 @@ impl KvStore {
     ) -> Result<()> {
         let t = &self.t;
 
-        // The universe and the id mappings.
+        // The universe and the id mappings. `live`: the ids of the
+        // metarecords that exist — what the universe must be. A deleted
+        // metarecord keeps its id and its entries everywhere else (doc
+        // "Deleting a metarecord in the store"), so the derived tables are
+        // held to the rows *on those ids*.
         let mut metarecords = 0u64;
+        let mut live = RoaringBitmap::new();
         for entry in t.metarecords.iter(r)? {
             let (k, _) = entry?;
             metarecords += 1;
             match id_of(t, r, &k[..16])? {
-                Some(id) => sink(Side::Expected, Entry::set(UNIVERSE, "", id))?,
+                Some(id) => {
+                    live.insert(id);
+                    sink(Side::Expected, Entry::set(UNIVERSE, "", id))?
+                }
                 None => diff.push(format!("ids: {} has no dense id", uuid_of(k))),
             }
         }
@@ -993,7 +1174,11 @@ impl KvStore {
                 ));
             }
         }
-        if mapped != metarecords {
+        // An id never given names nothing, deleted or not: it is held to
+        // the rows like one that exists, and found unexpected.
+        let next = t.meta.get(r, b"next_id")?.map_or(1, from_be);
+        let sifted = |id: u32| !live.contains(id) && i64::from(id) < next;
+        if mapped < metarecords {
             diff.push(format!("ids: map {mapped} metarecords, the store holds {metarecords}"));
         }
 
@@ -1043,7 +1228,7 @@ impl KvStore {
                 let parent = &parent;
                 let target = target_of(&row.value).expect("a position has a parent key");
                 *group.kids.entry(target).or_default() += 1;
-                if let Some(parent_id) = id_of(t, r, &target)? {
+                if let Some(parent_id) = id_of(t, r, &target)?.filter(|id| live.contains(*id)) {
                     match parents.get_mut(&row.name) {
                         Some(set) => {
                             set.insert(parent_id);
@@ -1124,7 +1309,9 @@ impl KvStore {
                 _ => (SET, kind, &rest[..0]),
             };
             for id in decode_set(v)? {
-                sink(Side::Got, Entry { space, tag, field, key, id, count: 1 })?;
+                if kind == UNIVERSE || !sifted(id) {
+                    sink(Side::Got, Entry { space, tag, field, key, id, count: 1 })?;
+                }
             }
         }
         for entry in t.parts.iter(r)? {
@@ -1138,7 +1325,9 @@ impl KvStore {
                 id: dense(&rest[rest.len() - 4..]),
                 count: from_be(v),
             };
-            sink(Side::Got, entry)?;
+            if !sifted(entry.id) {
+                sink(Side::Got, entry)?;
+            }
         }
         for entry in t.kids.iter(r)? {
             let (k, v) = entry?;
@@ -1151,17 +1340,21 @@ impl KvStore {
                 id: dense(rest),
                 count: from_be(v),
             };
-            sink(Side::Got, entry)?;
+            if !sifted(entry.id) {
+                sink(Side::Got, entry)?;
+            }
         }
         for entry in t.grams.iter(r)? {
             let (k, v) = entry?;
             let (name, rest) = unesc(k)?;
             let field = std::str::from_utf8(&name).context("a field name")?;
             for id in decode_set(v)? {
-                sink(
-                    Side::Got,
-                    Entry { space: GRAM, tag: 0, field, key: &rest[..3], id, count: 1 },
-                )?;
+                if !sifted(id) {
+                    sink(
+                        Side::Got,
+                        Entry { space: GRAM, tag: 0, field, key: &rest[..3], id, count: 1 },
+                    )?;
+                }
             }
         }
         Ok(())

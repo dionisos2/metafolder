@@ -44,6 +44,12 @@ pub struct KvSource<'s> {
     reads: Cell<u64>,
     /// The store's own counter, which the snapshot's reads add to.
     store_reads: &'s std::sync::atomic::AtomicU64,
+    /// The universe, read once: every answer is sifted through it
+    /// ([`KvSource::sift`]).
+    live: std::cell::OnceCell<RoaringBitmap>,
+    /// The universe's chunks read one at a time, before anything needed it
+    /// whole ([`KvSource::is_live`]).
+    live_chunks: RefCell<BTreeMap<u16, RoaringBitmap>>,
 }
 
 impl KvStore {
@@ -55,6 +61,8 @@ impl KvStore {
             error: RefCell::new(None),
             reads: Cell::new(0),
             store_reads: &self.reads,
+            live: std::cell::OnceCell::new(),
+            live_chunks: RefCell::new(BTreeMap::new()),
         })
     }
 }
@@ -87,6 +95,42 @@ enum Kind {
 const ID_MAX: [u8; 5] = [0xFF; 5];
 
 impl KvSource<'_> {
+    /// The ids of the metarecords that exist. A deleted metarecord leaves
+    /// the universe and nothing else: its id stays in every other bitmap and
+    /// partition until a reindex (doc "Deleting a metarecord in the store"),
+    /// so an answer is what the indexes say *of the universe*.
+    fn live(&self) -> &RoaringBitmap {
+        self.live.get_or_init(|| self.set(derived::UNIVERSE, None))
+    }
+
+    /// `ids` without those of deleted metarecords.
+    fn sift(&self, mut ids: RoaringBitmap) -> RoaringBitmap {
+        ids &= self.live();
+        ids
+    }
+
+    /// Whether the metarecord of `id` exists: one chunk of the universe read
+    /// (and kept), unless the whole is at hand.
+    fn is_live(&self, id: u32) -> bool {
+        if let Some(live) = self.live.get() {
+            return live.contains(id);
+        }
+        let chunk = (id >> 16) as u16;
+        let mut seen = self.live_chunks.borrow_mut();
+        if let std::collections::btree_map::Entry::Vacant(slot) = seen.entry(chunk) {
+            let read = || -> Result<RoaringBitmap> {
+                self.read_keys(1)?;
+                let k = derived::set_key(derived::UNIVERSE, None, chunk);
+                Ok(match self.t.sets.get(&self.r, &k)? {
+                    Some(bytes) => derived::decode_set(bytes)?,
+                    None => RoaringBitmap::new(),
+                })
+            };
+            slot.insert(self.ok(read(), RoaringBitmap::new()));
+        }
+        seen[&chunk].contains(id)
+    }
+
     /// The distinct `(field, value type)` pairs holding a value, by name,
     /// optionally of one type — `GET /repos/:repo/fields`.
     pub fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
@@ -665,6 +709,9 @@ impl KvSource<'_> {
             if out.len() >= limit {
                 break;
             }
+            if !self.live().contains(id) {
+                continue;
+            }
             if let Some(u) = self.uuid(id) {
                 out.push(u);
             }
@@ -816,7 +863,7 @@ impl KvSource<'_> {
             long &= r;
         }
         candidates |= long;
-        Some(candidates)
+        Some(self.sift(candidates))
     }
 
     /// The ids of `field`'s partition `part` whose text satisfies `keep`,
@@ -937,15 +984,15 @@ impl<I: Iterator<Item = u32>> Dedup for I {}
 
 impl Source for KvSource<'_> {
     fn universe(&self) -> Cow<'_, RoaringBitmap> {
-        Cow::Owned(self.set(derived::UNIVERSE, None))
+        Cow::Borrowed(self.live())
     }
 
     fn present(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        Cow::Owned(self.set(derived::PRESENT, Some(field)))
+        Cow::Owned(self.sift(self.set(derived::PRESENT, Some(field))))
     }
 
     fn absent(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        Cow::Owned(self.set(derived::ABSENT, Some(field)))
+        Cow::Owned(self.sift(self.set(derived::ABSENT, Some(field))))
     }
 
     fn value_type(&self, field: &str) -> Option<&str> {
@@ -981,7 +1028,8 @@ impl Source for KvSource<'_> {
             return None;
         }
         let r = id_of(&self.t, &self.r, uuid.as_bytes());
-        self.ok(r, None)
+        // A deleted metarecord keeps its id, which names nothing any more.
+        self.ok(r, None).filter(|&id| self.is_live(id))
     }
 
     fn uuid(&self, id: u32) -> Option<Uuid> {
@@ -1004,14 +1052,18 @@ impl Source for KvSource<'_> {
             None => Bound::Unbounded,
         };
         let range = (lo, Bound::Unbounded);
+        let live = self.live();
         match self.t.ids.range(&self.r, &range) {
-            Ok(iter) => Box::new(iter.map_while(move |entry| match entry {
-                Ok((k, v)) => self.counted(1).then(|| (uuid_of(k), dense(v))),
-                Err(e) => {
-                    self.error.borrow_mut().get_or_insert(e.into());
-                    None
-                }
-            })),
+            Ok(iter) => Box::new(
+                iter.map_while(move |entry| match entry {
+                    Ok((k, v)) => self.counted(1).then(|| (uuid_of(k), dense(v))),
+                    Err(e) => {
+                        self.error.borrow_mut().get_or_insert(e.into());
+                        None
+                    }
+                })
+                .filter(move |(_, id)| live.contains(*id)),
+            ),
             Err(e) => {
                 self.error.borrow_mut().get_or_insert(e.into());
                 Box::new(std::iter::empty())
@@ -1030,119 +1082,127 @@ impl Source for KvSource<'_> {
         value: &Value,
         restrict: Option<&RoaringBitmap>,
     ) -> Result<RoaringBitmap, Unsupported> {
-        let _stage = crate::progress::stage(format!("comparing {field}"));
-        let Some(kind) = self.kind(field) else { return Ok(RoaringBitmap::new()) };
-        // A string operand on a forest compares the names.
-        if let (Kind::Reference { tree: true }, Value::String(s)) = (kind, value) {
-            let key = text_key(s.as_bytes());
-            let hashed = long_prefix(&key).is_some();
-            let named = |want: bool| move |v: &Value| name_of(v).is_some_and(|n| (n == *s) == want);
-            return Ok(match op {
-                CmpOp::Eq if hashed => {
-                    self.having(self.bucket(field, NAME, &key), field, &named(true))
-                }
-                CmpOp::Eq => self.bucket(field, NAME, &key),
-                CmpOp::Neq => {
-                    let mut out = self.all_but(field, NAME, Some(&key));
-                    if hashed {
-                        out |= self.having(self.bucket(field, NAME, &key), field, &named(false));
+        let answer = || -> Result<RoaringBitmap, Unsupported> {
+            let _stage = crate::progress::stage(format!("comparing {field}"));
+            let Some(kind) = self.kind(field) else { return Ok(RoaringBitmap::new()) };
+            // A string operand on a forest compares the names.
+            if let (Kind::Reference { tree: true }, Value::String(s)) = (kind, value) {
+                let key = text_key(s.as_bytes());
+                let hashed = long_prefix(&key).is_some();
+                let named =
+                    |want: bool| move |v: &Value| name_of(v).is_some_and(|n| (n == *s) == want);
+                return Ok(match op {
+                    CmpOp::Eq if hashed => {
+                        self.having(self.bucket(field, NAME, &key), field, &named(true))
                     }
-                    out
+                    CmpOp::Eq => self.bucket(field, NAME, &key),
+                    CmpOp::Neq => {
+                        let mut out = self.all_but(field, NAME, Some(&key));
+                        if hashed {
+                            out |=
+                                self.having(self.bucket(field, NAME, &key), field, &named(false));
+                        }
+                        out
+                    }
+                    _ => {
+                        let holds = |v: &Value| {
+                            name_of(v)
+                                .is_some_and(|n| op.matches_ordering(n.as_str().cmp(s.as_str())))
+                        };
+                        self.ordered_exact(field, NAME, &[], op, &key, &holds)
+                    }
+                });
+            }
+            let key = value_key(value);
+            // A few candidates are checked on their own rows, where a walk would
+            // read a key per row of the range (an equality reads one value's
+            // posting or run: it is never probed). Each row is decided by its key,
+            // as the walk decides it.
+            let probe = restrict.filter(|r| op != CmpOp::Eq && self.probes(r, field, op, value));
+            match op {
+                CmpOp::Eq => Ok(key.map(|k| self.equal(field, &k, value)).unwrap_or_default()),
+                CmpOp::Neq if probe.is_some() => {
+                    let differs = |v: &Value| match value_key(v) {
+                        None => false,
+                        // A key cut and hashed is shared: the values decide.
+                        Some(k) if Some(&k) == key.as_ref() => is_hashed(&k) && v != value,
+                        Some(_) => true,
+                    };
+                    Ok(self.having(probe.expect("a probe").clone(), field, &differs))
+                }
+                CmpOp::Neq => {
+                    let mut out = self.all_but(field, VALUE, key.as_deref());
+                    if let Some(k) = key.as_deref().filter(|k| is_hashed(k)) {
+                        let differs = |v: &Value| !matches!(v, Value::Nothing) && v != value;
+                        out |= self.having(self.bucket(field, VALUE, k), field, &differs);
+                    }
+                    Ok(out)
                 }
                 _ => {
-                    let holds = |v: &Value| {
-                        name_of(v).is_some_and(|n| op.matches_ordering(n.as_str().cmp(s.as_str())))
-                    };
-                    self.ordered_exact(field, NAME, &[], op, &key, &holds)
-                }
-            });
-        }
-        let key = value_key(value);
-        // A few candidates are checked on their own rows, where a walk would
-        // read a key per row of the range (an equality reads one value's
-        // posting or run: it is never probed). Each row is decided by its key,
-        // as the walk decides it.
-        let probe = restrict.filter(|r| op != CmpOp::Eq && self.probes(r, field, op, value));
-        match op {
-            CmpOp::Eq => Ok(key.map(|k| self.equal(field, &k, value)).unwrap_or_default()),
-            CmpOp::Neq if probe.is_some() => {
-                let differs = |v: &Value| match value_key(v) {
-                    None => false,
-                    // A key cut and hashed is shared: the values decide.
-                    Some(k) if Some(&k) == key.as_ref() => is_hashed(&k) && v != value,
-                    Some(_) => true,
-                };
-                Ok(self.having(probe.expect("a probe").clone(), field, &differs))
-            }
-            CmpOp::Neq => {
-                let mut out = self.all_but(field, VALUE, key.as_deref());
-                if let Some(k) = key.as_deref().filter(|k| is_hashed(k)) {
-                    let differs = |v: &Value| !matches!(v, Value::Nothing) && v != value;
-                    out |= self.having(self.bucket(field, VALUE, k), field, &differs);
-                }
-                Ok(out)
-            }
-            _ => {
-                // The operands an ordered comparison can use on each kind; a
-                // bool or a reference is refused (a 400 upstream), any other
-                // operand finds no row.
-                let usable = match (kind, value) {
-                    (Kind::Categorical, Value::Bool(_)) => {
-                        return Err(unsupported("ordered comparison on bool"))
-                    }
-                    (
-                        Kind::Reference { .. },
-                        Value::Ref(_)
-                        | Value::RefBase(_)
-                        | Value::TreeRef { .. }
-                        | Value::HierarchyRef { .. }
-                        | Value::ExternalRef { .. },
-                    ) => return Err(unsupported("ordered comparison on a reference")),
-                    (Kind::Categorical, Value::String(_)) => true,
-                    (Kind::Numeric, Value::Int(_) | Value::Float(_)) => true,
-                    (Kind::Datetime, Value::DateTime(_)) => true,
-                    _ => false,
-                };
-                Ok(match key {
-                    Some(k) if usable => {
-                        let holds = |v: &Value| match (v, value) {
-                            (Value::String(x), Value::String(o)) => {
-                                op.matches_ordering(x.as_str().cmp(o.as_str()))
-                            }
-                            _ => false,
-                        };
-                        let region = &k[..1];
-                        match probe {
-                            Some(r) => {
-                                // `ordered_exact`'s decision, row by row: the
-                                // texts cut where the operand is are decided
-                                // on their values, the rest on their keys.
-                                let ambiguous = long_prefix(&k[1..])
-                                    .filter(|_| region == [2])
-                                    .map(|tail| [region, tail].concat());
-                                let row = |v: &Value| match value_key(v) {
-                                    None => false,
-                                    Some(rk)
-                                        if ambiguous
-                                            .as_ref()
-                                            .is_some_and(|a| rk.starts_with(a)) =>
-                                    {
-                                        holds(v)
-                                    }
-                                    Some(rk) => {
-                                        rk.starts_with(region)
-                                            && op.matches_ordering(rk.as_slice().cmp(k.as_slice()))
-                                    }
-                                };
-                                self.having(r.clone(), field, &row)
-                            }
-                            None => self.ordered_exact(field, VALUE, region, op, &k, &holds),
+                    // The operands an ordered comparison can use on each kind; a
+                    // bool or a reference is refused (a 400 upstream), any other
+                    // operand finds no row.
+                    let usable = match (kind, value) {
+                        (Kind::Categorical, Value::Bool(_)) => {
+                            return Err(unsupported("ordered comparison on bool"))
                         }
-                    }
-                    _ => RoaringBitmap::new(),
-                })
+                        (
+                            Kind::Reference { .. },
+                            Value::Ref(_)
+                            | Value::RefBase(_)
+                            | Value::TreeRef { .. }
+                            | Value::HierarchyRef { .. }
+                            | Value::ExternalRef { .. },
+                        ) => return Err(unsupported("ordered comparison on a reference")),
+                        (Kind::Categorical, Value::String(_)) => true,
+                        (Kind::Numeric, Value::Int(_) | Value::Float(_)) => true,
+                        (Kind::Datetime, Value::DateTime(_)) => true,
+                        _ => false,
+                    };
+                    Ok(match key {
+                        Some(k) if usable => {
+                            let holds = |v: &Value| match (v, value) {
+                                (Value::String(x), Value::String(o)) => {
+                                    op.matches_ordering(x.as_str().cmp(o.as_str()))
+                                }
+                                _ => false,
+                            };
+                            let region = &k[..1];
+                            match probe {
+                                Some(r) => {
+                                    // `ordered_exact`'s decision, row by row: the
+                                    // texts cut where the operand is are decided
+                                    // on their values, the rest on their keys.
+                                    let ambiguous = long_prefix(&k[1..])
+                                        .filter(|_| region == [2])
+                                        .map(|tail| [region, tail].concat());
+                                    let row = |v: &Value| match value_key(v) {
+                                        None => false,
+                                        Some(rk)
+                                            if ambiguous
+                                                .as_ref()
+                                                .is_some_and(|a| rk.starts_with(a)) =>
+                                        {
+                                            holds(v)
+                                        }
+                                        Some(rk) => {
+                                            rk.starts_with(region)
+                                                && op.matches_ordering(
+                                                    rk.as_slice().cmp(k.as_slice()),
+                                                )
+                                        }
+                                    };
+                                    self.having(r.clone(), field, &row)
+                                }
+                                None => self.ordered_exact(field, VALUE, region, op, &k, &holds),
+                            }
+                        }
+                        _ => RoaringBitmap::new(),
+                    })
+                }
             }
-        }
+        };
+        answer().map(|ids| self.sift(ids))
     }
 
     fn same_as(&self, field: &str, seed: &RoaringBitmap) -> RoaringBitmap {
@@ -1154,7 +1214,7 @@ impl Source for KvSource<'_> {
                 wanted.entry(k).or_default().push(v);
             }
         }
-        wanted
+        let sharing = wanted
             .iter()
             .map(|(k, values)| {
                 let ids = self.bucket(field, VALUE, k);
@@ -1164,7 +1224,8 @@ impl Source for KvSource<'_> {
                     ids
                 }
             })
-            .union()
+            .union();
+        self.sift(sharing)
     }
 
     fn scan_text(
@@ -1180,7 +1241,7 @@ impl Source for KvSource<'_> {
                     Value::String(s) => Some(s.clone()),
                     _ => None,
                 };
-                self.scan(field, VALUE, &text, keep, literals, restrict)
+                self.sift(self.scan(field, VALUE, &text, keep, literals, restrict))
             }
             Some(Kind::Reference { tree: true }) => {
                 self.scan_names(field, keep, literals, restrict)
@@ -1199,7 +1260,7 @@ impl Source for KvSource<'_> {
         if self.kind(field) != Some(Kind::Reference { tree: true }) {
             return RoaringBitmap::new();
         }
-        self.scan(field, NAME, &name_of, keep, literals, restrict)
+        self.sift(self.scan(field, NAME, &name_of, keep, literals, restrict))
     }
 
     fn text_superset(
@@ -1253,17 +1314,17 @@ impl Source for KvSource<'_> {
     }
 
     fn referrers(&self, field: &str, target: Uuid) -> Option<Cow<'_, RoaringBitmap>> {
-        let ids = self.referrers_of(field, target.as_bytes());
+        let ids = self.sift(self.referrers_of(field, target.as_bytes()));
         (!ids.is_empty()).then_some(Cow::Owned(ids))
     }
 
     fn tree_roots(&self, field: &str) -> RoaringBitmap {
-        self.referrers_of(field, &[0; 16])
+        self.sift(self.referrers_of(field, &[0; 16]))
     }
 
     fn tree_parents_except(&self, field: &str, except: Option<Uuid>) -> RoaringBitmap {
         let except = except.map(|u| *u.as_bytes());
-        self.all_but(field, TARGET, except.as_ref().map(|u| &u[..]))
+        self.sift(self.all_but(field, TARGET, except.as_ref().map(|u| &u[..])))
     }
 
     // Every forest keeps its descendant bitmaps; another field has none, and
@@ -1295,11 +1356,11 @@ impl Source for KvSource<'_> {
             }
             Ok(out)
         };
-        Some(self.ok(read(), RoaringBitmap::new()))
+        Some(self.sift(self.ok(read(), RoaringBitmap::new())))
     }
 
     fn parents(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        Cow::Owned(self.set(derived::PARENTS, Some(field)))
+        Cow::Owned(self.sift(self.set(derived::PARENTS, Some(field))))
     }
 
     fn sort_reps(&self, field: &str, want_max: bool) -> RepReader<'_> {
@@ -1333,7 +1394,17 @@ impl Source for KvSource<'_> {
                 None => return false,
             },
         };
-        let r = self.walk(field, want_max, start, start_key.as_deref(), visit);
+        // The partition still lists the deleted metarecords: they are
+        // stepped over, a run without them.
+        let live = self.live();
+        let mut sifted = |rep: &SortRep, walked: Walked<'_>| match walked {
+            Walked::One(id) => !live.contains(id) || visit(rep, Walked::One(id)),
+            Walked::Run(run) => {
+                let run = run & live;
+                run.is_empty() || visit(rep, Walked::Run(&run))
+            }
+        };
+        let r = self.walk(field, want_max, start, start_key.as_deref(), &mut sifted);
         self.ok(r, ());
         true
     }
