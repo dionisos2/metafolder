@@ -390,6 +390,15 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       Notes wiki encore à réécrire en 8c : "Store tables", "Log storage",
       "What a revert writes", "Reverting onto the current state", "The
       storage boundary" (phrase provisoire).
+  RAPPEL DE CONCEPTION pour 8c (l'utilisateur m'a repris le 14 nov. 2026 :
+  j'avais proposé une clé par ligne « id dense · nom · clé de valeur », ce
+  qui CONTREDIT la section 0bis) : il n'y a PAS de clé par ligne. La table
+  primaire est la FORME NORMALE : UNE clé par metarecord (id dense) dont la
+  valeur porte toutes ses lignes (champ · valeur · n° d'op, retraits et
+  remplacements enregistrés), lue d'un coup, complétée à la lecture par la
+  liste de masse de sa partie tant qu'elle n'est pas repliée. Une écriture
+  individuelle réécrit cette seule valeur ; une écriture de masse n'y touche
+  pas. Presque tout le reste passe par les index.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).
