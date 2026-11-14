@@ -122,9 +122,10 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
     let mut r = repo();
     delete(&mut r.store, r.others[1]);
     let written = r.store.last_write_keys();
-    for table in ["row_owner", "by_field", "forest", "ids", "uuids", "parts", "kids", "grams"] {
+    for table in ["forest", "ids", "uuids", "parts", "kids", "grams"] {
         assert_eq!(written.get(table), None, "a deletion wrote to {table}: {written:?}");
     }
+    assert_eq!(written.get("records"), Some(&1), "the record's one key: {written:?}");
     // The universe, and nothing else: the folder still has children.
     assert_eq!(written.get("sets"), Some(&1), "{written:?}");
     check(&r.store);
@@ -255,9 +256,8 @@ fn a_reindex_removes_what_the_deletions_left_behind() {
     check(&r.store);
     let Repo { store, dir, .. } = r;
     drop(store);
-    let rows = entries(dir.path(), "field_cells");
-    assert_eq!(entries(dir.path(), "row_owner"), rows);
-    assert_eq!(entries(dir.path(), "by_field"), rows);
+    // One key per record: the root, the folder and the two files left.
+    assert_eq!(entries(dir.path(), "records"), 4);
     // One position each: the root, the folder and the two files left.
     assert_eq!(entries(dir.path(), "forest"), 4);
     assert_eq!(entries(dir.path(), "ids"), 4);
@@ -267,47 +267,4 @@ fn a_reindex_removes_what_the_deletions_left_behind() {
     let store = KvStore::open(dir.path()).unwrap();
     every_answer(&store);
     check(&store);
-}
-
-/// A store of layout 6, whose forest entries held no dense id, gets them
-/// when it opens — and keeps its log (doc "Persisted format changes").
-#[test]
-fn a_store_from_before_the_forest_held_ids_gains_them_when_it_opens() {
-    let r = repo();
-    let before = every_answer(&r.store);
-    let head = r.store.head().unwrap();
-    let Repo { store, dir, folder, file, .. } = r;
-    drop(store);
-    {
-        let env = common::kv::raw_env(dir.path());
-        let forest = common::kv::open_raw(&env, "forest");
-        let meta = common::kv::open_raw(&env, "meta");
-        let mut w = env.write_txn().unwrap();
-        let entries: Vec<(Vec<u8>, Vec<u8>)> = forest
-            .iter(&w)
-            .unwrap()
-            .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())).unwrap())
-            .collect();
-        for (k, v) in entries {
-            assert_eq!(v.len(), 28, "uuid, row id, dense id");
-            forest.put(&mut w, &k, &v[..24]).unwrap();
-        }
-        meta.put(&mut w, b"layout", &6u64.to_be_bytes()).unwrap();
-        w.commit().unwrap();
-    }
-    let mut store = KvStore::open(dir.path()).unwrap();
-    assert_eq!(store.head().unwrap(), head, "the log is kept");
-    assert_eq!(every_answer(&store), before);
-    assert_eq!(store.children("loc", folder).unwrap().len(), 3);
-    check(&store);
-    // The ids written are the right ones: a deletion is seen.
-    delete(&mut store, file);
-    assert_eq!(store.children("loc", folder).unwrap().len(), 2);
-    drop(store);
-    {
-        let env = common::kv::raw_env(dir.path());
-        let meta = common::kv::open_raw(&env, "meta");
-        let r = env.read_txn().unwrap();
-        assert_eq!(meta.get(&r, b"layout").unwrap(), Some(&7u64.to_be_bytes()[..]));
-    }
 }

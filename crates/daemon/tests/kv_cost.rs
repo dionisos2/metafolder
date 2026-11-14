@@ -518,10 +518,11 @@ fn a_path_search_with_a_rare_first_term_reads_below_it() {
     bounded("rare folder, common name, counted", &osm, &[], true);
 }
 
-/// An `osm` path reads each candidate anchor's rows once, for its name and
-/// its positions together: it costs about the name scan of its last term,
-/// plus a descendant bitmap per anchor for the subtrees — not that scan and
-/// then a second read of every candidate (6 965 keys here, against 3 593).
+/// An `osm` path reads each candidate anchor's record once, for its name and
+/// its positions together: it costs about the name scan of its last term
+/// (one key per candidate), plus the candidate's uuid and a descendant bitmap
+/// per anchor for the subtrees — not that scan and then a second read of
+/// every candidate.
 #[test]
 fn an_osm_path_reads_each_candidates_rows_once() {
     let (kv, _d) = repository_in(4_000, 100);
@@ -533,7 +534,7 @@ fn an_osm_path_reads_each_candidates_rows_once() {
     // Every candidate is an anchor here (every path holds a `d`).
     let candidates = candidates as u64;
     assert!(
-        cost_path < cost_scan + candidates + candidates / 4,
+        cost_path < cost_scan + 2 * candidates + candidates / 4,
         "{cost_path} keys for the path, {cost_scan} for the name scan of {candidates} candidates"
     );
 }

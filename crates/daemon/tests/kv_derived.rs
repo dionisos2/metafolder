@@ -389,10 +389,10 @@ fn a_compact_shrinks_the_file_and_keeps_the_store_whole() {
     assert_eq!(compacted.after, std::fs::metadata(&file).unwrap().len(), "the store's own file");
     // The log keeps the deleted records' snapshots, and the indexes what
     // they held about them until a reindex (doc "Deleting a metarecord in
-    // the store"): a quarter goes, not all.
+    // the store"): a fifth goes, not all.
     assert!(
-        compacted.after * 4 < before * 3,
-        "{before} bytes shrink by a quarter, to {}",
+        compacted.after * 5 < before * 4,
+        "{before} bytes shrink by a fifth, to {}",
         compacted.after
     );
     check(&store);

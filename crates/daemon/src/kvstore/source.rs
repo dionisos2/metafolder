@@ -30,7 +30,7 @@ use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, part_prefix, read_set, text_key,
     type_tag, value_key, NAME, VALUE,
 };
-use super::{dec_row, from_be, name_key, uuid_of, KvStore, Tables};
+use super::{dec_rows, from_be, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
 use crate::index::plan;
 use crate::index::{unsupported, Follow, NamedNode, RepReader, Source, Unsupported, Walked};
@@ -1015,16 +1015,12 @@ impl KvSource<'_> {
     /// A metarecord's rows of `field`.
     fn values(&self, id: u32, field: &str) -> Vec<Value> {
         let read = || -> Result<Vec<Value>> {
+            // The record: one key.
             self.read_keys(1)?;
-            let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else {
+            let Some(rows) = self.t.records.get(&self.r, &id.to_be_bytes())? else {
                 return Ok(Vec::new());
             };
-            let mut out = Vec::new();
-            for entry in self.t.cells.prefix_iter(&self.r, &super::cell_prefix(uuid, field))? {
-                self.read_keys(1)?;
-                out.push(dec_row(entry?.1)?.value);
-            }
-            Ok(out)
+            Ok(dec_rows(rows)?.into_iter().filter(|r| r.name == field).map(|r| r.value).collect())
         };
         self.ok(read(), Vec::new())
     }
@@ -1573,13 +1569,16 @@ impl Source for KvSource<'_> {
         let read = || -> Result<Vec<NamedNode>> {
             let mut out = Vec::new();
             for id in &candidates {
-                self.read_keys(1)?;
+                self.read_keys(2)?;
                 let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
-                // A record's rows of one field are one prefix, in row-id order.
+                // The record's rows: one key.
                 let mut positions = Vec::new();
-                for entry in self.t.cells.prefix_iter(&self.r, &super::cell_prefix(uuid, field))? {
-                    self.read_keys(1)?;
-                    if let Some((parent, name)) = dec_row(entry?.1)?.value.position() {
+                let rows = self.t.records.get(&self.r, &id.to_be_bytes())?;
+                for row in dec_rows(rows.unwrap_or_default())? {
+                    if row.name != field {
+                        continue;
+                    }
+                    if let Some((parent, name)) = row.value.position() {
                         positions.push((parent, name.display().into_owned()));
                     }
                 }

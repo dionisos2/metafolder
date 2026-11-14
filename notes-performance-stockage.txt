@@ -422,6 +422,29 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       cli_e2e complet : à surveiller (instabilité sous charge ?).
       Le store garde EN INTERNE un id de cellule (field_cells, row_owner,
       by_field, valeur de forest) : c'est 8c-2.
+  8c-2 FAIT (14 nov. 2026, LAYOUT 8) : table primaire `records` (id dense →
+      liste des lignes champ · valeur, UNE clé par metarecord ; un metarecord
+      sans ligne n'a pas de clé) ; field_cells, row_owner, by_field et le
+      compteur next_row disparaissent (les tables ne sont plus ouvertes
+      que par la conversion) ; valeur de `forest` = uuid · id dense (20
+      octets). Conversion à l'ouverture (migrate_layout, une transaction) :
+      toute disposition antérieure (cells, field_cells) → records, id dense
+      attribué à tout metarecord qui n'en a pas (puis reindex forcé), forêt
+      réécrite depuis `ids`, journal gardé pour les layouts 6 et 7, vidé
+      pour les plus anciens. Fixture : tests/fixtures/layout7/data.mdb
+      (store de layout 7 écrit par le daemon du 14 nov.) ; kv_layout.rs la
+      convertit et la fait remonter aux layouts 6, 2 et 1.
+      Le REINDEX RENUMÉROTE aussi `records` : file_records_by_uuid (clés de
+      4 octets → uuid de 16) avant clear_derived, file_records_by_id après
+      les derive_created. `Rows::holders` / `field_rows` passent par les
+      compteurs (champ · bit) ∪ absent, filtrés par l'univers ; une
+      transaction d'écriture lit les siens (Read::holders). `delete_rows`
+      supprime ligne par ligne (le compte de valeurs d'un champ se recalcule
+      sur les lignes qui restent : supprimer d'un coup le fausse).
+      Mesures : test kv_cost « osm path » : le scan de nom coûte 1 clé par
+      candidat au lieu de 2 ; seuil du test de compactage ramené d'un quart
+      à un cinquième (le fichier de départ est plus petit).
+      À SURVEILLER : sync::test_sync_orphans_a_directory_gone_on_the_other_side_in_one_run.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

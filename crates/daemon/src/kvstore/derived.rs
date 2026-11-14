@@ -47,7 +47,7 @@ use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
 use uuid::Uuid;
 
-use super::{be, dec_row, from_be, name_key, uuid_of, KvStore, KvTxn, Tables};
+use super::{be, dec_rows, from_be, name_key, uuid_of, KvStore, KvTxn, Tables};
 use crate::index::keys::{dt_key, num_key};
 use crate::store::Rows;
 
@@ -1053,6 +1053,14 @@ impl KvTxn<'_> {
         Ok(out)
     }
 
+    /// The ids holding a row of `field`, `Nothing` or not, as the transaction
+    /// sees them.
+    pub(super) fn holder_ids_now(&self, field: &str) -> Result<RoaringBitmap> {
+        let mut out = self.holders_now(field)?;
+        out |= self.read_chunked(SETS, &set_prefix(ABSENT, Some(field)))?;
+        Ok(out)
+    }
+
     /// A field's trigram state, as the transaction has it.
     fn gram_state(&self, field: &str) -> Result<GramState> {
         if let Some(state) = self.grams.borrow().get(field) {
@@ -1336,38 +1344,25 @@ impl KvTxn<'_> {
 
 impl KvTxn<'_> {
     /// Removes from the primary tables what the deleted metarecords left
-    /// there (doc "Deleting a metarecord in the store"): the owner and field
-    /// entries of rows that are gone, and the forest keys that are no row's
-    /// position any more. Held against the rows themselves, not the universe
-    /// — a reindex is also what repairs the derived data.
+    /// there (doc "Deleting a metarecord in the store"): the forest keys that
+    /// are no row's position any more. Held against the rows themselves, not
+    /// the universe — a reindex is also what repairs the derived data.
     pub(super) fn drop_left_behind(&self) -> Result<()> {
         let t = self.t;
         let mut gone: Vec<(super::Db, Vec<u8>)> = Vec::new();
         {
             let r = self.txn.borrow();
-            for entry in t.row_owner.iter(&r)? {
-                let (id, prefix) = entry?;
-                if t.cells.get(&r, &[prefix, id].concat())?.is_none() {
-                    gone.push((t.row_owner, id.to_vec()));
-                }
-            }
-            for entry in t.by_field.iter(&r)? {
-                let (k, owner) = entry?;
-                if t.cells.get(&r, &[owner, k].concat())?.is_none() {
-                    gone.push((t.by_field, k.to_vec()));
-                }
-            }
             for entry in t.forest.iter(&r)? {
                 let (k, v) = entry?;
                 let (field, _) = unesc(k)?;
                 let field = String::from_utf8(field).context("a field name")?;
-                let cell = [&v[..16], &name_key(&field)[..], &v[16..24]].concat();
-                let placed = match t.cells.get(&r, &cell)? {
-                    Some(row) => {
-                        KvTxn::forest_key(&field, &dec_row(row)?.value).as_deref() == Some(k)
-                    }
-                    None => false,
+                let record = match t.records.get(&r, &v[super::FOREST_ID..])? {
+                    Some(rows) => dec_rows(rows)?,
+                    None => Vec::new(),
                 };
+                let placed = record.iter().any(|row| {
+                    row.name == field && KvTxn::forest_key(&field, &row.value).as_deref() == Some(k)
+                });
                 if !placed {
                     gone.push((t.forest, k.to_vec()));
                 }
@@ -1378,6 +1373,68 @@ impl KvTxn<'_> {
             db.delete(&mut w, &k)?;
         }
         Ok(())
+    }
+
+    /// Re-files every record under its metarecord's uuid (16 bytes, where a
+    /// dense id is 4): the first half of a renumbering, while the ids still
+    /// say whose each record is. A batch of records in memory at a time.
+    pub(super) fn file_records_by_uuid(&self) -> Result<()> {
+        self.refile_records(4, |t, r, k| {
+            let uuid = t.uuids.get(r, k)?.context("a record of no metarecord")?;
+            Ok(uuid.to_vec())
+        })
+    }
+
+    /// The second half: every record filed under a uuid goes under the dense
+    /// id its metarecord has now.
+    pub(super) fn file_records_by_id(&self) -> Result<()> {
+        self.refile_records(16, |t, r, k| {
+            let id = id_of(t, r, k)?.context("a record of a metarecord with no dense id")?;
+            Ok(id.to_be_bytes().to_vec())
+        })
+    }
+
+    /// Moves every record whose key is `len` bytes long to the key `to` gives
+    /// it.
+    fn refile_records(
+        &self,
+        len: usize,
+        to: impl Fn(&Tables, &RoTxn<'_>, &[u8]) -> Result<Vec<u8>>,
+    ) -> Result<()> {
+        const BATCH: usize = 10_000;
+        let t = self.t;
+        let mut after: Option<Vec<u8>> = None;
+        loop {
+            let (last, moves) = {
+                let r = self.txn.borrow();
+                let lo = match &after {
+                    Some(k) => std::ops::Bound::Excluded(k.as_slice()),
+                    None => std::ops::Bound::Unbounded,
+                };
+                let range = (lo, std::ops::Bound::Unbounded);
+                let mut moves = Vec::new();
+                let mut last = None;
+                for entry in t.records.range(&r, &range)? {
+                    let (k, v) = entry?;
+                    last = Some(k.to_vec());
+                    if k.len() != len {
+                        continue;
+                    }
+                    moves.push((k.to_vec(), to(&t, &r, k)?, v.to_vec()));
+                    if moves.len() >= BATCH {
+                        break;
+                    }
+                }
+                (last, moves)
+            };
+            let Some(last) = last else { return Ok(()) };
+            after = Some(last);
+            let mut w = self.txn.borrow_mut();
+            for (from, new, value) in &moves {
+                t.records.delete(&mut w, from)?;
+                t.records.put(&mut w, new, value)?;
+            }
+        }
     }
 
     /// Writes into every forest entry the dense id its metarecord has now:
@@ -1402,7 +1459,7 @@ impl KvTxn<'_> {
                     let id = id_of(&t, &r, &v[..16])?.with_context(|| {
                         format!("a position of {}, which has no dense id", uuid_of(v))
                     })?;
-                    batch.push((k.to_vec(), [&v[..24], &id.to_be_bytes()[..]].concat()));
+                    batch.push((k.to_vec(), [&v[..16], &id.to_be_bytes()[..]].concat()));
                 }
                 batch
             };
@@ -1470,13 +1527,11 @@ impl KvStore {
     /// Derives every derived key space again from the primary data, in one
     /// transaction. Dense ids follow forest order ([`forest_order`]), then,
     /// for the metarecords in no forest, discovery order: the order of each
-    /// one's first row (then the metarecords without rows).
+    /// one's first row (then the metarecords without rows). The records,
+    /// which are filed under their dense id, are filed under the new one.
     pub fn reindex(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
         txn.drop_left_behind()?;
-        txn.clear_derived()?;
-        txn.meta_put("next_id", 1)?;
-        txn.next(NUMBERING)?;
         let order = {
             let r = txn.txn.borrow();
             let mut seen = BTreeSet::new();
@@ -1486,8 +1541,10 @@ impl KvStore {
                     order.push(u);
                 }
             }
-            for entry in txn.t.row_owner.iter(&r)? {
-                let u = uuid_of(entry?.1);
+            for entry in txn.t.records.iter(&r)? {
+                let (id, _) = entry?;
+                let uuid = txn.t.uuids.get(&r, id)?.context("a record of no metarecord")?;
+                let u = uuid_of(uuid);
                 if seen.insert(u) {
                     order.push(u);
                 }
@@ -1500,9 +1557,16 @@ impl KvStore {
             }
             order
         };
+        // The records are filed under their uuid while the ids are numbered
+        // again, then under the new dense ids.
+        txn.file_records_by_uuid()?;
+        txn.clear_derived()?;
+        txn.meta_put("next_id", 1)?;
+        txn.next(NUMBERING)?;
         for &uuid in &order {
             txn.derive_created(uuid)?;
         }
+        txn.file_records_by_id()?;
         txn.stamp_forest_ids()?;
         for &uuid in &order {
             for row in Rows::rows(&txn, uuid)? {
@@ -1634,89 +1698,96 @@ impl KvStore {
         let mut parents: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
         let mut fields: HashMap<String, u32> = HashMap::new();
         let mut parent_of: HashMap<(u32, Uuid), (Vec<Uuid>, Option<u32>)> = HashMap::new();
-        let mut owner: Option<([u8; 16], Option<u32>)> = None;
-        for entry in t.cells.iter(r)? {
+        for entry in t.records.iter(r)? {
             let (k, v) = entry?;
-            let uuid: [u8; 16] = k[..16].try_into().expect("a 16-byte uuid");
-            let row = dec_row(v)?;
-            let id = match owner {
-                Some((u, id)) if u == uuid => id,
-                _ => {
-                    let id = id_of(t, r, &uuid)?;
-                    if id.is_none() {
-                        diff.push(format!("rows of {}: no dense id", Uuid::from_bytes(uuid)));
-                    }
-                    owner = Some((uuid, id));
-                    id
-                }
+            let record_id = dense(k);
+            let Some(named) = t.uuids.get(r, k)? else {
+                diff.push(format!("records: dense id {record_id} names no metarecord"));
+                continue;
             };
-            if group.uuid != uuid || group.field != row.name {
-                if let Some(grams) = grams.as_deref_mut() {
-                    grams.check(t, r, &group, diff)?;
-                }
-                group.flush(sink)?;
-                group = Group { uuid, id, field: row.name.clone(), ..Group::default() };
+            let uuid: [u8; 16] = named.try_into().expect("a 16-byte uuid");
+            let id = Some(record_id);
+            if id_of(t, r, &uuid)? != id {
+                diff.push(format!(
+                    "rows of {}: filed under dense id {record_id}, which the ids do not give it",
+                    Uuid::from_bytes(uuid)
+                ));
             }
-            if let Some(key) = value_key(&row.value) {
-                if let (Some(hist), Some(bucket)) = (hist.as_deref_mut(), hist_bucket(&key)) {
-                    *hist.entry(hist_key(&row.name, &bucket)).or_default() += 1;
-                }
-                *group.parts.entry((VALUE, key)).or_default() += 1;
-            }
-            if let Some(key) = name_part_key(&row.value) {
-                *group.parts.entry((NAME, key)).or_default() += 1;
-            }
-            // What the row points at, by the dense id it is filed under.
-            let target = match target_of(&row.value) {
-                Some(target) if target == ZERO => Some(NO_TARGET),
-                Some(target) => {
-                    let id = id_of(t, r, &target)?;
-                    if id.is_none() {
-                        diff.push(format!(
-                            "ids: {} is pointed at and has no dense id",
-                            uuid_of(&target)
-                        ));
+            let mut record = dec_rows(v)?;
+            // The fields of a record come together, in name order.
+            record.sort_by(|a, b| a.name.cmp(&b.name));
+            for row in record {
+                if group.uuid != uuid || group.field != row.name {
+                    if let Some(grams) = grams.as_deref_mut() {
+                        grams.check(t, r, &group, diff)?;
                     }
-                    id
+                    group.flush(sink)?;
+                    group = Group { uuid, id, field: row.name.clone(), ..Group::default() };
                 }
-                None => None,
-            };
-            if let Some(target) = target {
-                group.targets.insert(target);
-            }
-            if let (Some((parent, _)), Some(target)) = (row.value.position(), target) {
-                let parent = &parent;
-                *group.kids.entry(target).or_default() += 1;
-                if let Some(parent_id) = Some(target).filter(|id| live.contains(*id)) {
-                    match parents.get_mut(&row.name) {
-                        Some(set) => {
-                            set.insert(parent_id);
+                if let Some(key) = value_key(&row.value) {
+                    if let (Some(hist), Some(bucket)) = (hist.as_deref_mut(), hist_bucket(&key)) {
+                        *hist.entry(hist_key(&row.name, &bucket)).or_default() += 1;
+                    }
+                    *group.parts.entry((VALUE, key)).or_default() += 1;
+                }
+                if let Some(key) = name_part_key(&row.value) {
+                    *group.parts.entry((NAME, key)).or_default() += 1;
+                }
+                // What the row points at, by the dense id it is filed under.
+                let target = match target_of(&row.value) {
+                    Some(target) if target == ZERO => Some(NO_TARGET),
+                    Some(target) => {
+                        let id = id_of(t, r, &target)?;
+                        if id.is_none() {
+                            diff.push(format!(
+                                "ids: {} is pointed at and has no dense id",
+                                uuid_of(&target)
+                            ));
                         }
-                        None => {
-                            parents.insert(row.name.clone(), RoaringBitmap::from_iter([parent_id]));
+                        id
+                    }
+                    None => None,
+                };
+                if let Some(target) = target {
+                    group.targets.insert(target);
+                }
+                if let (Some((parent, _)), Some(target)) = (row.value.position(), target) {
+                    let parent = &parent;
+                    *group.kids.entry(target).or_default() += 1;
+                    if let Some(parent_id) = Some(target).filter(|id| live.contains(*id)) {
+                        match parents.get_mut(&row.name) {
+                            Some(set) => {
+                                set.insert(parent_id);
+                            }
+                            None => {
+                                parents.insert(
+                                    row.name.clone(),
+                                    RoaringBitmap::from_iter([parent_id]),
+                                );
+                            }
                         }
                     }
+                    if let Some(p) = parent {
+                        let next = fields.len() as u32;
+                        let field = *fields.entry(row.name.clone()).or_insert(next);
+                        let entry = parent_of.entry((field, Uuid::from_bytes(uuid))).or_default();
+                        entry.0.push(*p);
+                        entry.1 = id;
+                    }
                 }
-                if let Some(p) = parent {
-                    let next = fields.len() as u32;
-                    let field = *fields.entry(row.name.clone()).or_insert(next);
-                    let entry = parent_of.entry((field, Uuid::from_bytes(uuid))).or_default();
-                    entry.0.push(*p);
-                    entry.1 = id;
+                if let Some(text) = search_text(&row.value) {
+                    if text.len() <= TRIGRAM_MAX {
+                        let (_, key) = text_part_key(&row.value).expect("a text has a key");
+                        group.grams.extend(trigrams(&text).into_iter().map(|g| (g, key.clone())));
+                    } else {
+                        group.long = true;
+                    }
                 }
-            }
-            if let Some(text) = search_text(&row.value) {
-                if text.len() <= TRIGRAM_MAX {
-                    let (_, key) = text_part_key(&row.value).expect("a text has a key");
-                    group.grams.extend(trigrams(&text).into_iter().map(|g| (g, key.clone())));
+                if matches!(row.value, Value::Nothing) {
+                    group.absent = true;
                 } else {
-                    group.long = true;
+                    group.valued += 1;
                 }
-            }
-            if matches!(row.value, Value::Nothing) {
-                group.absent = true;
-            } else {
-                group.valued += 1;
             }
         }
         if let Some(grams) = grams {

@@ -23,11 +23,9 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 |!Table |!Key |!Value |!Serves |
 |`meta` |name |the id counters, HEAD, the layout and derived-format versions, the watcher's label | |
 |`metarecords` |uuid |empty |existence (the version is computed from the rows, [[Metarecord version]]) |
-|`field_cells` |uuid · field name · row id |row id · field name · value |the rows themselves |
-|`row_owner` |row id |uuid · field name |a row by its id alone (`…/fields/:id`) |
-|`by_field` |field name · row id |uuid |every row, every holder, of one field |
+|`records` |dense id |the rows: field name · value, each |a record's rows, in one read |
 |`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
-|`forest` |field · parent · name bytes |uuid · row id · dense id |a child by name: path lookup |
+|`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
 |`ops` |op id |the operation |the log, in order ([[The operation log]]) |
 |`snaps` |op id · after? · index |a snapshot row |what an operation changed, before and after |
 |`ops_by_label` |label · op id |— |an undo or revert by label |
@@ -38,16 +36,24 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 |`reverted_by` |op id · op id of a revert of it |— |whether an operation still stands ([[The undo selection]]) |
 |`watcher_ops`, `user_ops` |op id |— |the two retention classes ([[Automatic retention]]) |
 
-A record's rows ''of one field'' are one range of `field_cells`, so checking a
-candidate on the field searched reads those rows, not all of its record's — a real
-file carries a dozen `mfr_*` and metadata fields besides. Row, operation and label ids
-come from counters in `meta` and are never reused. The row id in `field_cells` is the
-store's own handle on a cell: nothing outside the store sees it.
+A record's rows are ''one key'', its dense id, in `records`: reading a record is one
+read, and so is writing it, whatever its fields — a real file carries a dozen `mfr_*`
+and metadata fields. The price is that a read of one field reads the others with it.
+A row has no key of its own and no id: it is its name and value in its record's list,
+in no order. Operation and label ids come from counters in `meta` and are never reused.
 
-A deleted metarecord's `row_owner` and `by_field` entries and its `forest` key stay
-until a reindex: a reader skips an entry whose row is gone, and a `forest` entry
-carries its metarecord's dense id, tested against the universe
-([[Deleting a metarecord in the store]]).
+What the rows of ''one field'' of the whole repository are is not read off the rows:
+the field's counts and its absences (the bitmaps below) say which records hold one,
+and those records are read.
+
+The dense id is a number the derived tables hand out (`ids`, `uuids`), and `records`
+and `forest` are filed under it, so a reindex, which numbers the metarecords again,
+files them again: the records go under their uuid while the ids are numbered, then
+under their new id. A metarecord with no row has no key in `records`.
+
+A deleted metarecord's `records` key goes with it; its `forest` key stays until a
+reindex: a `forest` entry carries its metarecord's dense id, tested against the
+universe ([[Deleting a metarecord in the store]]).
 
 !! Derived tables — the indexes (`kvstore/derived.rs`)
 

@@ -1,6 +1,8 @@
-//! The key-value store's primary layout (doc "Store tables"): a record's rows keyed by field, and
-//! the migration of a store of
-//! the first layout (rows keyed `uuid · row id`) when it opens.
+//! The key-value store's primary layout (doc "Store tables"): a record's rows
+//! under one key, its dense id — and the conversion of the older layouts when
+//! a store opens. The older stores come from `tests/fixtures/layout7/`, a
+//! store of layout 7 (rows keyed `uuid · field · row id`) written by the daemon
+//! of November 14th, 2026, and from edits that take it further back.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
@@ -13,37 +15,57 @@ use common::TempDir;
 
 use common::kv::{create_raw, open_raw, raw_env};
 
-/// A store with records whose fields interleave (`b`, `a`, `b`), a tree and
-/// a long text.
-fn store() -> (TempDir, Vec<Uuid>) {
+/// A copy of the layout-7 fixture, not opened. 30 records `n0`…`n29` below a
+/// root (`b`: `i` and `i + 100`, `a`: a text of growing length, `tag`: `even`
+/// or `odd`), the seventh with a `lucky` tag and a `nothing` note.
+fn fixture() -> TempDir {
     let dir = TempDir::new("kv-layout");
-    let mut kv = KvStore::open(dir.path()).unwrap();
-    let mut w = Writer::begin(&mut kv, None).unwrap();
-    let root = w
-        .create_metarecord(vec![Field::new(
-            "loc",
-            Value::TreeRef { parent: None, name: "".into() },
-        )])
-        .unwrap()
-        .uuid;
-    let mut uuids = vec![root];
-    for i in 0..30 {
-        let u = w
-            .create_metarecord(vec![
-                Field::new("b", Value::Int(i)),
-                Field::new("a", Value::String(format!("text {i} {}", "x".repeat(i as usize * 20)))),
-                Field::new("b", Value::Int(i + 100)),
-                Field::new(
-                    "loc",
-                    Value::TreeRef { parent: Some(root), name: format!("n{i}").into() },
-                ),
-            ])
-            .unwrap()
-            .uuid;
-        uuids.push(u);
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/layout7/data.mdb");
+    std::fs::copy(source, dir.path().join("data.mdb")).unwrap();
+    dir
+}
+
+/// What a record must hold once converted: the fixture's `i`-th record.
+fn expected(i: i64) -> Vec<(String, String)> {
+    let mut rows = vec![
+        ("b".to_string(), format!("{:?}", Value::Int(i))),
+        ("b".to_string(), format!("{:?}", Value::Int(i + 100))),
+        (
+            "a".to_string(),
+            format!("{:?}", Value::String(format!("text {i} {}", "x".repeat(i as usize * 20)))),
+        ),
+        (
+            "tag".to_string(),
+            format!("{:?}", Value::String(if i % 2 == 0 { "even" } else { "odd" }.into())),
+        ),
+    ];
+    if i == 7 {
+        rows.push(("tag".to_string(), format!("{:?}", Value::String("lucky".into()))));
+        rows.push(("note".to_string(), format!("{:?}", Value::Nothing)));
     }
-    w.commit().unwrap();
-    (dir, uuids)
+    rows.sort();
+    rows
+}
+
+/// A record's rows but its position, as sorted `(name, value)` text.
+fn rows_of(kv: &KvStore, uuid: Uuid) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> = kv
+        .rows(uuid)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.name != "loc")
+        .map(|r| (r.name, format!("{:?}", r.value)))
+        .collect();
+    rows.sort();
+    rows
+}
+
+/// The `i` of a fixture record, from its `loc`.
+fn index_of(kv: &KvStore, uuid: Uuid) -> Option<i64> {
+    kv.rows_named(uuid, "loc").unwrap().into_iter().find_map(|r| match r.value.position() {
+        Some((Some(_), name)) => name.display().strip_prefix('n').and_then(|n| n.parse().ok()),
+        _ => None,
+    })
 }
 
 /// Moves the rows back into `cells` and rewrites `row_owner`, as the first
@@ -87,30 +109,144 @@ fn layout(dir: &std::path::Path) -> Option<Vec<u8>> {
     meta.get(&r, b"layout").unwrap().map(<[u8]>::to_vec)
 }
 
-/// A record's rows come back whole, however their fields sort; the order they
-/// come in is not a contract (doc "Fields and values").
+/// A store of layout 7 — the fixture — is converted when it opens: one key
+/// per record under its dense id, the three tables of the cells emptied, the
+/// forest's entries holding the dense id alone. Every record reads back the
+/// same, the derived key spaces agree, and the store takes writes.
 #[test]
-fn a_records_rows_read_back_whole() {
-    let (dir, uuids) = store();
+fn a_store_of_layout_7_converts_when_it_opens() {
+    let dir = fixture();
+    assert_eq!(layout(dir.path()), Some(7i64.to_be_bytes().to_vec()), "the fixture is layout 7");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+
+    let all = kv.metarecords().unwrap();
+    assert_eq!(all.len(), 31, "the root and thirty records; the deleted one is gone");
+    let mut seen = 0;
+    for &u in &all {
+        match index_of(&kv, u) {
+            Some(i) => {
+                assert_eq!(rows_of(&kv, u), expected(i), "record n{i}");
+                seen += 1;
+            }
+            None => assert!(rows_of(&kv, u).is_empty(), "the root holds only its position"),
+        }
+    }
+    assert_eq!(seen, 30);
+    let root = all.iter().copied().find(|&u| index_of(&kv, u).is_none()).unwrap();
+    assert_eq!(kv.children("loc", root).unwrap().len(), 30, "the forest answers");
+    assert_eq!(kv.check().unwrap(), Vec::<String>::new());
+    assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
+
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let after =
+        w.create_metarecord(vec![Field::new("a", Value::String("after".into()))]).unwrap().uuid;
+    w.commit().unwrap();
+    assert_eq!(
+        rows_of(&kv, after),
+        [("a".to_string(), format!("{:?}", Value::String("after".into())))]
+    );
+    drop(kv);
+
+    assert_eq!(layout(dir.path()), Some(8i64.to_be_bytes().to_vec()));
+    let env = raw_env(dir.path());
+    let legacy: Vec<_> =
+        ["field_cells", "row_owner", "by_field"].map(|name| (name, open_raw(&env, name))).into();
+    let records = open_raw(&env, "records");
+    let forest = open_raw(&env, "forest");
+    let r = env.read_txn().unwrap();
+    for (name, db) in &legacy {
+        assert!(db.is_empty(&r).unwrap(), "{name} is emptied");
+    }
+    // One key per record that holds a row: the root, the thirty, and the one
+    // the test wrote.
+    assert_eq!(records.len(&r).unwrap(), 32);
+    for entry in forest.iter(&r).unwrap() {
+        let (_, v) = entry.unwrap();
+        assert_eq!(v.len(), 20, "a forest entry is a uuid and a dense id");
+    }
+}
+
+/// Opening the converted store again rewrites nothing.
+#[test]
+fn a_converted_store_is_not_converted_again() {
+    let dir = fixture();
+    drop(KvStore::open(dir.path()).unwrap());
+    let before = std::fs::read(dir.path().join("data.mdb")).unwrap();
+    drop(KvStore::open(dir.path()).unwrap());
+    let after = std::fs::read(dir.path().join("data.mdb")).unwrap();
+    assert_eq!(before.len(), after.len());
+    assert_eq!(layout(dir.path()), Some(8i64.to_be_bytes().to_vec()));
+}
+
+/// A metarecord of a store from before has no dense id when the derived data
+/// was lost with it: the conversion gives it one, and the indexes are derived
+/// again.
+#[test]
+fn a_record_without_a_dense_id_is_given_one() {
+    let dir = fixture();
+    let lonely = {
+        let kv = KvStore::open(fixture().path()).unwrap();
+        kv.metarecords().unwrap().into_iter().find(|&u| index_of(&kv, u) == Some(7)).unwrap()
+    };
+    {
+        let env = raw_env(dir.path());
+        let ids = open_raw(&env, "ids");
+        let uuids = open_raw(&env, "uuids");
+        let mut w = env.write_txn().unwrap();
+        let id = ids.get(&w, lonely.as_bytes()).unwrap().unwrap().to_vec();
+        ids.delete(&mut w, lonely.as_bytes()).unwrap();
+        uuids.delete(&mut w, &id).unwrap();
+        w.commit().unwrap();
+    }
     let kv = KvStore::open(dir.path()).unwrap();
-    let mut names: Vec<String> = kv.rows(uuids[1]).unwrap().into_iter().map(|r| r.name).collect();
-    names.sort();
-    assert_eq!(names, ["a", "b", "b", "loc"]);
-    let mut bs: Vec<String> = kv
-        .rows_named(uuids[1], "b")
-        .unwrap()
-        .into_iter()
-        .map(|r| format!("{:?}", r.value))
-        .collect();
-    bs.sort();
-    assert_eq!(bs, [format!("{:?}", Value::Int(0)), format!("{:?}", Value::Int(100))]);
+    assert_eq!(rows_of(&kv, lonely), expected(7));
+    assert_eq!(kv.check().unwrap(), Vec::<String>::new());
+    assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
+}
+
+/// A store of layout 6, whose forest entries held no dense id, converts when
+/// it opens — and keeps its log (doc "Persisted format changes").
+#[test]
+fn a_store_of_layout_6_converts_and_keeps_its_log() {
+    use metafolder_daemon::store::Log;
+    let (head, ops) = {
+        let dir = fixture();
+        let kv = KvStore::open(dir.path()).unwrap();
+        (kv.head().unwrap(), kv.counts().unwrap().0)
+    };
+    let dir = fixture();
+    {
+        let env = raw_env(dir.path());
+        let forest = open_raw(&env, "forest");
+        let meta = open_raw(&env, "meta");
+        let mut w = env.write_txn().unwrap();
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = forest
+            .iter(&w)
+            .unwrap()
+            .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())).unwrap())
+            .collect();
+        for (k, v) in entries {
+            assert_eq!(v.len(), 28, "uuid, row id, dense id");
+            forest.put(&mut w, &k, &v[..24]).unwrap();
+        }
+        meta.put(&mut w, b"layout", &6i64.to_be_bytes()).unwrap();
+        w.commit().unwrap();
+    }
+    let kv = KvStore::open(dir.path()).unwrap();
+    assert_eq!(kv.head().unwrap(), head, "the log is kept");
+    assert_eq!(kv.counts().unwrap().0, ops);
+    let root = kv.metarecords().unwrap().into_iter().find(|&u| index_of(&kv, u).is_none()).unwrap();
+    assert_eq!(kv.children("loc", root).unwrap().len(), 30);
+    assert_eq!(kv.check().unwrap(), Vec::<String>::new());
+    assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
 }
 
 /// A new store is written in the current layout, and says so.
 #[test]
 fn a_new_store_records_its_layout() {
-    let (dir, _) = store();
-    assert!(layout(dir.path()).is_some());
+    let dir = TempDir::new("kv-layout-new");
+    drop(KvStore::open(dir.path()).unwrap());
+    assert_eq!(layout(dir.path()), Some(8i64.to_be_bytes().to_vec()));
 }
 
 /// A store of the first layout is migrated when it opens: every record and
@@ -118,19 +254,19 @@ fn a_new_store_records_its_layout() {
 /// takes writes.
 #[test]
 fn a_store_of_the_first_layout_migrates_when_it_opens() {
-    let (dir, uuids) = store();
     let before: Vec<_> = {
+        let dir = fixture();
         let kv = KvStore::open(dir.path()).unwrap();
-        uuids.iter().map(|&u| kv.metarecord(u).unwrap().unwrap()).collect()
+        kv.metarecords().unwrap().into_iter().map(|u| (u, rows_of(&kv, u))).collect()
     };
+    let dir = fixture();
     downgrade(dir.path());
     assert!(layout(dir.path()).is_none());
 
     let mut kv = KvStore::open(dir.path()).unwrap();
-    for (u, record) in uuids.iter().zip(&before) {
-        let now = kv.metarecord(*u).unwrap().unwrap();
-        assert_eq!(&now, record);
-        assert_eq!(kv.rows(*u).unwrap().len(), record.fields.len());
+    assert_eq!(kv.metarecords().unwrap().len(), before.len());
+    for (u, rows) in &before {
+        assert_eq!(&rows_of(&kv, *u), rows);
     }
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
     let mut w = Writer::begin(&mut kv, None).unwrap();
@@ -148,13 +284,15 @@ fn a_store_of_the_first_layout_migrates_when_it_opens() {
 #[test]
 fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
     use metafolder_daemon::store::Log;
-    let (dir, uuids) = store();
     let (before, last_op) = {
+        let dir = fixture();
         let kv = KvStore::open(dir.path()).unwrap();
         assert!(kv.counts().unwrap().0 > 0, "the fixture wrote a log");
-        let records: Vec<_> = uuids.iter().map(|&u| kv.metarecord(u).unwrap().unwrap()).collect();
+        let records: Vec<_> =
+            kv.metarecords().unwrap().into_iter().map(|u| (u, rows_of(&kv, u))).collect();
         (records, kv.head().unwrap().unwrap())
     };
+    let dir = fixture();
     {
         let env = raw_env(dir.path());
         let meta = open_raw(&env, "meta");
@@ -170,8 +308,8 @@ fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
     let mut kv = KvStore::open(dir.path()).unwrap();
     assert_eq!(kv.counts().unwrap(), (0, 0), "the log is emptied");
     assert_eq!(kv.head().unwrap(), None);
-    for (u, record) in uuids.iter().zip(&before) {
-        assert_eq!(&kv.metarecord(*u).unwrap().unwrap(), record, "the metarecords stay");
+    for (u, rows) in &before {
+        assert_eq!(&rows_of(&kv, *u), rows, "the metarecords stay");
     }
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
     let mut w = Writer::begin(&mut kv, None).unwrap();
