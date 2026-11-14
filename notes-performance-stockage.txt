@@ -399,6 +399,14 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
   liste de masse de sa partie tant qu'elle n'est pas repliée. Une écriture
   individuelle réécrit cette seule valeur ; une écriture de masse n'y touche
   pas. Presque tout le reste passe par les index.
+  CORRECTION (14 nov. 2026, remarque de l'utilisateur) : « ce metarecord
+  a-t-il déjà cette valeur ? » ne se lit PAS dans la seule forme normale :
+  une écriture de masse non repliée a pu ajouter ou retirer la valeur. Il
+  faut sa forme normale ET les entrées de la liste de masse de sa partie qui
+  le concernent (n° d'op le plus récent par champ · valeur). Une écriture
+  individuelle n'ÉCRIT jamais dans les listes de masse mais les LIT. Voie
+  alternative à mesurer : la tranche de l'index (champ · valeur), déjà
+  « effective » grâce aux événements de l'étape 7.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).
