@@ -172,6 +172,13 @@ impl KvSource<'_> {
     /// read whole and put in order of the values. A value with a posting is
     /// not read holder by holder: its holders are handed over as one run, and
     /// the walk resumes past it.
+    ///
+    /// With events pending on the field (doc "Mass writes in the store"),
+    /// what is stored is behind by them. The values the events name are
+    /// stepped over where they are stored and handed over at their place in
+    /// the order, their holders replayed — one that is not stored yet
+    /// included; any other value has only lost the records a replacement was
+    /// written on.
     fn walk(
         &self,
         field: &str,
@@ -202,6 +209,35 @@ impl KvSource<'_> {
         // Before the start in the walk's direction: already paged.
         let before_start =
             |rep: &SortRep| start.is_some_and(|s| if want_max { rep > s } else { rep < s });
+        let pending = self.events(field);
+        let replaced = events::replaced(&pending);
+        // The values the events name, in the walk's order, each handed over
+        // once: when the walk reaches its place.
+        let named = events::named(&pending);
+        let mut ahead: Vec<&Vec<u8>> = named.iter().collect();
+        if !want_max {
+            ahead.reverse();
+        }
+        let mut named_upto =
+            |upto: Option<&[u8]>, visit: &mut dyn FnMut(&SortRep, Walked<'_>) -> bool| -> bool {
+                while let Some(key) = ahead.last().copied() {
+                    let reached = match upto {
+                        None => true,
+                        Some(at) if want_max => key.as_slice() >= at,
+                        Some(at) => key.as_slice() <= at,
+                    };
+                    if !reached {
+                        break;
+                    }
+                    ahead.pop();
+                    let Some(rep) = key_rep(key).filter(|rep| !before_start(rep)) else { continue };
+                    let holders = self.bucket(field, VALUE, key);
+                    if !holders.is_empty() && !visit(&rep, Walked::Run(&holders)) {
+                        return false;
+                    }
+                }
+                true
+            };
         let mut run: Vec<(SortRep, u32)> = Vec::new();
         let mut run_key: Option<Vec<u8>> = None;
         let emit_run =
@@ -227,40 +263,49 @@ impl KvSource<'_> {
                 let id = dense(&k[k.len() - 4..]);
                 if let Some(r) = hashed_run(key) {
                     if run_key.as_deref() != Some(r) {
-                        if !emit_run(&mut run, visit) {
+                        if !emit_run(&mut run, visit) || !named_upto(Some(key), visit) {
                             return Ok(());
                         }
                         run_key = Some(r.to_vec());
                     }
+                    // Its rows say what a replaced record still holds.
                     if let Some(rep) = self.rep_at(id, field, key).filter(|r| !before_start(r)) {
                         run.push((rep, id));
                     }
                     continue;
                 }
-                if !emit_run(&mut run, visit) {
+                if !emit_run(&mut run, visit) || !named_upto(Some(key), visit) {
                     return Ok(());
                 }
                 run_key = None;
+                let past = if want_max {
+                    [&prefix[..], key].concat()
+                } else {
+                    [&prefix[..], key, &ID_MAX[..]].concat()
+                };
+                // A value the events name was handed over just now, replayed.
+                if named.contains(key) {
+                    bound = past;
+                    continue 'resume;
+                }
                 let Some(rep) = key_rep(key) else { continue };
                 if posted.contains(key) {
-                    let holders = self.posting(field, key).unwrap_or_default();
+                    let holders = self.posting(field, key).unwrap_or_default() - &replaced;
                     if !before_start(&rep) && !visit(&rep, Walked::Run(&holders)) {
                         return Ok(());
                     }
-                    bound = if want_max {
-                        [&prefix[..], key].concat()
-                    } else {
-                        [&prefix[..], key, &ID_MAX[..]].concat()
-                    };
+                    bound = past;
                     continue 'resume;
                 }
-                if !before_start(&rep) && !visit(&rep, Walked::One(id)) {
+                if !replaced.contains(id) && !before_start(&rep) && !visit(&rep, Walked::One(id)) {
                     return Ok(());
                 }
             }
             break;
         }
-        emit_run(&mut run, visit);
+        if emit_run(&mut run, visit) {
+            named_upto(None, visit);
+        }
         Ok(())
     }
 
@@ -1657,9 +1702,10 @@ impl Source for KvSource<'_> {
         if !matches!(self.kind(field), Some(Kind::Categorical | Kind::Numeric | Kind::Datetime)) {
             return false;
         }
-        // The stored order is behind by the field's pending events: the page
-        // is fetched, from the rows.
-        if !self.events(field).is_empty() {
+        // A value the pending events name is walked at its key: one whose
+        // key does not hold it whole has no place there, and the page is
+        // fetched, from the rows.
+        if events::named(&self.events(field)).iter().any(|k| key_rep(k).is_none()) {
             return false;
         }
         let start_key = match start {

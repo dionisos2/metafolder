@@ -219,10 +219,11 @@ Conception d'implémentation de l'étape 7 (annoncée à l'utilisateur) :
 crates/daemon/src/kvstore/events.rs ; tests crates/daemon/tests/kv_events.rs ;
 table `events`, TABLES 25, DERIVED_VERSION 10) — conforme à la conception
 ci-dessous, avec ces écarts :
-- TRI : pas de fusion des valeurs nommées dans le parcours. Quand le champ
-  trié a des événements en attente, walk_values rend false et la page est
-  produite par « lire chaque résultat » (correct, plus cher). À FAIRE si la
-  mesure le demande (ou laisser le repli régler le cas).
+- TRI : fusion faite (demandée par l'utilisateur) : kvstore/source.rs `walk`
+  saute les valeurs nommées là où elles sont stockées et les remet à leur
+  place, rejouées ; les autres perdent `replaced`. Seul cas qui retombe sur
+  « lire chaque résultat » : une valeur nommée à clé hachée (texte > 256
+  octets écrit individuellement pendant que des événements sont en attente).
 - Les routes de masse (batch_set/add/remove/unset et batch_writes) passent
   par Writer::mass_add / mass_remove / mass_set / mass_unset ; write_matches
   reçoit la liste des uuid d'un coup. La validation de schéma reste faite
@@ -295,6 +296,13 @@ l'arbre de travail, compile avec 4 avertissements « jamais utilisé ») :
   dans routes/mod.rs) sur Writer::mass_* ; (4) note wiki « Mass writes in the
   store » (citée par le code, pas encore écrite → `doc check` échouera) +
   store-tables ; (5) lancer kv_events puis le contrôle complet, commiter.
+
+DÉCISION utilisateur pour l'étape 8 (14 nov. 2026), validation du schéma
+d'une écriture de masse : les règles qui portent sur la valeur sont
+vérifiées UNE fois par opération ; les règles de comptage (nombre de valeurs
+min / max) sont vérifiées par les compteurs de l'étape 6 (bitmaps), sans
+lire les metarecords. `updated` : par bitmap pour ajouter / retirer, tous les
+résultats pour remplacer (inchangé).
 
 Plan d'implémentation validé (une étape = un commit au moins) :
   1. Suppression par `universe` seulement (section 0bis, « Suppression ») :

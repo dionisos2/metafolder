@@ -7,6 +7,7 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
+use metafolder_daemon::index::{PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
@@ -109,11 +110,46 @@ fn every_answer(store: &KvStore, target: Uuid) -> Vec<Vec<Uuid>> {
     out
 }
 
+/// Every record holding a `rank`, sorted on `field` page after page by a
+/// walk of the field's values — the strategy that reads the stored order,
+/// which the pending events are not in.
+fn walked(store: &KvStore, field: &str, ascending: bool) -> Vec<Uuid> {
+    let q = Query::IsPresent { field: "rank".into(), aspect: Aspect::Raw };
+    let sort = [SortBy { field: field.into(), ascending }];
+    let mut out = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let (page, next) = common::kv::with_kv(store, PageStrategy::Walk, |e, _| {
+            e.evaluate_page_with_roots(&q, &sort, Some(7), cursor.as_deref(), &QueryRoots::new())
+                .unwrap()
+        });
+        out.extend(page);
+        match next {
+            Some(c) => cursor = Some(c),
+            None => return out,
+        }
+    }
+}
+
+/// The walked pages are the oracle's order, either way, on each field.
+fn walks_agree(store: &KvStore) {
+    let q = Query::IsPresent { field: "rank".into(), aspect: Aspect::Raw };
+    for field in ["tag", "rank"] {
+        for (ascending, order) in [(true, SortOrder::Asc), (false, SortOrder::Desc)] {
+            let sort = [SortKey { field: field.into(), order }];
+            let want = common::engines::both(store, &q, &sort);
+            assert_eq!(walked(store, field, ascending), want, "{field}, ascending {ascending}");
+        }
+    }
+}
+
 /// The answers with events pending, then folded, then rebuilt: the same.
 fn settled(store: &mut KvStore, target: Uuid) {
     check(store);
     let pending = every_answer(store, target);
+    walks_agree(store);
     store.fold().unwrap();
+    walks_agree(store);
     check(store);
     assert_eq!(every_answer(store, target), pending, "after the fold");
     store.reindex().unwrap();
@@ -207,4 +243,32 @@ fn a_position_is_written_record_by_record() {
     assert_eq!(done.len(), 1);
     assert_eq!(store.pending_events("loc").unwrap(), 0);
     check(&store);
+}
+
+/// A page sorted on a field with events pending is still read by walking the
+/// field's values, the values the events name merged in at their place: it
+/// costs the page, not a read of every match.
+#[test]
+fn a_sorted_page_on_a_field_with_pending_events_reads_the_page() {
+    let (mut store, _dir) = open();
+    let all = records(&mut store, 3_000);
+    write(&mut store, |w| {
+        w.mass_add("tag", s("amber"), &all[..1_500]).unwrap();
+        w.mass_remove("tag", &s("blue"), &all[..600]).unwrap();
+    });
+    assert_eq!(store.pending_events("tag").unwrap(), 2);
+    let q = Query::IsPresent { field: "rank".into(), aspect: Aspect::Raw };
+    let cost = |store: &KvStore, ascending: bool| {
+        let sort = [SortBy { field: "tag".into(), ascending }];
+        let before = store.reads();
+        let (page, _) = common::kv::with_kv(store, PageStrategy::Auto, |e, _| {
+            e.evaluate_page_with_roots(&q, &sort, Some(50), None, &QueryRoots::new()).unwrap()
+        });
+        assert_eq!(page.len(), 50);
+        store.reads() - before
+    };
+    for ascending in [true, false] {
+        let pending = cost(&store, ascending);
+        assert!(pending < 1_000, "ascending {ascending}: {pending} keys for a page of 50");
+    }
 }

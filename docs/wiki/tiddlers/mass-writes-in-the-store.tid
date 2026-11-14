@@ -35,7 +35,7 @@ metarecord), and the histograms for a value added or removed.
 
 * ''Equality, referrers, a text search by value'': the value's stored holders, replayed.
 * ''A range, a `!=`, a scan'': the values an event names are left out of the scan of what is stored and read one by one, replayed; every other value has only lost the records a replacement was written on, which are subtracted once.
-* ''A sort by walking the values'': not while the field has events pending — the page is fetched from the rows ([[Sorting and postings]]). Merging the named values into the walk is not built.
+* ''A sort by walking the values'' ([[Sorting and postings]]): the values an event names are stepped over where they are stored and handed over at their place in the order, their holders replayed — a value no record held before the event included; the other values come as stored, less the replaced records. A page still costs the page (`tests/kv_events.rs`: 11 067 keys for a page of 50 over 3 000 records when such a page was fetched from the rows, under 1 000 walked). Only a named value whose key does not hold it whole — a text over 256 bytes, written to one record while events were pending — has no place in the walk: the page is then fetched from the rows.
 
 A field without pending events — nearly all of them, nearly always — is read as
 before, for one read of its (empty) list.
