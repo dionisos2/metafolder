@@ -459,16 +459,23 @@ fn get_value(r: &mut In) -> Result<Value> {
     rows::decode_value(raw)
 }
 
-fn enc_row(row: &FieldRow) -> Vec<u8> {
+/// A row as stored. `id` is the store's own handle on a cell, until the cells
+/// give way to one key per record (doc "Store tables"); a snapshot writes `0`.
+fn enc_row(id: i64, row: &FieldRow) -> Vec<u8> {
     let mut out = Out::default();
-    out.int(row.id).bytes(row.name.as_bytes());
+    out.int(id).bytes(row.name.as_bytes());
     put_value(&mut out, &row.value);
     out.0
 }
 
-fn dec_row(b: &[u8]) -> Result<FieldRow> {
+fn dec_cell(b: &[u8]) -> Result<(i64, FieldRow)> {
     let mut r = In(b);
-    Ok(FieldRow { id: r.int()?, name: r.string()?, value: get_value(&mut r)? })
+    let id = r.int()?;
+    Ok((id, FieldRow { name: r.string()?, value: get_value(&mut r)? }))
+}
+
+fn dec_row(b: &[u8]) -> Result<FieldRow> {
+    dec_cell(b).map(|(_, row)| row)
 }
 
 fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
@@ -753,26 +760,33 @@ impl Read<'_> {
         self.live(derived::dense(&v[FOREST_ID..]))
     }
 
-    /// A record's rows, in row-id order (they are kept in field order).
+    /// A record's rows (in the order the cells were made, which nothing may
+    /// rely on).
     fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>> {
         let mut out = Vec::new();
         for e in self.t.cells.prefix_iter(self.r, uuid.as_bytes())? {
             let (_, v) = e?;
-            out.push(dec_row(v)?);
+            out.push(dec_cell(v)?);
         }
         self.count(out.len() as u64 + 1)?;
-        out.sort_unstable_by_key(|r| r.id);
-        Ok(out)
+        out.sort_unstable_by_key(|(id, _)| *id);
+        Ok(out.into_iter().map(|(_, row)| row).collect())
     }
 
-    /// A record's rows of one field, in row-id order: one prefix.
+    /// A record's rows of one field: one prefix.
     fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
+        Ok(self.cells_named(uuid, name)?.into_iter().map(|(_, row)| row).collect())
+    }
+
+    /// A record's cells of one field, each with the store's handle on it.
+    fn cells_named(&self, uuid: Uuid, name: &str) -> Result<Vec<(i64, FieldRow)>> {
         let mut out = Vec::new();
         for e in self.t.cells.prefix_iter(self.r, &cell_prefix(uuid.as_bytes(), name))? {
             let (_, v) = e?;
-            out.push(dec_row(v)?);
+            out.push(dec_cell(v)?);
         }
         self.count(out.len() as u64 + 1)?;
+        out.sort_unstable_by_key(|(id, _)| *id);
         Ok(out)
     }
 
@@ -786,17 +800,6 @@ impl Read<'_> {
             metafolder_core::slowlog::count_reads(n);
         }
         Ok(())
-    }
-
-    fn row(&self, id: i64) -> Result<Option<(Uuid, FieldRow)>> {
-        // The owner, and the cell.
-        self.count(2)?;
-        let Some(prefix) = self.t.row_owner.get(self.r, &be(id))? else { return Ok(None) };
-        let cell = self.t.cells.get(self.r, &key(&[prefix, &be(id)]))?;
-        Ok(match cell {
-            Some(v) => Some((uuid_of(prefix), dec_row(v)?)),
-            None => None,
-        })
     }
 
     fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
@@ -1044,14 +1047,6 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| Ok($read.t.metarecords.len($read.r)? as usize))
             }
-            fn row(&self, id: i64) -> Result<Option<FieldRow>> {
-                let $me = self;
-                $with(&mut |$read: &Read| Ok($read.row(id)?.map(|(_, r)| r)))
-            }
-            fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>> {
-                let $me = self;
-                $with(&mut |$read: &Read| Ok($read.row(id)?.map(|(owner, _)| owner)))
-            }
             fn metarecords(&self) -> Result<Vec<Uuid>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
@@ -1079,12 +1074,6 @@ macro_rules! kv_reads {
                         }
                     }
                     Ok(())
-                })
-            }
-            fn max_row_id(&self) -> Result<i64> {
-                let $me = self;
-                $with(&mut |$read: &Read| {
-                    Ok($read.t.row_owner.last($read.r)?.map_or(0, |(k, _)| from_be(k)))
                 })
             }
             fn value_types(&self, name: &str) -> Result<Vec<String>> {
@@ -1227,7 +1216,6 @@ macro_rules! kv_reads {
                         let parent = uuid_of(&k[end + 2..end + 18]);
                         let name = $read.node_name(&field, &k[end + 18..], v)?;
                         out.push(TreeRow {
-                            id: from_be(&v[16..24]),
                             field_name: field,
                             uuid: uuid_of(v),
                             parent: (!parent.is_nil()).then_some(parent),
@@ -1235,7 +1223,12 @@ macro_rules! kv_reads {
                         });
                     }
                     out.sort_by(|a, b| {
-                        (&a.field_name, a.uuid, a.id).cmp(&(&b.field_name, b.uuid, b.id))
+                        (&a.field_name, a.uuid, a.parent, a.name.as_bytes()).cmp(&(
+                            &b.field_name,
+                            b.uuid,
+                            b.parent,
+                            b.name.as_bytes(),
+                        ))
                     });
                     Ok(out)
                 })
@@ -1849,15 +1842,6 @@ impl KvTxn<'_> {
         Ok(n)
     }
 
-    fn bump_past(&self, counter: &str, id: i64) -> Result<()> {
-        let mut w = self.txn.borrow_mut();
-        let n = self.t.meta.get(&w, counter.as_bytes())?.map_or(1, from_be);
-        if id >= n {
-            self.t.meta.put(&mut w, counter.as_bytes(), &be(id + 1))?;
-        }
-        Ok(())
-    }
-
     fn count_type(&self, name: &str, value: &Value, delta: i64) -> Result<()> {
         if matches!(value, Value::Nothing) {
             return Ok(());
@@ -2000,14 +1984,22 @@ impl WriteTxn for KvTxn<'_> {
         if self.has_live_children(uuid)? {
             self.delete_rows(uuid, None)?;
         } else {
-            let rows = Rows::rows(self, uuid)?;
+            let cells: Vec<(Vec<u8>, FieldRow)> = {
+                let txn = self.txn.borrow();
+                let mut out = Vec::new();
+                for e in self.t.cells.prefix_iter(&txn, uuid.as_bytes())? {
+                    let (k, v) = e?;
+                    out.push((k.to_vec(), dec_row(v)?));
+                }
+                out
+            };
             {
                 let mut w = self.txn.borrow_mut();
-                for row in &rows {
-                    let prefix = cell_prefix(uuid.as_bytes(), &row.name);
-                    self.t.cells.delete(&mut w, &key(&[&prefix, &be(row.id)]))?;
+                for (k, _) in &cells {
+                    self.t.cells.delete(&mut w, k)?;
                 }
             }
+            let rows: Vec<FieldRow> = cells.into_iter().map(|(_, r)| r).collect();
             for row in &rows {
                 self.count_type(&row.name, &row.value, -1)?;
                 self.derive_dropped(uuid, &row.name, &row.value)?;
@@ -2017,7 +2009,7 @@ impl WriteTxn for KvTxn<'_> {
         self.derive_removed(uuid)
     }
 
-    fn insert_row(&self, uuid: Uuid, name: &str, value: &Value, id: Option<i64>) -> Result<i64> {
+    fn insert_row(&self, uuid: Uuid, name: &str, value: &Value) -> Result<()> {
         if !Rows::exists(self, uuid)? {
             bail!("a row for metarecord {uuid}, which does not exist");
         }
@@ -2045,19 +2037,8 @@ impl WriteTxn for KvTxn<'_> {
                 .into());
             }
         }
-        let id = match id {
-            Some(id) => {
-                // A row put back under its own id; the owner entry of a
-                // deleted metarecord's row is still there, without its cell.
-                if Rows::row(self, id)?.is_some() {
-                    bail!("row {id} already exists");
-                }
-                self.bump_past("next_row", id)?;
-                id
-            }
-            None => self.next("next_row")?,
-        };
-        let row = FieldRow { id, name: name.to_string(), value: value.clone() };
+        let id = self.next("next_row")?;
+        let row = FieldRow { name: name.to_string(), value: value.clone() };
         let dense = match &forest {
             Some(_) => self
                 .dense_id(uuid.as_bytes())?
@@ -2069,7 +2050,7 @@ impl WriteTxn for KvTxn<'_> {
             let mut w = self.txn.borrow_mut();
             let t = self.t;
             let prefix = cell_prefix(uuid.as_bytes(), name);
-            t.cells.put(&mut w, &key(&[&prefix, &be(id)]), &enc_row(&row))?;
+            t.cells.put(&mut w, &key(&[&prefix, &be(id)]), &enc_row(id, &row))?;
             t.row_owner.put(&mut w, &be(id), &prefix)?;
             t.by_field.put(&mut w, &key(&[&name_key(name), &be(id)]), uuid.as_bytes())?;
             if let Some(k) = &forest {
@@ -2077,14 +2058,15 @@ impl WriteTxn for KvTxn<'_> {
             }
         }
         self.count_type(name, value, 1)?;
-        self.derive_row(uuid, name, value, 1)?;
-        Ok(id)
+        self.derive_row(uuid, name, value, 1)
     }
 
-    fn delete_row(&self, id: i64) -> Result<()> {
-        let Some((owner, row)) = ({
+    fn delete_row(&self, owner: Uuid, name: &str, value: &Value) -> Result<()> {
+        let Some((id, row)) = ({
             let txn = self.txn.borrow();
-            self.read_in(&txn, &mut |read: &Read| read.row(id))?
+            self.read_in(&txn, &mut |read: &Read| read.cells_named(owner, name))?
+                .into_iter()
+                .find(|(_, r)| &r.value == value)
         }) else {
             return Ok(());
         };
@@ -2105,7 +2087,7 @@ impl WriteTxn for KvTxn<'_> {
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()> {
         for row in Rows::rows(self, uuid)? {
             if name.is_none_or(|n| n == row.name) {
-                self.delete_row(row.id)?;
+                self.delete_row(uuid, &row.name, &row.value)?;
             }
         }
         Ok(())
@@ -2158,7 +2140,7 @@ impl WriteTxn for KvTxn<'_> {
             for (after, rows) in [(0u8, &op.before), (1u8, &op.after)] {
                 for (n, row) in rows.iter().enumerate() {
                     let k = key(&[&be(id), &[after], &(n as u32).to_be_bytes()]);
-                    t.snaps.put(&mut w, &k, &enc_row(row))?;
+                    t.snaps.put(&mut w, &k, &enc_row(0, row))?;
                 }
             }
             t.ops_by_label.put(&mut w, &key(&[&be(label), &be(id)]), &[])?;
@@ -2331,7 +2313,7 @@ mod memory_tests {
         for i in 0..rows {
             let uuid = Uuid::new_v4();
             w.create_metarecord(uuid)?;
-            w.insert_row(uuid, "text", &Value::String(format!("{i:0>200}")), None)?;
+            w.insert_row(uuid, "text", &Value::String(format!("{i:0>200}")))?;
         }
         w.commit()
     }

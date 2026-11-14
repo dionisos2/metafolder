@@ -58,5 +58,5 @@ again by the watcher.
 !! Identities
 
 * ''A metarecord keeps its uuid'': recreating a deleted one restores it. A uuid is unique by construction, so it cannot collide.
-* ''A field row does not keep its id'': a row put back gets a new one. Restoring the old id (as a navigation did) could collide with rows created since — ids are allocated by the store, not unique by construction. Clients holding a row id re-read on the change anyway ([[Daemon data in panels]]).
-* Hence an `append_field` is undone ''by value'', not by row id: after undo, redo, undo, the value it appended sits in a row the redo created, under another id. Two rows of the same name and value are interchangeable — the metarecord's content, and its version, are the same whichever goes (doc "Metarecord version").
+* ''A field row has no id'': it is its name and value, so what a revert puts back is the same row as before. Clients re-read on the change anyway ([[Daemon data in panels]]).
+* Hence an `append_field` is undone ''by value'': after undo, redo, undo, the value it appended is the one the redo wrote, and the metarecord's content, and its version, are what they were (doc "Metarecord version").

@@ -110,9 +110,10 @@ fn reverting_keeps_the_derived_data_exact() {
 fn a_retype_and_a_field_rename_keep_the_derived_data_exact() {
     let (mut store, _dir) = open();
     let (_, _, file) = populate(&mut store);
-    let title = Rows::rows_named(&store, file, "title").unwrap()[0].id;
+    let title = Rows::rows_named(&store, file, "title").unwrap()[0].value.clone();
     let mut w = Writer::begin(&mut store, None).unwrap();
-    w.rename_field(file, title, "heading", Value::String("Hello".into())).unwrap();
+    w.replace_value(file, "title", &title, Value::String("Hello".into())).unwrap();
+    w.rename_record_field(file, "title", "heading").unwrap();
     w.retype_field("size", metafolder_core::metarecord::FieldType::String).unwrap();
     w.commit().unwrap();
     check(&store);

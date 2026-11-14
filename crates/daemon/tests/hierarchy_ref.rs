@@ -108,14 +108,7 @@ fn a_parent_can_be_added_and_taken_away() {
     check_derived(&store);
 
     let mut w = Writer::begin(&mut store, None).unwrap();
-    let row = w
-        .store()
-        .rows_named(maraton, F)
-        .unwrap()
-        .into_iter()
-        .find(|r| r.value == hier(Some(sport), "maraton"))
-        .unwrap();
-    w.delete_field(maraton, row.id).unwrap();
+    w.remove_value(maraton, F, &hier(Some(sport), "maraton")).unwrap();
     w.commit().unwrap();
     assert_eq!(descendants(&store, sport), set(&[]));
     assert_eq!(descendants(&store, event), set(&[maraton, boston]));
@@ -131,14 +124,7 @@ fn an_ancestor_reaching_a_node_two_ways_keeps_it_when_one_goes() {
     let b = create(&mut store, vec![hier(Some(top), "b")]);
     let leaf = create(&mut store, vec![hier(Some(a), "leaf"), hier(Some(b), "leaf")]);
     let mut w = Writer::begin(&mut store, None).unwrap();
-    let under_a = w
-        .store()
-        .rows_named(leaf, F)
-        .unwrap()
-        .into_iter()
-        .find(|r| r.value == hier(Some(a), "leaf"))
-        .unwrap();
-    w.delete_field(leaf, under_a.id).unwrap();
+    w.remove_value(leaf, F, &hier(Some(a), "leaf")).unwrap();
     w.commit().unwrap();
     assert_eq!(descendants(&store, top), set(&[a, b, leaf]));
     assert_eq!(descendants(&store, a), set(&[]));
@@ -162,8 +148,8 @@ fn every_row_of_a_node_bears_the_same_name() {
         w.set_field_multi(maraton, F, vec![hier(Some(courir), "m"), hier(Some(event), "n")]),
         "one name",
     );
-    let row = w.store().rows_named(maraton, F).unwrap()[0].id;
-    refused(w.replace_field(maraton, row, hier(Some(sport), "renamed")), "one name");
+    let own = w.store().rows_named(maraton, F).unwrap()[0].value.clone();
+    refused(w.replace_value(maraton, F, &own, hier(Some(sport), "renamed")), "one name");
     // Renaming the node is a set of all its rows.
     w.set_field_multi(
         maraton,
@@ -319,7 +305,7 @@ fn random_edits_keep_every_descendant_bitmap_exact() {
                     let n = nodes[rng.next(nodes.len())];
                     let rows = w.store().rows_named(n, F).unwrap();
                     if rows.len() > 1 {
-                        w.delete_field(n, rows[rng.next(rows.len())].id).map(|_| ())
+                        w.remove_value(n, F, &rows[rng.next(rows.len())].value)
                     } else {
                         Ok(())
                     }

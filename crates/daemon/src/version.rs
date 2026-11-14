@@ -67,8 +67,8 @@ pub fn base(uuid: Uuid) -> u64 {
 
 /// The term one field row contributes: its `(name, type, value)` triple hashed
 /// as a unit, so that moving a value to another field name — or retyping it —
-/// changes the version. The row's `id` is deliberately *not* part of it: a row
-/// id is storage identity, not content.
+/// changes the version. A row is nothing but those three: it has no identity of
+/// its own to leave out.
 pub fn row(name: &str, value: &Value) -> u64 {
     let e = rows::encode_value(value);
     let mut h = Xxh3::new();
@@ -118,8 +118,8 @@ mod tests {
         Uuid::from_bytes([n; 16])
     }
 
-    fn field_row(id: i64, name: &str, value: Value) -> FieldRow {
-        FieldRow { id, name: name.to_string(), value }
+    fn field_row(name: &str, value: Value) -> FieldRow {
+        FieldRow { name: name.to_string(), value }
     }
 
     #[test]
@@ -145,23 +145,14 @@ mod tests {
     fn nothing_is_content_not_absence() {
         // A row holding Nothing contributes; an absent field does not. The two
         // states are distinct in the data model and must stay distinct here.
-        let with_nothing = [field_row(1, "mfr_path", Value::Nothing)];
+        let with_nothing = [field_row("mfr_path", Value::Nothing)];
         assert_ne!(of_rows(uuid(1), &with_nothing), of_rows(uuid(1), &[]));
     }
 
     #[test]
-    fn the_row_id_is_not_content() {
-        // A revert gives the rows it puts back fresh ids; the version must not
-        // depend on them, or it would be coupled to storage identity.
-        let a = [field_row(1, "tag", Value::String("jazz".into()))];
-        let b = [field_row(9999, "tag", Value::String("jazz".into()))];
-        assert_eq!(of_rows(uuid(1), &a), of_rows(uuid(1), &b));
-    }
-
-    #[test]
     fn row_order_does_not_matter() {
-        let a = field_row(1, "tag", Value::String("jazz".into()));
-        let b = field_row(2, "rating", Value::Int(4));
+        let a = field_row("tag", Value::String("jazz".into()));
+        let b = field_row("rating", Value::Int(4));
         assert_eq!(of_rows(uuid(1), &[a.clone(), b.clone()]), of_rows(uuid(1), &[b, a]));
     }
 
@@ -170,15 +161,15 @@ mod tests {
         // The reason the terms are summed and not XOR-ed: under XOR a record
         // holding the same row twice would hash exactly like one holding it
         // never, and "No duplicate rows" is held by the write path alone.
-        let r = field_row(1, "tag", Value::String("jazz".into()));
-        let twice = [r.clone(), field_row(2, "tag", Value::String("jazz".into()))];
+        let r = field_row("tag", Value::String("jazz".into()));
+        let twice = [r.clone(), field_row("tag", Value::String("jazz".into()))];
         assert_ne!(of_rows(uuid(1), &twice), of_rows(uuid(1), &[]));
         assert_ne!(of_rows(uuid(1), &twice), of_rows(uuid(1), &[r]));
     }
 
     #[test]
     fn two_metarecords_with_the_same_rows_differ() {
-        let rows = [field_row(1, "tag", Value::String("jazz".into()))];
+        let rows = [field_row("tag", Value::String("jazz".into()))];
         assert_ne!(of_rows(uuid(1), &rows), of_rows(uuid(2), &rows));
     }
 
@@ -186,8 +177,8 @@ mod tests {
     fn a_delta_is_the_same_as_a_recompute() {
         // The incremental path and the whole-state path must agree — this is
         // what lets a write skip re-reading the metarecord.
-        let before = [field_row(1, "tag", Value::String("jazz".into()))];
-        let after = [field_row(2, "tag", Value::String("rock".into()))];
+        let before = [field_row("tag", Value::String("jazz".into()))];
+        let after = [field_row("tag", Value::String("rock".into()))];
         let start = of_rows(uuid(1), &before);
         let (add, sub) = delta(&before, &after);
         assert_eq!(apply(start, add, sub), of_rows(uuid(1), &after));
@@ -197,8 +188,8 @@ mod tests {
     fn a_value_put_back_restores_the_version() {
         // The property the counter did not have: changing a field and changing
         // it back leaves the metarecord — and so its version — as it was.
-        let initial = [field_row(1, "rating", Value::Int(3))];
-        let changed = [field_row(2, "rating", Value::Int(5))];
+        let initial = [field_row("rating", Value::Int(3))];
+        let changed = [field_row("rating", Value::Int(5))];
         let start = of_rows(uuid(1), &initial);
 
         let (add, sub) = delta(&initial, &changed);

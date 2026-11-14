@@ -48,7 +48,8 @@ type Set = BTreeSet<Uuid>;
 /// Every metarecord and every row of the repository, read once.
 struct Data {
     universe: Set,
-    /// Each field's rows, in row-id order.
+    /// Each field's rows, in an order of the oracle's own: the store's is
+    /// unspecified.
     by_field: HashMap<String, Vec<(Uuid, FieldRow)>>,
 }
 
@@ -61,7 +62,7 @@ impl Data {
             Ok(())
         })?;
         for rows in by_field.values_mut() {
-            rows.sort_by_key(|(_, r)| r.id);
+            rows.sort_by_cached_key(|(u, r)| (*u, format!("{:?}", r.value)));
         }
         Ok(Self { universe, by_field })
     }
@@ -98,11 +99,9 @@ impl Data {
 /// One field's forest, rebuilt from its position rows (`tree_ref`, or a
 /// `hierarchy_ref`, where a node may have several parents).
 struct Forest<'a> {
-    /// Every position, in row-id order: `(node, parent, name)`.
+    /// Every position: `(node, parent, name)`.
     positions: Vec<(Uuid, Option<Uuid>, &'a TreeName)>,
-    /// The first (lowest-id) position of each node.
-    first: HashMap<Uuid, (Option<Uuid>, &'a TreeName)>,
-    /// Each node's positions, and each parent's children, in row-id order.
+    /// Each node's positions, and each parent's children.
     of_node: HashMap<Uuid, Vec<(Option<Uuid>, &'a TreeName)>>,
     below: HashMap<Option<Uuid>, Vec<(Uuid, &'a TreeName)>>,
 }
@@ -110,19 +109,17 @@ struct Forest<'a> {
 impl<'a> Forest<'a> {
     fn new(rows: &'a [(Uuid, FieldRow)]) -> Self {
         let mut positions = Vec::new();
-        let mut first = HashMap::new();
         let mut of_node: HashMap<_, Vec<_>> = HashMap::new();
         let mut below: HashMap<_, Vec<_>> = HashMap::new();
         for (uuid, row) in rows {
             if let Some((parent, name)) = row.value.position() {
                 let parent = &parent;
                 positions.push((*uuid, *parent, name));
-                first.entry(*uuid).or_insert((*parent, name));
                 of_node.entry(*uuid).or_default().push((*parent, name));
                 below.entry(*parent).or_default().push((*uuid, name));
             }
         }
-        Self { positions, first, of_node, below }
+        Self { positions, of_node, below }
     }
 
     fn is_empty(&self) -> bool {
@@ -210,24 +207,51 @@ impl<'a> Forest<'a> {
     }
 
     /// The sort key of one position: the names from the top of its chain down
-    /// to it, joined by [`PATH_KEY_SEP`]. The chain climbs through first
-    /// positions and stops at a root, or at a parent outside the forest (a
-    /// detached node counts as a root).
+    /// to it, joined by [`PATH_KEY_SEP`]. A node with several ways up is met
+    /// first by the walk of the forest along the least of them, so the chain
+    /// climbs through that one; it stops at a root, or at a parent outside the
+    /// forest (a detached node counts as a root).
     fn sort_key(&self, parent: Option<Uuid>, name: &TreeName) -> String {
-        let mut comps = vec![name.display().into_owned()];
-        let mut cur = parent;
-        let mut depth = 0;
-        while let Some(p) = cur {
-            if depth >= MAX_TREE_DEPTH {
-                break;
-            }
-            let Some((pp, pname)) = self.first.get(&p) else { break };
-            comps.push(pname.display().into_owned());
-            cur = *pp;
-            depth += 1;
+        let mut memo = HashMap::new();
+        self.position_key(parent, name, 0, &mut memo)
+    }
+
+    fn position_key(
+        &self,
+        parent: Option<Uuid>,
+        name: &TreeName,
+        depth: usize,
+        memo: &mut HashMap<Uuid, String>,
+    ) -> String {
+        let own = name.display().into_owned();
+        let Some(p) = parent else { return own };
+        if depth >= MAX_TREE_DEPTH {
+            return own;
         }
-        comps.reverse();
-        comps.join(&PATH_KEY_SEP.to_string())
+        match self.node_key(p, depth + 1, memo) {
+            Some(above) => format!("{above}{PATH_KEY_SEP}{own}"),
+            None => own,
+        }
+    }
+
+    /// The least key of the positions of `node`, `None` when it has none.
+    fn node_key(
+        &self,
+        node: Uuid,
+        depth: usize,
+        memo: &mut HashMap<Uuid, String>,
+    ) -> Option<String> {
+        if let Some(key) = memo.get(&node) {
+            return Some(key.clone());
+        }
+        let key = self
+            .of_node
+            .get(&node)?
+            .iter()
+            .map(|(parent, name)| self.position_key(*parent, name, depth, memo))
+            .min()?;
+        memo.insert(node, key.clone());
+        Some(key)
     }
 }
 

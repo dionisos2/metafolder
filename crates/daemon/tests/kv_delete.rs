@@ -133,7 +133,6 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
 #[test]
 fn a_deleted_metarecord_is_gone_from_every_answer() {
     let mut r = repo();
-    let row = r.store.rows_named(r.file, "title").unwrap()[0].id;
     delete(&mut r.store, r.file);
     for answer in every_answer(&r.store) {
         assert!(!answer.contains(&r.file), "a deleted metarecord in an answer");
@@ -149,8 +148,6 @@ fn a_deleted_metarecord_is_gone_from_every_answer() {
     assert!(r.store.forest().unwrap().iter().all(|t| t.uuid != r.file));
     assert!(r.store.field_rows("tag").unwrap().iter().all(|(u, _)| *u != r.file));
     assert!(!r.store.holders("tag").unwrap().contains(&r.file));
-    assert_eq!(r.store.row(row).unwrap(), None);
-    assert_eq!(r.store.owner_of_row(row).unwrap(), None);
     let mut seen = Vec::new();
     r.store
         .for_each_row(&mut |u, _| {

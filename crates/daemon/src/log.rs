@@ -828,8 +828,8 @@ impl<'c> Writer<'c> {
             // Checked inside the loop so two rows of the same name with different
             // types within one create are rejected (the second sees the first).
             self.validate_value_type(&f.name, &f.value)?;
-            let id = self.tx.insert_row(uuid, &f.name, &f.value, None)?;
-            after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
+            self.tx.insert_row(uuid, &f.name, &f.value)?;
+            after.push(FieldRow { name: f.name.clone(), value: f.value.clone() });
             out_fields.push(f);
         }
 
@@ -884,8 +884,8 @@ impl<'c> Writer<'c> {
         for f in fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
             self.validate_value_type(&f.name, &f.value)?;
-            let id = self.tx.insert_row(uuid, &f.name, &f.value, None)?;
-            after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
+            self.tx.insert_row(uuid, &f.name, &f.value)?;
+            after.push(FieldRow { name: f.name.clone(), value: f.value.clone() });
             out_fields.push(f);
         }
         self.log_op(OpType::SetRecord, uuid, None, before, after)?;
@@ -915,8 +915,8 @@ impl<'c> Writer<'c> {
         let before = self.tx.rows_named(uuid, name)?;
         self.tx.delete_rows(uuid, Some(name))?;
         let cleared_to_nothing = matches!(value, Value::Nothing);
-        let id = self.tx.insert_row(uuid, name, &value, None)?;
-        let after = vec![FieldRow { id, name: name.to_string(), value }];
+        self.tx.insert_row(uuid, name, &value)?;
+        let after = vec![FieldRow { name: name.to_string(), value }];
         self.log_op(op_type, uuid, Some(name), before, after)?;
         if cleared_to_nothing {
             // The only remaining row is Nothing: the type may have unlocked.
@@ -929,137 +929,66 @@ impl<'c> Writer<'c> {
     /// (multi-map), in a single `SetField` operation. A revert's `set_field`
     /// inverse restores *all* snapshot rows, so this needs nothing of its own.
     pub fn set_field_multi(&mut self, uuid: Uuid, name: &str, values: Vec<Value>) -> Result<()> {
-        self.set_field_multi_as(OpType::SetField, uuid, name, values).map(|_| ())
+        self.set_field_multi_as(OpType::SetField, uuid, name, values)
     }
 
-    /// [`Self::set_field_multi`] under a chosen op type, returning one row id
-    /// per *given* value, in order. A revert needs both: the watcher types when
-    /// it undoes a file event (doc "What a revert writes"), and the ids to
-    /// remap the row-scoped inverses that follow it — so a repeated value, which
-    /// is collapsed to a single row (doc "No duplicate rows"),
-    /// reports the id of the row that swallowed it rather than shifting the
-    /// caller's pairing.
+    /// [`Self::set_field_multi`] under a chosen op type: a revert writes the
+    /// watcher types when it undoes a file event (doc "What a revert writes").
+    /// A repeated value is collapsed to a single row (doc "No duplicate rows").
     pub fn set_field_multi_as(
         &mut self,
         op_type: OpType,
         uuid: Uuid,
         name: &str,
         values: Vec<Value>,
-    ) -> Result<Vec<i64>> {
+    ) -> Result<()> {
         validate_one_position_each(uuid, values.iter().map(|v| (name, v)))?;
         for value in &values {
             self.validate_tree_ref(uuid, name, value)?;
             self.validate_value_type(name, value)?;
         }
-        // Each value is written once; a repeat points back at its first
-        // occurrence so the returned ids still pair with `values`.
-        let (kept, slot) = collapse_duplicates(&values);
+        let kept = collapse_duplicates(&values);
         self.must_exist(uuid)?;
         let before = self.tx.rows_named(uuid, name)?;
         self.tx.delete_rows(uuid, Some(name))?;
         let cleared_to_nothing = values.iter().all(|v| matches!(v, Value::Nothing));
         let mut after = Vec::with_capacity(kept.len());
         for value in kept {
-            let id = self.tx.insert_row(uuid, name, &value, None)?;
-            after.push(FieldRow { id, name: name.to_string(), value });
+            self.tx.insert_row(uuid, name, &value)?;
+            after.push(FieldRow { name: name.to_string(), value });
         }
-        let ids = slot.iter().map(|&i| after[i].id).collect();
         self.log_op(op_type, uuid, Some(name), before, after)?;
         if cleared_to_nothing {
             // No non-Nothing row remains: the type may have unlocked.
             self.field_types.remove(name);
         }
-        Ok(ids)
+        Ok(())
     }
 
     /// Appends one row without touching existing rows of that name.
     /// A value the metarecord already holds under that name is *not* appended
     /// again (doc "No duplicate rows"): nothing is written, nothing
-    /// is logged, the version does not move, and the row that already holds it
-    /// is reported as [`Appended::AlreadyPresent`].
+    /// is logged, the version does not move, and the answer is
+    /// [`Appended::AlreadyPresent`].
     pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<Appended> {
         self.validate_one_position(uuid, name, &value, None)?;
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
-        let twin = self.tx.rows_named(uuid, name)?.into_iter().find(|r| r.value == value);
-        if let Some(existing) = twin.map(|r| r.id) {
-            return Ok(Appended::AlreadyPresent(existing));
+        if self.tx.rows_named(uuid, name)?.iter().any(|r| r.value == value) {
+            return Ok(Appended::AlreadyPresent);
         }
         self.must_exist(uuid)?;
-        let id = self.tx.insert_row(uuid, name, &value, None)?;
-        let after = vec![FieldRow { id, name: name.to_string(), value }];
+        self.tx.insert_row(uuid, name, &value)?;
+        let after = vec![FieldRow { name: name.to_string(), value }];
         self.log_op(OpType::AppendField, uuid, Some(name), vec![], after)?;
-        Ok(Appended::Created(id))
+        Ok(Appended::Created)
     }
 
-    /// Replaces the single row identified by `field_id`, keeping its row id.
-    /// Logged as a `delete_field` + `append_field` pair so that the inverse
-    /// operations remain row-scoped (a `set_field` snapshot covers *all* rows
-    /// of the name, which would clobber untouched sibling rows on revert).
-    pub fn replace_field(&mut self, uuid: Uuid, field_id: i64, value: Value) -> Result<()> {
-        let old = self.get_owned_row(uuid, field_id)?;
-        let name = old.name.clone();
-        self.validate_one_position(uuid, &name, &value, Some(field_id))?;
-        self.validate_tree_ref(uuid, &name, &value)?;
-        self.validate_value_type(&name, &value)?;
-        self.reject_duplicate(uuid, field_id, &name, &value)?;
-        self.replace_owned_row(uuid, old, &name, value)
-    }
-
-    /// A by-id edit names one specific row, so turning it into the twin of a
-    /// sibling is refused rather than silently dropping the row the caller just
-    /// addressed (doc "No duplicate rows"). The row being edited is
-    /// not its own twin.
-    fn reject_duplicate(&self, uuid: Uuid, field_id: i64, name: &str, value: &Value) -> Result<()> {
-        match self.twin_row(uuid, field_id, name, value)? {
-            Some(id) => Err(DomainError::BadRequest(format!(
-                "duplicate value for field '{name}': row {id} of {uuid} already holds it"
-            ))
-            .into()),
-            None => Ok(()),
-        }
-    }
-
-    /// The id of *another* row of `(uuid, name)` already holding `value`, if
-    /// any — what makes the row `field_id` a duplicate.
-    fn twin_row(
-        &self,
-        uuid: Uuid,
-        field_id: i64,
-        name: &str,
-        value: &Value,
-    ) -> Result<Option<i64>> {
-        Ok(self
-            .tx
-            .rows_named(uuid, name)?
-            .into_iter()
-            .find(|r| r.id != field_id && &r.value == value)
-            .map(|r| r.id))
-    }
-
-    /// Changes a field row's *name and/or value* in place, keeping its id — the
-    /// by-id edit behind `mf field set`. The value type is validated against the
-    /// *target* field name (a rename moves the row into that name's type group).
-    pub fn rename_field(
-        &mut self,
-        uuid: Uuid,
-        field_id: i64,
-        new_name: &str,
-        value: Value,
-    ) -> Result<()> {
-        let old = self.get_owned_row(uuid, field_id)?;
-        self.validate_one_position(uuid, new_name, &value, Some(field_id))?;
-        self.validate_tree_ref(uuid, new_name, &value)?;
-        self.validate_value_type(new_name, &value)?;
-        self.reject_duplicate(uuid, field_id, new_name, &value)?;
-        self.replace_owned_row(uuid, old, new_name, value)
-    }
-
-    /// The logged delete+append core of [`Self::replace_field`], without the
+    /// The logged delete+append core of [`Self::replace_value`], without the
     /// invariant checks. Shared with [`Self::retype_field`], which is itself the
     /// authority that changes a field's established type (so it must not be
     /// rejected by the per-write type check while converting row by row).
-    /// `new_name` may differ from `old.name` (a by-id rename).
+    /// `new_name` may differ from `old.name` (a rename).
     fn replace_owned_row(
         &mut self,
         uuid: Uuid,
@@ -1067,12 +996,11 @@ impl<'c> Writer<'c> {
         new_name: &str,
         value: Value,
     ) -> Result<()> {
-        let field_id = old.id;
-        self.tx.delete_row(field_id)?;
+        self.tx.delete_row(uuid, &old.name, &old.value)?;
         self.log_op(OpType::DeleteField, uuid, Some(&old.name.clone()), vec![old.clone()], vec![])?;
 
-        self.tx.insert_row(uuid, new_name, &value, Some(field_id))?;
-        let after = vec![FieldRow { id: field_id, name: new_name.to_string(), value }];
+        self.tx.insert_row(uuid, new_name, &value)?;
+        let after = vec![FieldRow { name: new_name.to_string(), value }];
         self.log_op(OpType::AppendField, uuid, Some(new_name), vec![], after)?;
         if new_name != old.name {
             // A rename can unlock the old name's type and lock the new one.
@@ -1109,7 +1037,7 @@ impl<'c> Writer<'c> {
                 // sentinel (and reported) so the retype as a whole still succeeds.
                 if new_value.position().is_some() {
                     let valid = self
-                        .validate_one_position(uuid, &row.name, &new_value, Some(row.id))
+                        .validate_one_position(uuid, &row.name, &new_value, Some(&row.value))
                         .and_then(|()| self.validate_tree_ref(uuid, &row.name, &new_value));
                     if let Err(e) = valid {
                         if e.downcast_ref::<DomainError>().is_some() {
@@ -1131,8 +1059,9 @@ impl<'c> Writer<'c> {
                 // not a duplicate (doc "No duplicate rows"). The
                 // probe reads the transaction's own state, so rows converted
                 // earlier in this pass count as siblings.
-                if self.twin_row(uuid, row.id, &name, &new_value)?.is_some() {
-                    self.delete_field(uuid, row.id)?;
+                let twin = self.tx.rows_named(uuid, &name)?.iter().any(|r| r.value == new_value);
+                if twin {
+                    self.delete_field_rows(uuid, &name, vec![row])?;
                 } else {
                     self.replace_owned_row(uuid, row, &name, new_value)?;
                 }
@@ -1140,16 +1069,6 @@ impl<'c> Writer<'c> {
             }
         }
         Ok(RetypeSummary { converted, fallback_uuids: fallback.into_iter().collect() })
-    }
-
-    /// Removes the single row identified by `field_id`.
-    pub fn delete_field(&mut self, uuid: Uuid, field_id: i64) -> Result<()> {
-        let old = self.get_owned_row(uuid, field_id)?;
-        self.must_exist(uuid)?;
-        self.tx.delete_row(field_id)?;
-        self.log_op(OpType::DeleteField, uuid, Some(&old.name.clone()), vec![old.clone()], vec![])?;
-        self.field_types.remove(&old.name); // a row removed: the type may have unlocked
-        Ok(())
     }
 
     /// Deletes the given rows of `(uuid, name)` and logs them as *one*
@@ -1162,7 +1081,7 @@ impl<'c> Writer<'c> {
         }
         self.must_exist(uuid)?;
         for row in &rows {
-            self.tx.delete_row(row.id)?;
+            self.tx.delete_row(uuid, &row.name, &row.value)?;
         }
         let removed = rows.len();
         self.log_op(OpType::DeleteField, uuid, Some(name), rows, vec![])?;
@@ -1200,16 +1119,19 @@ impl<'c> Writer<'c> {
     /// the one asked for (doc "No duplicate rows").
     pub fn replace_value(&mut self, uuid: Uuid, name: &str, from: &Value, to: Value) -> Result<()> {
         let rows = self.tx.rows_named(uuid, name)?;
-        let Some(old) = rows.iter().find(|r| &r.value == from) else {
+        let Some(old) = rows.iter().find(|r| &r.value == from).cloned() else {
             return Err(no_such_value(uuid, name));
         };
         if from == &to {
             return Ok(());
         }
         if rows.iter().any(|r| r.value == to) {
-            return self.delete_field(uuid, old.id);
+            return self.delete_field_rows(uuid, name, vec![old]).map(|_| ());
         }
-        self.replace_field(uuid, old.id, to)
+        self.validate_one_position(uuid, name, &to, Some(from))?;
+        self.validate_tree_ref(uuid, name, &to)?;
+        self.validate_value_type(name, &to)?;
+        self.replace_owned_row(uuid, old, name, to)
     }
 
     /// Renames the field `name` of `uuid` to `to`: every value moves. Not
@@ -1233,7 +1155,13 @@ impl<'c> Writer<'c> {
             .into());
         }
         for row in rows {
-            self.rename_field(uuid, row.id, to, row.value)?;
+            // The value type is validated against the *target* name: a rename
+            // moves the row into that name's type group.
+            self.validate_one_position(uuid, to, &row.value, None)?;
+            self.validate_tree_ref(uuid, to, &row.value)?;
+            self.validate_value_type(to, &row.value)?;
+            let value = row.value.clone();
+            self.replace_owned_row(uuid, row, to, value)?;
         }
         Ok(())
     }
@@ -1264,7 +1192,7 @@ impl<'c> Writer<'c> {
         values: Vec<Value>,
         uuids: &[Uuid],
     ) -> Result<Vec<Uuid>> {
-        let (kept, _) = collapse_duplicates(&values);
+        let kept = collapse_duplicates(&values);
         self.mass(MassKind::Replace, name, kept, uuids, move |w, uuid| {
             w.set_field_multi(uuid, name, values.clone())?;
             Ok(true)
@@ -1350,13 +1278,6 @@ impl<'c> Writer<'c> {
         self.tx
             .version(uuid)?
             .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")).into())
-    }
-
-    /// Fetches a field row, checking it belongs to the given metarecord.
-    fn get_owned_row(&self, uuid: Uuid, field_id: i64) -> Result<FieldRow> {
-        self.tx.rows(uuid)?.into_iter().find(|r| r.id == field_id).ok_or_else(|| {
-            DomainError::NotFound(format!("Field {field_id} not found on metarecord {uuid}")).into()
-        })
     }
 
     /// Buffers one operation; the log rows are inserted in bulk, in batches
@@ -1462,7 +1383,7 @@ impl<'c> Writer<'c> {
 
     /// A metarecord holds at most one position in a forest (doc "One position per forest"):
     /// a `tree_ref` value joins `uuid`'s rows of
-    /// `name` only if no row staying beside it — every one but `replaced` — is
+    /// `name` only if no row staying beside it — every one but the one holding `replaced` — is
     /// a position already, other than this very value (an append of it is a
     /// no-op). A `hierarchy_ref` may join other positions, all bearing its
     /// name (doc "Hierarchy references").
@@ -1471,7 +1392,7 @@ impl<'c> Writer<'c> {
         uuid: Uuid,
         name: &str,
         value: &Value,
-        replaced: Option<i64>,
+        replaced: Option<&Value>,
     ) -> Result<()> {
         if value.position().is_none() {
             return Ok(());
@@ -1481,7 +1402,7 @@ impl<'c> Writer<'c> {
         let staying = self.tx.rows_named(uuid, name)?;
         let staying = staying
             .iter()
-            .filter(|r| Some(r.id) != replaced && r.value.type_str() == value.type_str())
+            .filter(|r| Some(&r.value) != replaced && r.value.type_str() == value.type_str())
             .map(|r| (name, &r.value));
         validate_one_position_each(uuid, staying.chain([(name, value)]))
     }
@@ -1619,47 +1540,34 @@ fn second_position(uuid: Uuid, name: &str) -> anyhow::Error {
     .into()
 }
 
-/// The outcome of [`Writer::append_field`]: either the row it wrote, or the row
-/// that already held the value — in which case the append was a no-op
+/// The outcome of [`Writer::append_field`]: the row was written, or the
+/// metarecord already held the value — in which case the append was a no-op
 /// (doc "No duplicate rows").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Appended {
-    Created(i64),
-    AlreadyPresent(i64),
+    Created,
+    AlreadyPresent,
 }
 
 impl Appended {
-    /// The id of the row holding the value, written now or already there.
-    pub fn id(self) -> i64 {
-        match self {
-            Appended::Created(id) | Appended::AlreadyPresent(id) => id,
-        }
-    }
-
     /// Whether a row was actually written.
     pub fn created(self) -> bool {
-        matches!(self, Appended::Created(_))
+        matches!(self, Appended::Created)
     }
 }
 
 // ── Duplicate collapsing (doc "No duplicate rows") ───────────────
 
-/// Splits `values` into the values actually to be written (first occurrence of
-/// each) and, for every given value, the index of the kept value that stands
-/// for it. `(["a", "b", "a"])` → `(["a", "b"], [0, 1, 0])`.
-fn collapse_duplicates(values: &[Value]) -> (Vec<Value>, Vec<usize>) {
+/// The values actually to be written: the first occurrence of each.
+/// `["a", "b", "a"]` → `["a", "b"]`.
+fn collapse_duplicates(values: &[Value]) -> Vec<Value> {
     let mut kept: Vec<Value> = Vec::with_capacity(values.len());
-    let mut slot = Vec::with_capacity(values.len());
     for value in values {
-        match kept.iter().position(|k| k == value) {
-            Some(i) => slot.push(i),
-            None => {
-                slot.push(kept.len());
-                kept.push(value.clone());
-            }
+        if !kept.contains(value) {
+            kept.push(value.clone());
         }
     }
-    (kept, slot)
+    kept
 }
 
 /// The fields to write for a whole-record write: the first occurrence of each

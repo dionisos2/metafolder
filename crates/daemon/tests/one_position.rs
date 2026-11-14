@@ -74,18 +74,17 @@ fn a_set_or_an_overwrite_cannot_hold_two_positions() {
 }
 
 #[test]
-fn a_row_cannot_be_edited_into_a_second_position() {
+fn a_position_is_replaced_in_place_and_a_rename_makes_no_second_one() {
     let (mut conn, _dir) = repo();
     let (blue, _, test) = forest(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let other = match w.append_field(test, "note", Value::String("n".into())).unwrap() {
-        metafolder_daemon::log::Appended::Created(id) => id,
-        other => panic!("{other:?}"),
-    };
-    refused(w.rename_field(test, other, "tag", tree(Some(blue), "test")));
-    // Editing its one position in place is a move.
-    let own = w.store().rows_named(test, "tag").unwrap()[0].id;
-    w.replace_field(test, own, tree(Some(blue), "test")).unwrap();
+    w.append_field(test, "note", Value::String("n".into())).unwrap();
+    // A field cannot be renamed onto a name the metarecord already holds, so
+    // a rename never makes a second position.
+    assert!(w.rename_record_field(test, "note", "tag").is_err());
+    // Replacing its one position by another is a move.
+    let own = w.store().rows_named(test, "tag").unwrap()[0].value.clone();
+    w.replace_value(test, "tag", &own, tree(Some(blue), "test")).unwrap();
     w.commit().unwrap();
 }
 
@@ -148,7 +147,7 @@ fn a_check_names_a_record_left_at_two_positions() {
         assert!(one_position_problems(store).unwrap().is_empty());
         // What an older daemon let through, written under the Writer.
         let tx = store.begin_write().unwrap();
-        tx.insert_row(test, "tag", &tree(Some(blue), "test"), None).unwrap();
+        tx.insert_row(test, "tag", &tree(Some(blue), "test")).unwrap();
         tx.commit().unwrap();
         let problems = one_position_problems(store).unwrap();
         assert_eq!(problems.len(), 1, "{problems:?}");

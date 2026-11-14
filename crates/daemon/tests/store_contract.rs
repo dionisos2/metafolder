@@ -50,24 +50,33 @@ fn rows_answer_what_was_written() {
     let store: &dyn Store = &conn;
 
     let rows = store.rows(child).unwrap();
-    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, ["loc", "tag", "tag", "rating"], "in row-id order");
+    // The order of a metarecord's rows is unspecified (doc "Fields and values").
+    let mut names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["loc", "rating", "tag", "tag"]);
     let tags = store.rows_named(child, "tag").unwrap();
+    let mut tag_values: Vec<String> = tags.iter().map(|r| format!("{:?}", r.value)).collect();
+    tag_values.sort();
     assert_eq!(
-        tags.iter().map(|r| r.value.clone()).collect::<Vec<_>>(),
-        [Value::String("a".into()), Value::String("b".into())]
+        tag_values,
+        [format!("{:?}", Value::String("a".into())), format!("{:?}", Value::String("b".into()))]
     );
     assert!(store.rows_named(child, "none").unwrap().is_empty());
-    let field: Vec<(Uuid, Value)> =
-        store.field_rows("tag").unwrap().into_iter().map(|(u, r)| (u, r.value)).collect();
-    assert_eq!(field, [(child, Value::String("a".into())), (child, Value::String("b".into()))]);
+    let mut field: Vec<(Uuid, String)> = store
+        .field_rows("tag")
+        .unwrap()
+        .into_iter()
+        .map(|(u, r)| (u, format!("{:?}", r.value)))
+        .collect();
+    field.sort();
+    assert_eq!(
+        field,
+        [
+            (child, format!("{:?}", Value::String("a".into()))),
+            (child, format!("{:?}", Value::String("b".into())))
+        ]
+    );
     assert!(store.rows(Uuid::new_v4()).unwrap().is_empty());
-
-    // A row by its id, and whose it is.
-    let id = tags[1].id;
-    assert_eq!(store.row(id).unwrap().map(|r| r.value), Some(Value::String("b".into())));
-    assert_eq!(store.owner_of_row(id).unwrap(), Some(child));
-    assert_eq!(store.row(i64::MAX).unwrap().map(|r| r.id), None);
 
     assert!(store.version(child).unwrap().is_some());
     assert_eq!(store.version(Uuid::new_v4()).unwrap(), None);
@@ -80,19 +89,19 @@ fn rows_answer_what_was_written() {
 }
 
 #[test]
-fn scans_cover_every_row_in_id_order() {
+fn scans_cover_every_row() {
     let (conn, _dir, root, child) = fixture();
     let store: &dyn Store = &conn;
     let mut seen = Vec::new();
     store
         .for_each_row(&mut |uuid, row| {
-            seen.push((row.id, uuid));
+            seen.push((uuid, row.name));
             Ok(())
         })
         .unwrap();
     assert_eq!(seen.len(), 5);
-    assert!(seen.windows(2).all(|w| w[0].0 < w[1].0), "id order");
-    assert_eq!(store.max_row_id().unwrap(), seen.last().unwrap().0);
+    assert_eq!(seen.iter().filter(|(u, _)| *u == root).count(), 1);
+    assert_eq!(seen.iter().filter(|(u, _)| *u == child).count(), 4);
 
     let forest = store.forest().unwrap();
     let mut placed: Vec<(Uuid, Option<Uuid>)> = forest.iter().map(|t| (t.uuid, t.parent)).collect();
@@ -138,28 +147,32 @@ fn s(v: &str) -> Value {
 }
 
 #[test]
-fn row_ids_are_never_reused_and_can_be_restored() {
+fn a_row_is_deleted_by_its_value() {
     let (mut conn, _dir) = empty();
     let m = Uuid::new_v4();
-    let (a, b) = {
+    {
         let tx = conn.begin_write().unwrap();
         tx.create_metarecord(m).unwrap();
-        let a = tx.insert_row(m, "k", &s("a"), None).unwrap();
-        let b = tx.insert_row(m, "k", &s("b"), None).unwrap();
-        tx.delete_row(b).unwrap();
+        tx.insert_row(m, "k", &s("a")).unwrap();
+        tx.insert_row(m, "k", &s("b")).unwrap();
+        tx.insert_row(m, "j", &s("b")).unwrap();
+        tx.delete_row(m, "k", &s("b")).unwrap();
+        // A value the metarecord does not hold under that name: nothing goes.
+        tx.delete_row(m, "k", &s("zzz")).unwrap();
+        tx.delete_row(m, "other", &s("b")).unwrap();
         tx.commit().unwrap();
-        (a, b)
-    };
-    assert!(b > a);
+    }
     let tx = conn.begin_write().unwrap();
-    let c = tx.insert_row(m, "k", &s("c"), None).unwrap();
-    assert!(c > b, "a deleted id is not handed out again");
-    // Navigation puts a row back under its own id.
-    let restored = tx.insert_row(m, "k", &s("b"), Some(b)).unwrap();
-    assert_eq!(restored, b);
-    assert_eq!(tx.row(b).unwrap().map(|r| r.value), Some(s("b")));
-    let ids: Vec<i64> = tx.rows(m).unwrap().iter().map(|r| r.id).collect();
-    assert_eq!(ids, [a, b, c], "row-id order");
+    let mut rows: Vec<(String, String)> =
+        tx.rows(m).unwrap().iter().map(|r| (r.name.clone(), format!("{:?}", r.value))).collect();
+    rows.sort();
+    assert_eq!(
+        rows,
+        [("j".to_string(), format!("{:?}", s("b"))), ("k".to_string(), format!("{:?}", s("a")))]
+    );
+    // What was deleted can be written again.
+    tx.insert_row(m, "k", &s("b")).unwrap();
+    assert_eq!(tx.rows_named(m, "k").unwrap().len(), 2);
     tx.commit().unwrap();
 }
 
@@ -171,14 +184,14 @@ fn a_forest_position_and_a_path_are_taken_once() {
     for u in [root, x, y] {
         tx.create_metarecord(u).unwrap();
     }
-    tx.insert_row(root, "loc", &Value::TreeRef { parent: None, name: "r".into() }, None).unwrap();
+    tx.insert_row(root, "loc", &Value::TreeRef { parent: None, name: "r".into() }).unwrap();
     let under = |name: &str| Value::TreeRef { parent: Some(root), name: name.into() };
-    tx.insert_row(x, "loc", &under("n"), None).unwrap();
-    assert!(tx.insert_row(y, "loc", &under("n"), None).is_err(), "position taken");
-    tx.insert_row(y, "loc", &under("m"), None).unwrap();
+    tx.insert_row(x, "loc", &under("n")).unwrap();
+    assert!(tx.insert_row(y, "loc", &under("n")).is_err(), "position taken");
+    tx.insert_row(y, "loc", &under("m")).unwrap();
     let path = |name: &str| Value::TreeRef { parent: None, name: name.into() };
-    tx.insert_row(x, "mfr_path", &path("p"), None).unwrap();
-    assert!(tx.insert_row(x, "mfr_path", &path("q"), None).is_err(), "one path per metarecord");
+    tx.insert_row(x, "mfr_path", &path("p")).unwrap();
+    assert!(tx.insert_row(x, "mfr_path", &path("q")).is_err(), "one path per metarecord");
     let mut kids = tx.children("loc", root).unwrap();
     kids.sort();
     let mut want = vec![(x, "n".to_string()), (y, "m".to_string())];
@@ -193,16 +206,15 @@ fn removing_a_metarecord_takes_its_rows() {
     let tx = conn.begin_write().unwrap();
     tx.create_metarecord(m).unwrap();
     let empty = tx.version(m).unwrap().expect("a metarecord without rows has a version");
-    let id = tx.insert_row(m, "k", &Value::Int(1), None).unwrap();
+    tx.insert_row(m, "k", &Value::Int(1)).unwrap();
     assert_ne!(tx.version(m).unwrap(), Some(empty), "the version follows the rows");
-    tx.insert_row(m, "j", &Value::Int(2), None).unwrap();
+    tx.insert_row(m, "j", &Value::Int(2)).unwrap();
     assert_eq!(tx.holders("k").unwrap(), [m]);
     assert_eq!(tx.value_types("k").unwrap(), ["int"]);
     tx.delete_rows(m, Some("j")).unwrap();
     assert_eq!(tx.rows(m).unwrap().len(), 1);
     tx.remove_metarecord(m).unwrap();
     assert_eq!(tx.version(m).unwrap(), None);
-    assert_eq!(tx.row(id).unwrap().map(|r| r.id), None);
     assert!(tx.holders("k").unwrap().is_empty());
 }
 
@@ -215,11 +227,7 @@ fn appended_operations_chain_from_head() {
         entity: m,
         field_name: Some(field.into()),
         before: Vec::new(),
-        after: vec![metafolder_daemon::rows::FieldRow {
-            id: 5,
-            name: field.into(),
-            value: Value::Int(3),
-        }],
+        after: vec![metafolder_daemon::rows::FieldRow { name: field.into(), value: Value::Int(3) }],
         reverts_op_id: None,
         origin: None,
     };
@@ -260,7 +268,7 @@ fn an_uncommitted_transaction_leaves_nothing() {
     {
         let tx = conn.begin_write().unwrap();
         tx.create_metarecord(m).unwrap();
-        tx.insert_row(m, "k", &Value::Int(1), None).unwrap();
+        tx.insert_row(m, "k", &Value::Int(1)).unwrap();
     }
     let store: &dyn Store = &conn;
     assert_eq!(store.version(m).unwrap(), None);
@@ -273,7 +281,6 @@ fn clearing_takes_every_metarecord() {
     let tx = conn.begin_write().unwrap();
     tx.clear_metarecords().unwrap();
     assert!(tx.metarecords().unwrap().is_empty());
-    assert_eq!(tx.max_row_id().unwrap(), 0);
 }
 
 #[test]
@@ -348,10 +355,10 @@ fn a_child_is_found_by_its_bytes_or_its_text() {
     for u in [root, a, e] {
         tx.create_metarecord(u).unwrap();
     }
-    tx.insert_row(root, "loc", &Value::TreeRef { parent: None, name: "".into() }, None).unwrap();
+    tx.insert_row(root, "loc", &Value::TreeRef { parent: None, name: "".into() }).unwrap();
     let under = |name: &str| Value::TreeRef { parent: Some(root), name: name.into() };
-    tx.insert_row(a, "loc", &under("Photos"), None).unwrap();
-    tx.insert_row(e, "loc", &under("Été"), None).unwrap();
+    tx.insert_row(a, "loc", &under("Photos")).unwrap();
+    tx.insert_row(e, "loc", &under("Été")).unwrap();
 
     assert_eq!(tx.child_by_bytes("loc", None, b"").unwrap(), Some(root));
     assert_eq!(tx.child_by_bytes("loc", Some(root), b"Photos").unwrap(), Some(a));
@@ -573,7 +580,7 @@ fn the_schema_questions_answer_like_their_derivation() {
         let m = Uuid::new_v4();
         tx.create_metarecord(m).unwrap();
         for (name, value) in fields {
-            tx.insert_row(m, name, &value, None).unwrap();
+            tx.insert_row(m, name, &value).unwrap();
         }
     };
     mk(vec![rating(Value::Int(1)), ("label", s("one"))]);

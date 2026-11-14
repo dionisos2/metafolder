@@ -50,14 +50,6 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Rows::metarecord_count($conn)
             }
-            fn row(&self, id: i64) -> Result<Option<FieldRow>> {
-                let $me = self;
-                Rows::row($conn, id)
-            }
-            fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>> {
-                let $me = self;
-                Rows::owner_of_row($conn, id)
-            }
             fn metarecords(&self) -> Result<Vec<Uuid>> {
                 let $me = self;
                 Rows::metarecords($conn)
@@ -69,10 +61,6 @@ macro_rules! forward_to_store {
             fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
                 let $me = self;
                 Rows::for_each_row($conn, f)
-            }
-            fn max_row_id(&self) -> Result<i64> {
-                let $me = self;
-                Rows::max_row_id($conn)
             }
             fn value_types(&self, name: &str) -> Result<Vec<String>> {
                 let $me = self;
@@ -290,9 +278,9 @@ pub trait Rows {
         }
         Ok(Some(crate::version::of_rows(uuid, &self.rows(uuid)?)))
     }
-    /// A metarecord's field rows, in row-id order.
+    /// A metarecord's field rows, in no particular order.
     fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>>;
-    /// A metarecord's rows of one field name, in row-id order.
+    /// A metarecord's rows of one field name, in no particular order.
     fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>>;
     /// Several metarecords' rows at once.
     fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>>;
@@ -308,18 +296,12 @@ pub trait Rows {
     }
     /// How many metarecords there are.
     fn metarecord_count(&self) -> Result<usize>;
-    /// A row by its id.
-    fn row(&self, id: i64) -> Result<Option<FieldRow>>;
-    /// The metarecord a row belongs to.
-    fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>>;
     /// Every metarecord.
     fn metarecords(&self) -> Result<Vec<Uuid>>;
     /// Every row of one field name, with its metarecord, in row-id order.
     fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>>;
     /// Every row with its metarecord, in row-id order — the load's one pass.
     fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()>;
-    /// The largest row id (`0` when there is none): a scan's progress bound.
-    fn max_row_id(&self) -> Result<i64>;
     /// The value types a field name holds (`Nothing` aside), sorted — one,
     /// by the data model's invariant, save during a `retype`.
     fn value_types(&self, name: &str) -> Result<Vec<String>>;
@@ -897,11 +879,13 @@ pub trait WriteTxn: Store {
     }
     /// Removes a metarecord and every row it holds.
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()>;
-    /// Inserts a row and returns its id: a fresh one, never reused, or `id`
-    /// when given (a store copy puts rows back under their own). Refuses a
-    /// second row at one position of a forest, and a second `mfr_path`.
-    fn insert_row(&self, uuid: Uuid, name: &str, value: &Value, id: Option<i64>) -> Result<i64>;
-    fn delete_row(&self, id: i64) -> Result<()>;
+    /// Inserts a row. Refuses a second row at one position of a forest, and a
+    /// second `mfr_path`. A row is its name and value: nothing names it
+    /// otherwise.
+    fn insert_row(&self, uuid: Uuid, name: &str, value: &Value) -> Result<()>;
+    /// Deletes the row of `uuid` holding `value` under `name`; nothing when
+    /// it holds none.
+    fn delete_row(&self, uuid: Uuid, name: &str, value: &Value) -> Result<()>;
     /// Deletes a metarecord's rows — all of them, or those of one name.
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()>;
 

@@ -1109,9 +1109,8 @@ fn test_each_shape_of_operation_names_the_cell_it_moved() {
     w.commit().unwrap();
     assert_eq!(cells(&effects), [("p".to_string(), c)], "an append");
 
-    let row = conn.rows_named(c, "p").unwrap().last().unwrap().id;
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.delete_field(c, row).unwrap();
+    w.remove_value(c, "p", &tree_ref(Some(root), "c")).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
     assert_eq!(cells(&effects), [("p".to_string(), c)], "a row deletion");
@@ -1340,14 +1339,13 @@ fn values_of(conn: &KvStore, uuid: Uuid, name: &str) -> Vec<Value> {
 fn test_append_of_an_identical_field_is_a_no_op() {
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("tag", s("jazz"))]);
-    let existing_id = conn.rows_named(m.uuid, "tag").unwrap()[0].id;
     let revisions = conn.counts().unwrap().1;
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let id = w.append_field(m.uuid, "tag", s("jazz")).unwrap().id();
+    let appended = w.append_field(m.uuid, "tag", s("jazz")).unwrap();
     w.commit().unwrap();
 
-    assert_eq!(id, existing_id, "the row that already holds the value is returned");
+    assert!(!appended.created(), "the value was already there");
     assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz")]);
     let got = conn.metarecord(m.uuid).unwrap().unwrap();
     assert_eq!(got.version, m.version, "a no-op must not move the version");

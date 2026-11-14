@@ -2,7 +2,7 @@ title: What a revert writes
 tags: Revert
 kind: reference
 audience: dev
-summary: The inverse of each operation, newest first, written through log::Writer — the file actions it needs, fresh row ids, and what it inherits from an ordinary write.
+summary: The inverse of each operation, newest first, written through log::Writer — the file actions it needs, and what it inherits from an ordinary write.
 
 A revert applies the inverse of each member of its set, ''newest to oldest'', to the
 current state ([[Reverting onto the current state]]). The inverses are ''written''
@@ -13,7 +13,7 @@ through `log::Writer` as new operations, appended to the log like any write.
 |`delete_metarecord` |`create_metarecord`, same uuid — `409` when that uuid exists again |
 |`set_metarecord` |`set_metarecord` |
 |`set_field` |`set_field` with the rows before — or the cell removed, when there were none |
-|`append_field` |`delete_field` of the rows of that name holding that value — by value, not by row id |
+|`append_field` |`delete_field` of the rows of that name holding that value — by value |
 |`delete_field` |`append_field`, one per row it removed |
 |`file_deleted`, `file_moved` |`file_moved` |
 |`file_modified` |`file_modified` |
@@ -21,7 +21,7 @@ through `log::Writer` as new operations, appended to the log like any write.
 
 * ''It records the type of the change it makes, file included.'' A later revert reads `op_type` to know that undoing the operation needs a file action: a revert that moved a file records `file_moved`, or reverting it in turn would rewrite `mfr_path` and leave the file where the first revert put it. `file_moved` covers both directions — it is already what relinking an orphan writes.
 * ''An empty cell is not `nothing`.'' When the reverted operation's before snapshot has no rows, the field did not exist, and the revert removes the cell rather than write the explicit absence ([[Nothing versus unknown]]).
-* ''Fresh row ids.'' A revert's inserts get new ids — the old id may have been handed out since. Nothing addresses a row by the id a snapshot recorded: an append is undone by value, so undo, redo, undo finds the value in the row the redo created. Two rows of one name and value are interchangeable ([[No duplicate rows]]). Versions need no rule: they follow the content — a revert that happens to restore a state the metarecord once held gets that state's version back, correctly.
+* ''No row ids.'' A row is its name and value, so nothing addresses a row by what a snapshot recorded but those: an append is undone by value, so undo, redo, undo finds the value the redo wrote. Two rows of one name and value are interchangeable ([[No duplicate rows]]). Versions need no rule: they follow the content — a revert that happens to restore a state the metarecord once held gets that state's version back, correctly.
 * A write of four operations is reverted by a write of four (more, for a multi-row `delete_field`), its mirror image in `mf log list --ops`. Forest integrity is checked once at commit, so reverting a whole subtree's positions passes as long as the end state is consistent.
 * An operation pruned or trimmed away took its snapshots with it: `404`, naming retention as the likely reason.
 

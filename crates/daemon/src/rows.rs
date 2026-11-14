@@ -12,7 +12,6 @@ use metafolder_core::metarecord::{TreeName, Value, ZERO_UUID};
 /// One row of the `field` table, decoded.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldRow {
-    pub id: i64,
     pub name: String,
     pub value: Value,
 }
@@ -61,9 +60,6 @@ pub struct OrphanCandidate {
 /// One TreeRef position: the metarecord, the field name whose forest it belongs
 /// to, its parent (`None` = a forest root) and the name component it contributes.
 pub struct TreeRow {
-    /// The `field` row that holds this position; a metarecord's positions are
-    /// listed in its order.
-    pub id: i64,
     pub field_name: String,
     pub uuid: Uuid,
     pub parent: Option<Uuid>,

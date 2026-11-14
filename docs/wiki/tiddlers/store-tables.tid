@@ -41,8 +41,8 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 A record's rows ''of one field'' are one range of `field_cells`, so checking a
 candidate on the field searched reads those rows, not all of its record's — a real
 file carries a dozen `mfr_*` and metadata fields besides. Row, operation and label ids
-come from counters in `meta` and are never reused; a row put back under its own id
-(a restore) moves the counter past it.
+come from counters in `meta` and are never reused. The row id in `field_cells` is the
+store's own handle on a cell: nothing outside the store sees it.
 
 A deleted metarecord's `row_owner` and `by_field` entries and its `forest` key stay
 until a reindex: a reader skips an entry whose row is gone, and a `forest` entry

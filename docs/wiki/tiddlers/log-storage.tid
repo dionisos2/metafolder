@@ -36,7 +36,7 @@ and it may dangle: pruning and retention may remove the operation it names.
 !! Snapshots
 
 Each operation stores its state before and after as rows in the column form of a field
-row ([[The column form of a value]]), each keeping its original field id:
+row ([[The column form of a value]]):
 
 |!Type |!Before |!After |
 |`create_metarecord` |— |every row of the new metarecord |
@@ -52,7 +52,7 @@ A directory's `file_deleted` gives each descendant its own operation in the same
 
 !! Versions recomputed
 
-A row id is never reused, and a row a revert puts back gets a fresh one ([[What a revert writes]]). The version is never restored from the log either: it is a hash of the content
+A snapshot row carries no id (the column an old store wrote one in is ignored). The version is never restored from the log either: it is a hash of the content
 ([[Metarecord version]]), so the state a revert writes has the version it should.
 An operation records ''no version'' either. Until November 2026 it held the
 metarecord's version on each side, as provenance; keeping a version current cost

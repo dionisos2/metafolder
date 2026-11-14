@@ -407,6 +407,21 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
   individuelle n'ÉCRIT jamais dans les listes de masse mais les LIT. Voie
   alternative à mesurer : la tranche de l'index (champ · valeur), déjà
   « effective » grâce aux événements de l'étape 7.
+  8c-1 FAIT (14 nov. 2026) : FieldRow et TreeRow sans id ; Rows sans row /
+      owner_of_row / max_row_id ; WriteTxn::insert_row(uuid, nom, valeur) et
+      delete_row(uuid, nom, valeur) ; Writer sans id (replace_value,
+      remove_value, rename_record_field ; Appended sans id ; plus de
+      replace_field / rename_field / delete_field) ; snapshots écrits avec
+      id 0 (pas de changement de LAYOUT) ; l'oracle de requêtes trie ses
+      lignes lui-même et choisit la « première position » d'un nœud
+      hierarchy par le chemin le plus petit — c'est ce que fait le parcours
+      de la forêt du daemon (l'ancienne règle « plus petit id » n'y
+      coïncidait que par hasard) ; le test sync::test_sync_orphans_a_
+      directory_gone_on_the_other_side_in_one_run a échoué UNE fois dans
+      check.sh (« changed since planning »), passe seul 3 fois et dans
+      cli_e2e complet : à surveiller (instabilité sous charge ?).
+      Le store garde EN INTERNE un id de cellule (field_cells, row_owner,
+      by_field, valeur de forest) : c'est 8c-2.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).
