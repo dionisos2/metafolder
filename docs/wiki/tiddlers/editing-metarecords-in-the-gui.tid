@@ -37,7 +37,9 @@ brought on screen first, so that the change is seen ([[Commands]]).
 
 Each of them is one write, however many rows it touches — a `rename` or a `retype`
 of a field holding five values is undone in one step ([[Query endpoints]]). `rename`
-onto a name the metarecord already has adds the values to it. To retype a field in
+onto a name the metarecord already has is refused, by the daemon and as for
+`mf … field rename`: that name was most likely forgotten ([[Metarecord endpoints]]).
+To retype a field in
 the whole repository, use `mf retype` or the [[repos panel]]'s ''Retype…''
 ([[Changing a field's type]]).
 

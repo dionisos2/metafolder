@@ -529,20 +529,18 @@ export function registerFieldCommand({
       target: { prompt: 'Field to rename?', complete: () => editableFieldNames() },
       value: { prompt: (p) => `Rename "${p[1]}" to?`, initial: (p) => p[1] },
       run: async (mf, field, newName) => {
-        const cur = requireCurrent();
-        // Rename every row of this field, Nothing rows included — an explicit
-        // absence should move with the field, not be orphaned under the old name.
+        requireCurrent();
         const rows = rowsOfName(field);
         if (rows.length === 0) throw new Error(`no field "${field}"`);
         if (newName === field) return;
         const force = forceFor(field, newName);
-        // One revision: the old name goes, and the new one holds what it had
-        // plus the moved values.
-        const values = distinctValues([...rowsOfName(newName), ...rows].map((r) => r.value));
-        await batchOnCurrent(cur, [
-          { op: 'unset', name: field, ...force },
-          { op: 'set', name: newName, values, ...force },
-        ]);
+        // The daemon's rename, the one `mf … field rename` uses: every row
+        // moves, Nothing rows included, in one write — and a name the
+        // metarecord already holds is refused there, not merged here.
+        await daemon.call('POST', api(`/fields/${encodeURIComponent(field)}/rename`), {
+          to: newName,
+          ...force,
+        });
         await load();
         await dirty(mf);
       },

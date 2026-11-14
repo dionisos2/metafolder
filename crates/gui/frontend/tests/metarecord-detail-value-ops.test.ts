@@ -443,35 +443,21 @@ describe('metarecord:field edit — the field, the row, the new value', () => {
 describe('metarecord:field rename / retype — one revision', () => {
   const ME = { type: 'uuid_in', uuids: [UUID] };
 
-  test('rename moves every row of the field in one batch', async () => {
+  test('rename is the daemon’s: one request, which moves every row or refuses', async () => {
     const fields: Field[] = [
       { name: 'genre', value: { type: 'string', value: 'jazz' } },
       { name: 'genre', value: { type: 'nothing' } },
       { name: 'style', value: { type: 'string', value: 'bop' } },
     ];
     const { specs, calls } = await mountPanel(fields);
-    await specs.get('metarecord:field')!.handler('rename', 'genre', 'style');
-    const writes = calls.filter((c) => c.method !== 'GET');
-    expect(writes).toEqual([
+    await specs.get('metarecord:field')!.handler('rename', 'genre', 'my style');
+    // No merge is worked out here: a name the metarecord already holds is
+    // the daemon's to refuse, as it does for `mf … field rename`.
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([
       {
         method: 'POST',
-        path: `/repos/${REPO}/query/fields/batch`,
-        body: {
-          ops: [
-            { op: 'unset', query: ME, name: 'genre' },
-            {
-              op: 'set',
-              query: ME,
-              name: 'style',
-              // What the new name already held stays, the moved rows follow.
-              values: [
-                { type: 'string', value: 'bop' },
-                { type: 'string', value: 'jazz' },
-                { type: 'nothing' },
-              ],
-            },
-          ],
-        },
+        path: `/repos/${REPO}/metarecords/${UUID}/fields/genre/rename`,
+        body: { to: 'my style' },
       },
     ]);
   });

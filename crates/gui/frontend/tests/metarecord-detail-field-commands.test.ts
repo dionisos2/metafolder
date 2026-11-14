@@ -82,19 +82,17 @@ describe('metarecord:field', () => {
     });
   });
 
-  test('renames as one batch on the shown record', async () => {
+  test('renames through the daemon’s rename of the shown record’s field', async () => {
     const { field, calls } = setup([
-      { name: 'tag', value: { type: 'string', value: 'jazz' } },
+      { name: 'my tag', value: { type: 'string', value: 'jazz' } },
     ]);
-    await field.handler('rename', 'tag', 'genre');
-    const batch = calls.find((c) => c.path === '/repos/r/query/fields/batch');
-    const query = { type: 'uuid_in', uuids: ['u1'] };
-    expect(batch?.body).toEqual({
-      ops: [
-        { op: 'unset', query, name: 'tag' },
-        { op: 'set', query, name: 'genre', values: [{ type: 'string', value: 'jazz' }] },
-      ],
+    await field.handler('rename', 'my tag', 'genre');
+    expect(calls).toContainEqual({
+      method: 'POST',
+      path: '/repos/r/metarecords/u1/fields/my%20tag/rename',
+      body: { to: 'genre' },
     });
+    expect(calls.some((c) => c.path === '/repos/r/query/fields/batch')).toBe(false);
   });
 
   test('a reserved field goes through the force the panel grants', async () => {
