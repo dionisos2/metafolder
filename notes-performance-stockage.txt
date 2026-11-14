@@ -354,8 +354,20 @@ POINTS À PRÉSENTER À L'UTILISATEUR, UN À LA FOIS, avant de coder :
      qui est le plus rapide à fournir ; peut changer d'une lecture à
      l'autre). À documenter ; le panneau detail trie lui-même par nom pour
      que l'affichage ne saute pas ; les tests comparent `fields` en ensemble.
-  d. remplacer A par B quand B existe déjà : refus 400 (comme l'édition par
-     id aujourd'hui) ou fusion.
+  d. TRANCHÉ (14 nov. 2026) — remplacer V par W quand W existe déjà :
+     FUSION (V disparaît, W reste ; plus d'exception à doc "No duplicate
+     rows"). Renommer un champ vers un nom qui existe déjà sur le
+     metarecord : REFUS 400 (l'utilisateur a sans doute oublié ce nom).
+
+DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
+  8a. les trois routes par valeur + Writer (retirer une valeur, remplacer,
+      renommer le champ) + verbes CLI replace / rename + panneau detail
+      branché dessus ; les routes par id existent encore.
+  8b. retrait des routes `/fields/{id}`, de `mf field get|set|delete`, de
+      `fields[].id` et de `field_id` (log_view) ; API_VERSION ; wiki.
+  8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
+      valeur de `forest` sans id de ligne ; LAYOUT + conversion.
+  Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).
 
 Réflexions déjà faites pour l'étape 8 (non validées par l'utilisateur, à lui
 présenter un point à la fois) :
