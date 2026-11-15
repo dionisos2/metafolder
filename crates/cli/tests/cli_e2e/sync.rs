@@ -1151,6 +1151,10 @@ fn a_directory_gone_in_a(prefix: &str) -> (String, TempDir, String, TempDir, Tem
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
     assert!(repo_root_of(&b).join("dir/f.txt").exists());
+    // B's watcher ingests what the sync just wrote, and a record it touches
+    // after the next plan is "changed since planning" — a skipped op, on a busy
+    // machine. Reconciling B first leaves nothing for it to ingest later.
+    assert_ok(&mf(&["-u", &b, "reconcile"]));
     let dir_a = query_one(&a, "mfr_path:value = \"dir\"");
     let unwatch = ["-u", &a, "metarecord", "-i", &dir_a, "field", "set", "mf_watch:bool=false"];
     assert_ok(&mf(&[&unwatch[..], &["--force"]].concat()));

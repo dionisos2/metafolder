@@ -45,6 +45,12 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    sur son label (`partly undone`) et les unités sont triées par id de label ;
    tests instables vus (slow_log « wait:conn » sous charge, un test de
    cli_e2e non identifié, sync « orphans … in one run »).
+   TESTS INSTABLES (15 nov. 2026) : slow_log était déjà tout entier dans la passe
+   « timing » ; le test de cli_e2e était sync « orphans … in one run » (échouait
+   ~1 fois sur 2 sous charge : le watcher de B touchait un record entre plan et
+   run → « changed since planning ») — corrigé par un reconcile de B dans
+   a_directory_gone_in_a (6/6 sous charge). 4 passes complètes de cli_e2e sous
+   charge : aucun autre échec.
 4. LAYOUT 9 (journal vidé à l'ouverture d'un store de disposition <= 8,
    décision de l'utilisateur) : les dépôts de développement perdent leur
    historique au premier lancement du nouveau daemon.
