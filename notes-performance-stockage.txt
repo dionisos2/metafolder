@@ -565,6 +565,17 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       16 -> 8. Lectures : tag_text 91 -> 13 ms, sorted_multi 47 -> 17 ;
       metarecord.get 1,3 -> 1,9-2,4 ms et tag_equal 6,6 -> 10,6 (21 après
       masse) : légèrement plus lents, à revoir (bruit possible, une passe).
+  MESURE SSD --big (15 nov. 2026, 4872be27 contre db369318, taille L =
+      200 000 fichiers, lot « large » = 5 000, une passe) :
+      phase de masse 391 s -> 13,7 s. Masse ajouter ~0,3-11 s -> 60-97 ms ;
+      retirer 0,7-18 s -> 55-97 ms ; remplacer 2,3-37 s -> 160-246 ms ;
+      supprimer 3,4-72 s -> 0,1-7,2 s (encore 2,8 s voisins / 7,2 s dispersés
+      pour 5 000 fichiers : point 1 de l'utilisateur, à faire). Lectures :
+      tag_text 1070 -> 22 ms (après masse 965 -> 71), sorted_multi 478 -> 17.
+      create_file 108 -> 33 ms, delete_one 167 -> 14. À surveiller : après la
+      phase de masse, tag_text L 71 ms et, en S, combined_sorted 66 ms (15 ms
+      avant la phase) : le coût des listes en attente (sans repli ici, rien
+      ne tourne pendant le bench).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).
