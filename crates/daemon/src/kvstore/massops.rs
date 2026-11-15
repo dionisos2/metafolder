@@ -690,6 +690,147 @@ impl KvTxn<'_> {
         Ok(Some(MassApplied { changed, last_op: last, touches_watch }))
     }
 
+    /// The fields with data under set kind `kind` (counts, referrers): the
+    /// names the keys of that kind begin with.
+    fn fields_with_sets(&self, kind: u8) -> Result<Vec<String>> {
+        let txn = self.txn.borrow();
+        let mut out: Vec<String> = Vec::new();
+        for e in self.t.sets.prefix_iter(&txn, &[kind])? {
+            let (k, _) = e?;
+            let (name, _) = super::derived::unesc(&k[1..])?;
+            let name = String::from_utf8(name).context("a field name")?;
+            if out.last() != Some(&name) {
+                out.push(name);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Gives back a deletion still pending (doc "Mass operations in the log"):
+    /// the operations `first_op..=last_op`, which are a deletion's, become
+    /// those of records alive again. The records never left the store, so
+    /// their ids go back into the universe, the type counts and the parents
+    /// the deletion took off are given back, and the deletion's mark no longer
+    /// names them; nothing is read or written per record. `None` — nothing
+    /// written — when the deletion is not pending as a whole for these
+    /// operations (folded, partly given back, cut by a prune), when a record is
+    /// alive already, or when a field would have to be told its type again.
+    pub(super) fn mass_undelete_log(
+        &self,
+        first_op: i64,
+        last_op: i64,
+    ) -> Result<Option<MassApplied>> {
+        let stub = {
+            let txn = self.txn.borrow();
+            self.read_in(&txn, &mut |read: &Read| read.stub_at(first_op))?
+        };
+        let Some(stub) = stub.filter(|s| s.delete && !s.in_snaps && s.covers(last_op)) else {
+            return Ok(None);
+        };
+        let Who::Ids(all) = &stub.who else { return Ok(None) };
+        // The mark that names every one of these operations.
+        let marks = {
+            let txn = self.txn.borrow();
+            super::mass::read_part(&self.t, &txn, DELETES_PART)?
+        };
+        let Some(mark) = marks.into_iter().find(|m| {
+            let (from, to) = (m.op as i64, m.op as i64 + m.ids.len() as i64 - 1);
+            from <= first_op && last_op <= to
+        }) else {
+            return Ok(None);
+        };
+        let (a, n) = ((first_op - stub.first) as usize, (last_op - first_op + 1) as usize);
+        let ids: RoaringBitmap = all.iter().skip(a).take(n).collect();
+        let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
+        if ids.len() != n as u64 || !(&ids & &universe).is_empty() {
+            return Ok(None);
+        }
+        // Everything is read before anything is written: a `None` leaves the
+        // transaction as it was.
+        let mut counts: Vec<(String, Vec<Vec<u8>>, u64)> = Vec::new();
+        for field in self.fields_with_sets(super::derived::COUNT)? {
+            let mut back = 0u64;
+            for bit in 0..COUNT_BITS {
+                let plane = self.read_chunked(SETS, &count_prefix(&field, bit))?;
+                back += (&plane & &ids).len() << bit;
+            }
+            if back == 0 {
+                continue;
+            }
+            let types: Vec<Vec<u8>> = {
+                let txn = self.txn.borrow();
+                let prefix = name_key(&field);
+                let mut out = Vec::new();
+                for e in self.t.field_types.prefix_iter(&txn, &prefix)? {
+                    out.push(e?.0[prefix.len()..].to_vec());
+                }
+                out
+            };
+            if types.is_empty() {
+                return Ok(None);
+            }
+            counts.push((field, types, back));
+        }
+        let alive = &universe | &ids;
+        let mut parents: Vec<(String, u32)> = Vec::new();
+        for field in self.fields_with_sets(REFERRERS)? {
+            let prefix = set_prefix(REFERRERS, Some(&field));
+            let mut groups: BTreeMap<u32, RoaringBitmap> = BTreeMap::new();
+            {
+                let txn = self.txn.borrow();
+                for e in self.t.sets.prefix_iter(&txn, &prefix)? {
+                    let (k, v) = e?;
+                    if k.len() == prefix.len() + 6 {
+                        *groups.entry(dense(&k[prefix.len()..])).or_default() |= decode_set(v)?;
+                    }
+                }
+            }
+            for (parent, kids) in groups {
+                if parent == NO_TARGET || (&kids & &ids).is_empty() {
+                    continue;
+                }
+                // A parent that is gone would leave its children without one.
+                if !alive.contains(parent) {
+                    return Ok(None);
+                }
+                parents.push((field.clone(), parent));
+            }
+        }
+        let mut touches_watch = false;
+        for field in ["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED] {
+            touches_watch |= !(&self.holder_ids_now(field)? & &ids).is_empty();
+        }
+        // What is read is settled: the writes.
+        self.chunk_apply(SETS, &set_prefix(UNIVERSE, None), &ids, true)?;
+        for (field, types, back) in counts {
+            for ty in types {
+                self.count_type_named(&field, &ty, back as i64)?;
+            }
+        }
+        for (field, parent) in parents {
+            self.set_member(PARENTS, Some(&field), parent, true)?;
+        }
+        // The mark keeps the operations it still names, each at its own number.
+        let mut w = self.txn.borrow_mut();
+        self.t.mass.delete(&mut w, &entry_key(DELETES_PART, mark.op))?;
+        let ranks: Vec<u32> = mark.ids.iter().collect();
+        let (lo, hi) = ((first_op - mark.op as i64) as usize, (last_op - mark.op as i64) as usize);
+        for (from, part) in [(0, &ranks[..lo]), (hi + 1, &ranks[hi + 1..])] {
+            if part.is_empty() {
+                continue;
+            }
+            let entry = Listed {
+                op: mark.op + from as u64,
+                kind: Kind::Remove,
+                field: String::new(),
+                values: Vec::new(),
+                ids: part.iter().copied().collect(),
+            };
+            self.t.mass.put(&mut w, &entry_key(DELETES_PART, entry.op), &entry.encode())?;
+        }
+        Ok(Some(MassApplied { changed: ids, last_op, touches_watch }))
+    }
+
     /// The parents of `field` that had a child among `gone` and have none
     /// left in `left` (the universe after the deletion) are no parents. One
     /// sequential pass over the field's referrers.

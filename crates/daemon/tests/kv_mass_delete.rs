@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::store::{Log, Rows};
+use metafolder_daemon::store::{Begin, Log, Questions, Rows};
 use uuid::Uuid;
 
 mod common;
@@ -50,6 +50,13 @@ fn delete(store: &mut KvStore, uuids: &[Uuid]) -> Vec<Uuid> {
     let ids = store.dense_ids(uuids).unwrap();
     let done = write(store, |w| w.mass_delete_ids(&ids).unwrap());
     store.uuids_of(&done).unwrap()
+}
+
+fn tree(parent: Option<Uuid>, name: &str) -> Field {
+    Field::new(
+        "loc",
+        Value::TreeRef { parent, name: metafolder_core::metarecord::TreeName::from(name) },
+    )
 }
 
 fn sound(store: &KvStore) {
@@ -255,6 +262,186 @@ fn undoing_a_mass_delete_gives_the_records_back() {
         assert_eq!(again, start, "folded: {folded}, after a fold");
         sound(&store);
     }
+}
+
+/// Undoing a deletion still pending is the universe given back: the records
+/// never left the store, so they keep their dense ids, nothing is written to
+/// their rows or their index entries, and the log gets one operation per
+/// record reverting the deletion's.
+#[test]
+fn undoing_a_pending_mass_delete_only_gives_the_universe_back() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 80);
+    let ids_before = store.dense_ids(&uuids).unwrap();
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids[..50]).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 30);
+
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+
+    let written = store.last_write_keys();
+    for table in ["records", "ids", "uuids", "metarecords", "parts", "kids", "forest", "snaps"] {
+        assert_eq!(written.get(table), None, "{table} untouched: {written:?}");
+    }
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
+    assert_eq!(store.dense_ids(&uuids).unwrap(), ids_before, "the records keep their ids");
+    let undone = store.ops_after(ops.last().unwrap().id).unwrap();
+    assert_eq!(undone.len(), 50, "one operation per record");
+    for (op, reverted) in undone.iter().zip(ops.iter().rev()) {
+        assert_eq!(op.op_type, "create_metarecord");
+        assert_eq!(op.reverts_op_id, Some(reverted.id));
+        assert_eq!(op.entity_uuid, reverted.entity_uuid);
+    }
+    // Nothing of the deletion is left to fold, and the rows are the ones it took.
+    while store.fold_step().unwrap() {}
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
+    for &u in &uuids {
+        assert_eq!(Rows::rows(&store, u).unwrap().len(), 2);
+    }
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// The giving back leaves the indexes as a rebuild would: the type counts of
+/// a field whose every holder was deleted, the parents of a folder's children,
+/// and what is left pending of the deletion still folds.
+#[test]
+fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pending() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let (root, folder, kids) = write(&mut store, |w| {
+        let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
+        let folder = w.create_metarecord(vec![tree(Some(root), "dir")]).unwrap().uuid;
+        let kids: Vec<Uuid> = (0..40)
+            .map(|i| {
+                w.create_metarecord(vec![
+                    tree(Some(folder), &format!("k{i}")),
+                    Field::new("solo", Value::Int(i)),
+                ])
+                .unwrap()
+                .uuid
+            })
+            .collect();
+        (root, folder, kids)
+    });
+    let mut all = kids.clone();
+    all.push(folder);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&all).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 1);
+    sound(&store);
+
+    // Give back only some of it: the first thirty operations of the stub (the
+    // folder, whose id is the lowest, and twenty-nine of its children).
+    let ops = revert::label_ops(&store, label).unwrap();
+    assert_eq!(ops.len(), 41);
+    let some: Vec<_> = ops[..30].to_vec();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &some).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 31);
+    sound(&store);
+    // The rest is still pending, and folds without touching what came back.
+    while store.fold_step().unwrap() {}
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 31);
+    for u in &kids[..29] {
+        assert_eq!(Rows::rows(&store, *u).unwrap().len(), 2);
+    }
+    for u in &kids[29..] {
+        assert!(!Rows::exists(&store, *u).unwrap());
+    }
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+    assert!(Rows::exists(&store, root).unwrap());
+}
+
+/// A field whose every holder is deleted has no type left to count: giving
+/// them back is then done one by one, and the field is whole again.
+#[test]
+fn a_field_every_holder_of_which_was_deleted_comes_back_with_its_type() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = write(&mut store, |w| {
+        (0..20)
+            .map(|i| w.create_metarecord(vec![Field::new("solo", Value::Int(i))]).unwrap().uuid)
+            .collect::<Vec<_>>()
+    });
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 20);
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// Anything written since the deletion keeps the old way, which is slower
+/// and as right.
+#[test]
+fn a_write_since_the_deletion_gives_the_records_back_one_by_one() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 60);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids[..40]).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    write(&mut store, |w| {
+        w.create_metarecord(vec![Field::new("other", s("x"))]).unwrap();
+    });
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 61);
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// A deletion given back can be done again: undoing the undo.
+#[test]
+fn undoing_the_giving_back_deletes_the_records_again() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 60);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids[..40]).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let back = w.label_id();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 60);
+
+    let ops = revert::label_ops(&store, back).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 20);
+    sound(&store);
+    while store.fold_step().unwrap() {}
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 20);
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
 }
 
 #[test]

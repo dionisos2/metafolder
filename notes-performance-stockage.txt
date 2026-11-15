@@ -58,6 +58,19 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    records) : 46 ms et 264 ms. Lots de 100 : 22 ms et 68 ms. L'annulation d'un lot
    coûte donc nettement plus que le lot — À OPTIMISER si l'utilisateur le
    demande (pas de seuil fixé, pas investigué : où passent les 2 s ?).
+   FAIT (15 nov. 2026) : l'annulation d'une suppression de masse EN ATTENTE
+   (avant repli) rend les ids à l'univers (KvTxn::mass_undelete_log,
+   Writer::undelete_pending, revert::apply pour les suites >= 16 suppressions) :
+   mêmes ids denses, aucune écriture de record/index/snapshot, une opération
+   create_metarecord (reverts_op_id) par record. Mesure L-storage, 5 000 records :
+   2 139 ms -> 67 ms (32x) ; lot de 100 : 68 -> 7 ms. Repli lent conservé pour :
+   suppression déjà repliée, écriture entre-temps, suite < 16, champ sans type
+   compté. RESTE : annuler une suppression REPLIÉE ; annuler un ajout/retrait
+   (425 ms) ; règle « valeur avant inconnue » du panneau log (décision user :
+   une opération postérieure sur le record, autre que l'annulation, rend l'« avant »
+   de la suppression inconnu) — PAS encore faite ; les « après » des snapshots
+   (décision user du début de refonte : supprimés) ne le sont PAS dans le code
+   ni dans le wiki (Log storage, Log endpoints) : à trancher/faire.
 4. LAYOUT 9 (journal vidé à l'ouverture d'un store de disposition <= 8,
    décision de l'utilisateur) : les dépôts de développement perdent leur
    historique au premier lancement du nouveau daemon. Testé (kv_layout.rs :

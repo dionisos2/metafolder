@@ -306,7 +306,26 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
     let mut done = 0usize;
     // The labels the operations undone are in, said on this write's label.
     let mut touched: std::collections::BTreeSet<i64> = Default::default();
-    for op in ops.iter().rev() {
+    let head = crate::store::Log::head(writer.store())?.unwrap_or(0);
+    let mut at = ops.len();
+    while at > 0 {
+        // A run of deletions of one pending mass deletion is given back at
+        // once (doc "Mass operations in the log"), when the state is the one
+        // the deletion left: every operation written since is reverted here,
+        // and ahead of it.
+        let run = deletion_run(&ops[..at]);
+        if run.len() >= MASS_UNDO_MIN {
+            let last = run[run.len() - 1].id;
+            let newer = ops.iter().filter(|o| o.id > last).count() as i64;
+            if head - last == newer && writer.undelete_pending(run)? {
+                done += run.len();
+                touched.extend(run.iter().map(|o| o.label_id));
+                at -= run.len();
+                continue;
+            }
+        }
+        at -= 1;
+        let op = &ops[at];
         // Everything written for this op names it, so a later reader can tell a
         // correction from a change (doc "Log storage").
         writer.reverting(Some(op.id));
@@ -386,6 +405,25 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         writer.note_label_reverts(label, false)?;
     }
     Ok(done)
+}
+
+/// How many deletions in a row are given back at once rather than one by one.
+const MASS_UNDO_MIN: usize = 16;
+
+/// The deletions that end `ops`: the longest suffix of consecutive operation
+/// ids that are all `delete_metarecord`s (one mass deletion's, when the store
+/// agrees).
+fn deletion_run(ops: &[OpRow]) -> &[OpRow] {
+    let mut start = ops.len();
+    while start > 0 {
+        let op = &ops[start - 1];
+        let contiguous = start == ops.len() || ops[start].id == op.id + 1;
+        if op.op_type != "delete_metarecord" || !contiguous {
+            break;
+        }
+        start -= 1;
+    }
+    &ops[start..]
 }
 
 fn rows_to_fields(rows: &[FieldRow]) -> Vec<Field> {

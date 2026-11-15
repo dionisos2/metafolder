@@ -960,6 +960,13 @@ pub trait WriteTxn: Store {
     ) -> Result<Option<MassApplied>> {
         Ok(None)
     }
+    /// Gives back the records of the pending deletion whose operations are
+    /// `first_op..=last_op`: their ids return to the universe and nothing else
+    /// is written (doc "Mass operations in the log"). The ids given back;
+    /// `None` — nothing written — when the store cannot do it so.
+    fn mass_undelete(&self, _first_op: i64, _last_op: i64) -> Result<Option<MassApplied>> {
+        Ok(None)
+    }
     /// The ids holding a row of `field` (a `Nothing` included), the
     /// transaction's own writes among them; `None` for a store that cannot say
     /// without reading the records.

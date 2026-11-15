@@ -1383,6 +1383,28 @@ impl<'c> Writer<'c> {
         Ok(deleted)
     }
 
+    /// Gives back the records a deletion still pending took, which are the
+    /// subjects of `ops` (consecutive `delete_metarecord` operations of one
+    /// mass deletion, oldest first): their ids return to the universe, and
+    /// one `create_metarecord` operation per record, reverting the one it
+    /// takes back, is logged — no record is written. `false`, nothing
+    /// written, when the store cannot (the caller then undoes one by one).
+    pub fn undelete_pending(&mut self, ops: &[OpRow]) -> Result<bool> {
+        let (Some(first), Some(last)) = (ops.first(), ops.last()) else { return Ok(false) };
+        let Some(done) = self.tx.mass_undelete(first.id, last.id)? else { return Ok(false) };
+        if done.touches_watch {
+            self.effects.watch = true;
+        }
+        // Rows are back: a field's type may be locked again.
+        self.field_types.clear();
+        for op in ops.iter().rev() {
+            self.reverting = Some(op.id);
+            self.log_op(OpType::CreateRecord, op.entity_uuid, None, vec![], vec![])?;
+        }
+        self.reverting = None;
+        Ok(true)
+    }
+
     /// [`Self::mass_delete_ids`] for a caller that holds uuids. The uuids it
     /// deleted, in the order asked.
     pub fn mass_delete(&mut self, uuids: &[Uuid]) -> Result<Vec<Uuid>> {

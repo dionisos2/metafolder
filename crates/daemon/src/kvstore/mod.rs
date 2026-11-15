@@ -2289,6 +2289,14 @@ impl WriteTxn for KvTxn<'_> {
         self.mass_delete_log(ids, label, timestamp, origin)
     }
 
+    fn mass_undelete(
+        &self,
+        first_op: i64,
+        last_op: i64,
+    ) -> Result<Option<crate::store::MassApplied>> {
+        self.mass_undelete_log(first_op, last_op)
+    }
+
     fn holder_ids(&self, field: &str) -> Result<Option<roaring::RoaringBitmap>> {
         self.holder_ids_now(field).map(Some)
     }

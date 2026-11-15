@@ -82,6 +82,16 @@ left under a node that is gone, which the commit refuses for a `tree_ref`, and t
 subtree would leave its ancestors' descendants, which no universe sifts — so the records
 are deleted one by one, as before.
 
+!!! Giving a pending deletion back
+
+An undo of a deletion still pending does not recreate the records one by one: they never left the store, so `Writer::undelete_pending` gives their ids back to the universe (`mass_undelete_log`) — with the type counts and the parents the deletion took off — and cuts them out of the deletion's mark (the mark keeps the operations it still names, each at its own number). The records keep their dense ids and no row, index entry or snapshot is written; the log gets one `create_metarecord` operation per record, reverting the one it takes back, as any revert writes. It is done when:
+
+* a run of at least sixteen operations of one pending deletion is reverted, the whole run covered by one mark;
+* the state is the one the deletion left: every operation written since is itself in the revert, and ahead of it;
+* no record is alive already, no parent of a given-back record is gone, and every field they hold still has a type counted.
+
+Anything else — the fold has written the records out, a few records, a write in between — goes one by one as before. Undoing the undo is then an ordinary deletion of each record.
+
 The trash first asks, once, which of its records hold a link to a duplicate group (the
 holders of the field, among its ids), and only those leave their group one by one
 ([[Duplicates]]); the others are in the stub, whose origin is the trash's.
