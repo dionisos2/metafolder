@@ -639,6 +639,11 @@ impl<'c> Writer<'c> {
         &*self.tx
     }
 
+    /// The dense ids of `uuids` that name a metarecord.
+    pub fn dense_ids(&self, uuids: &[Uuid]) -> Result<RoaringBitmap> {
+        Ok(self.tx.dense_ids(uuids, false)?.unwrap_or_default())
+    }
+
     /// The uuids of dense ids, in the order of the ids.
     pub fn uuids_of(&self, ids: &RoaringBitmap) -> Result<Vec<Uuid>> {
         self.tx.uuids_of(ids)

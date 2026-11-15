@@ -363,6 +363,44 @@ pub fn validate_entry_fields(
     Ok(violations)
 }
 
+/// [`violation_candidates`] for the constraints of one field: the records
+/// that could violate one of them, `limit` at most of each kind. A write that
+/// changed a field of many records asks it once, instead of validating each
+/// record: a healthy repository has next to none, whatever the write.
+pub fn field_candidates(
+    schema: &CompiledSchema,
+    conn: &dyn crate::store::Store,
+    field: &str,
+    limit: i64,
+) -> Result<Vec<Uuid>> {
+    let mut out = Vec::new();
+    let Some(constraints) = schema.by_field.get(field) else { return Ok(out) };
+    for c in constraints {
+        // A row of the wrong type trips the `type` constraint.
+        if let Some(expected) = &c.value_type {
+            out.extend(crate::store::Questions::wrong_type(conn, field, expected, limit)?);
+        }
+        // Too many rows trips `max`.
+        if let Some(max) = c.max {
+            out.extend(crate::store::Questions::count_over(conn, field, max as i64, limit)?);
+        }
+        // Too few rows trips `min`: present-but-under, plus records that lack
+        // the field entirely (restricted to the target population when the
+        // constraint is targeted, so unrelated records never become
+        // candidates; unrestricted for a global constraint).
+        if c.min > 0 {
+            out.extend(crate::store::Questions::count_under(conn, field, c.min as i64, limit)?);
+            match &c.targets {
+                Some(types) => {
+                    out.extend(crate::store::Questions::typed_missing(conn, types, field, limit)?)
+                }
+                None => out.extend(crate::store::Questions::missing(conn, field, limit)?),
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// A superset of the metarecords that could violate any constraint, gathered
 /// with a handful of index-served set queries (a small group per constraint)
 /// instead of a per-record walk of the whole repository. Running
@@ -384,35 +422,10 @@ pub fn violation_candidates(
     let limit = cap.map(|c| c as i64).unwrap_or(i64::MAX);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    let mut add = |uuids: Vec<Uuid>| {
-        for u in uuids {
+    for field in schema.by_field.keys() {
+        for u in field_candidates(schema, conn, field, limit)? {
             if seen.insert(u) {
                 out.push(u);
-            }
-        }
-    };
-    for (field, constraints) in &schema.by_field {
-        for c in constraints {
-            // A row of the wrong type trips the `type` constraint.
-            if let Some(expected) = &c.value_type {
-                add(crate::store::Questions::wrong_type(conn, field, expected, limit)?);
-            }
-            // Too many rows trips `max`.
-            if let Some(max) = c.max {
-                add(crate::store::Questions::count_over(conn, field, max as i64, limit)?);
-            }
-            // Too few rows trips `min`: present-but-under, plus records that lack
-            // the field entirely (restricted to the target population when the
-            // constraint is targeted, so unrelated records never become
-            // candidates; unrestricted for a global constraint).
-            if c.min > 0 {
-                add(crate::store::Questions::count_under(conn, field, c.min as i64, limit)?);
-                match &c.targets {
-                    Some(types) => {
-                        add(crate::store::Questions::typed_missing(conn, types, field, limit)?)
-                    }
-                    None => add(crate::store::Questions::missing(conn, field, limit)?),
-                }
             }
         }
     }

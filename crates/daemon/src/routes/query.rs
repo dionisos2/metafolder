@@ -693,15 +693,8 @@ pub(super) async fn batch_writes(
                          name: &str,
                          touch: &mut dyn FnMut(Uuid, &str)|
          -> Result<(), ApiError> {
-            let constrained = repo_state
-                .schema
-                .lock_recover()
-                .as_ref()
-                .is_some_and(|schema| schema.constrains(name));
-            if constrained {
-                for uuid in writer.uuids_of(changed)? {
-                    touch(uuid, name);
-                }
+            for uuid in schema_suspects(repo_state, writer, changed, name)? {
+                touch(uuid, name);
             }
             Ok(())
         };

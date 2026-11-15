@@ -477,6 +477,26 @@ where
     .await
 }
 
+/// The records of `changed` that a constraint on `field` could be violated
+/// by: the ones to validate after a write to many records. It is one question
+/// to the indexes ([`crate::schema::field_candidates`]), not a read of each
+/// record, so a batch of ten thousand costs what one of ten does; the records
+/// it names are validated as ever.
+pub(crate) fn schema_suspects(
+    repo_state: &RepoState,
+    writer: &Writer,
+    changed: &roaring::RoaringBitmap,
+    field: &str,
+) -> Result<Vec<Uuid>, ApiError> {
+    let guard = repo_state.schema.lock_recover();
+    let Some(schema) = guard.as_ref().filter(|s| s.constrains(field)) else {
+        return Ok(Vec::new());
+    };
+    let candidates = crate::schema::field_candidates(schema, writer.store(), field, i64::MAX)?;
+    let hit = &writer.dense_ids(&candidates)? & changed;
+    Ok(writer.uuids_of(&hit)?)
+}
+
 /// [`write_matches`] for a write that names the records by dense id, the
 /// bitmap the query ends with (doc "Mass operations in the log"): nothing is
 /// read per record, so a batch of ten thousand costs what one of ten does,
@@ -507,17 +527,10 @@ where
         let writing = slowlog::phase("write.fields");
         let changed = write(&mut writer, &ids)?;
         let updated = changed.len();
-        let constrained = repo_state
-            .schema
-            .lock_recover()
-            .as_ref()
-            .is_some_and(|schema| schema.constrains(&name));
-        if constrained {
-            for uuid in writer.uuids_of(&changed)? {
-                slowlog::timed("validate.schema", || {
-                    validate_schema(repo_state, writer.store(), uuid, std::slice::from_ref(&name))
-                })?;
-            }
+        for uuid in schema_suspects(repo_state, &writer, &changed, &name)? {
+            slowlog::timed("validate.schema", || {
+                validate_schema(repo_state, writer.store(), uuid, std::slice::from_ref(&name))
+            })?;
         }
         drop(writing);
         let effects = writer.effects();

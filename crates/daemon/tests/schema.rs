@@ -484,6 +484,59 @@ async fn test_batch_set_rolls_back_on_violation() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A write to many records is checked once, not record by record
+/// (doc "Mass operations in the log"): a constraint is still held.
+#[tokio::test]
+async fn test_a_mass_add_is_held_to_the_schema() {
+    let (app, repo, root) = setup_with_schema("massadd", film_schema()).await;
+    let film = |name: &str| {
+        json!([
+            {"name": "mf_schema", "value": {"type": "string", "value": "film"}},
+            {"name": "name", "value": {"type": "string", "value": name}},
+            {"name": "rating", "value": {"type": "int", "value": 5}}
+        ])
+    };
+    for name in ["Alien", "Heat"] {
+        let (status, body) = create(&app, &repo, film(name)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let add = |field: &str, value: Value| {
+        json!({
+            "query": {"type": "is_present", "field": "mf_schema"},
+            "name": field,
+            "value": value
+        })
+    };
+    let url = format!("/repos/{repo}/query/fields/add");
+    // A second rating on a film: the maximum.
+    let (status, body) =
+        request(&app, "POST", &url, Some(add("rating", json!({"type": "int", "value": 4})))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["violations"][0]["kind"], "max_cardinality");
+    // A rating of the wrong type: the type.
+    let (status, body) =
+        request(&app, "POST", &url, Some(add("rating", json!({"type": "string", "value": "x"}))))
+            .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // A field no constraint names, on the same records: written.
+    let (status, body) =
+        request(&app, "POST", &url, Some(add("genre", json!({"type": "string", "value": "sf"}))))
+            .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["updated"], 2);
+    // And a removal that leaves a film without its name: the minimum.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/remove"),
+        Some(add("name", json!({"type": "string", "value": "Alien"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["violations"][0]["kind"], "min_cardinality");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── Check and reload ──────────────────────────────────────────────────────────
 
 #[tokio::test]

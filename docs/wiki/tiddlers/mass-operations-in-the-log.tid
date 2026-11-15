@@ -48,6 +48,15 @@ middle). Retention counts a stub as one operation of its class and takes it whol
 when it is among the oldest. A mass write is one unit of history, as it is one
 command; the bound on the log is the bound on its entries.
 
+!! The schema check
+
+A write by id is checked against the schema ''once'': the indexes say which records
+could violate a constraint on the field — a row of the wrong type, too many rows, too
+few, none where a type requires one ([[Schema constraints]]) — and those among the records the write
+changed are validated as a write to one record is. A repository with no violation has
+next to no such record, whatever the size of the write; one with many pays for
+them (the question is not restricted to the changed records).
+
 !! What is not here yet
 
 * a replacement (`field set`, `field unset` on a query) still reads each record,
@@ -56,8 +65,4 @@ command; the bound on the log is the bound on its entries.
   knows ([[Mass writes in the store]]);
 * the history of a metarecord is a search over the stubs after an id: a summary per
   block of operations is the next step if the number of stubs asks for it;
-* the schema check of a write by id reads each changed record when a constraint
-  names the field, and nothing otherwise; a constraint on the number of values or on
-  the value is meant to be checked once per operation, from the counters.
-
 `tests/kv_mass_log.rs` holds the reads of a stub to those of the operations it stands for.
