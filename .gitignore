@@ -17,3 +17,4 @@ crates/gui/frontend/package-lock.json
 .mypy_cache/
 docs/wiki/dist/
 
+benchmarks/history/dionisos_portable.jsonl
