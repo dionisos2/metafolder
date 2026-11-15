@@ -1535,6 +1535,8 @@ impl KvStore {
         // What the lists hold is written into the records first: the records
         // are filed again below, and the rows are derived from them.
         txn.fold_all_mass()?;
+        // Before the ids are numbered again.
+        txn.stubs_to_uuids()?;
         txn.drop_left_behind()?;
         let order = {
             let r = txn.txn.borrow();

@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
+use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 pub use metafolder_core::date::now_ms;
@@ -638,6 +639,11 @@ impl<'c> Writer<'c> {
         &*self.tx
     }
 
+    /// The uuids of dense ids, in the order of the ids.
+    pub fn uuids_of(&self, ids: &RoaringBitmap) -> Result<Vec<Uuid>> {
+        self.tx.uuids_of(ids)
+    }
+
     /// Number of operations recorded so far in this write.
     pub fn op_count(&self) -> i64 {
         self.flushed + self.pending.len() as i64
@@ -1171,8 +1177,10 @@ impl<'c> Writer<'c> {
     /// changed.
     pub fn mass_add(&mut self, name: &str, value: Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
         self.validate_value_type(name, &value)?;
-        if let Some(changed) = self.mass_logged(MassKind::Add, name, &value, uuids)? {
-            return Ok(changed);
+        if let Some(ids) = self.tx.dense_ids(uuids, true)? {
+            if let Some(changed) = self.mass_logged(MassKind::Add, name, &value, &ids)? {
+                return self.in_request_order(uuids, &changed);
+            }
         }
         let one = value.clone();
         self.mass(MassKind::Add, name, vec![value], uuids, move |w, uuid| {
@@ -1183,9 +1191,11 @@ impl<'c> Writer<'c> {
     /// Removes `value` from `name` on every one of `uuids` that holds it; the
     /// records it changed.
     pub fn mass_remove(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
-        if let Some(changed) = self.mass_logged(MassKind::Remove, name, value, uuids)? {
-            self.field_types.remove(name); // rows removed: the type may have unlocked
-            return Ok(changed);
+        if let Some(ids) = self.tx.dense_ids(uuids, false)? {
+            if let Some(changed) = self.mass_logged(MassKind::Remove, name, value, &ids)? {
+                self.field_types.remove(name); // rows removed: the type may have unlocked
+                return self.in_request_order(uuids, &changed);
+            }
         }
         self.mass(MassKind::Remove, name, vec![value.clone()], uuids, |w, uuid| {
             Ok(w.delete_fields_valued(uuid, name, value)? > 0)
@@ -1214,6 +1224,49 @@ impl<'c> Writer<'c> {
         })
     }
 
+    /// Adds `value` to `name` on the records `ids` (live ones) that lack it:
+    /// the same write as [`Self::mass_add`], for a caller that holds dense ids
+    /// — the answer of a query — and so reads nothing per record. The ids of
+    /// the records it changed.
+    pub fn mass_add_ids(
+        &mut self,
+        name: &str,
+        value: Value,
+        ids: &RoaringBitmap,
+    ) -> Result<RoaringBitmap> {
+        self.validate_value_type(name, &value)?;
+        if let Some(changed) = self.mass_logged(MassKind::Add, name, &value, ids)? {
+            return Ok(changed);
+        }
+        let uuids = self.tx.uuids_of(ids)?;
+        let changed = self.mass_add(name, value, &uuids)?;
+        Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
+    }
+
+    /// Removes `value` from `name` on the records `ids` that hold it:
+    /// [`Self::mass_add_ids`]'s counterpart of [`Self::mass_remove`].
+    pub fn mass_remove_ids(
+        &mut self,
+        name: &str,
+        value: &Value,
+        ids: &RoaringBitmap,
+    ) -> Result<RoaringBitmap> {
+        if let Some(changed) = self.mass_logged(MassKind::Remove, name, value, ids)? {
+            self.field_types.remove(name); // rows removed: the type may have unlocked
+            return Ok(changed);
+        }
+        let uuids = self.tx.uuids_of(ids)?;
+        let changed = self.mass_remove(name, value, &uuids)?;
+        Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
+    }
+
+    /// The records of `asked`, in the order asked, that `changed` holds.
+    fn in_request_order(&self, asked: &[Uuid], changed: &RoaringBitmap) -> Result<Vec<Uuid>> {
+        let done: HashSet<Uuid> = self.tx.uuids_of(changed)?.into_iter().collect();
+        let mut seen = HashSet::new();
+        Ok(asked.iter().copied().filter(|u| done.contains(u) && seen.insert(*u)).collect())
+    }
+
     /// An add or a remove the store does in bulk (doc "Mass operations in the
     /// log"): one entry in the log, no record read or written; the records
     /// that changed. `None` when the store does not do it so, and nothing was
@@ -1223,8 +1276,8 @@ impl<'c> Writer<'c> {
         kind: MassKind,
         name: &str,
         value: &Value,
-        uuids: &[Uuid],
-    ) -> Result<Option<Vec<Uuid>>> {
+        ids: &RoaringBitmap,
+    ) -> Result<Option<RoaringBitmap>> {
         // A revert writes what it undoes one operation at a time.
         if self.reverting.is_some() {
             return Ok(None);
@@ -1236,7 +1289,7 @@ impl<'c> Writer<'c> {
             kind,
             name,
             value,
-            uuids,
+            ids,
             self.label_id,
             self.timestamp,
             origin.as_deref(),

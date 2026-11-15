@@ -7,9 +7,18 @@ summary: A write adding a value to, or removing it from, a field of many records
 A write that adds one value to a field of ten thousand records, or removes it, used
 to read each record to log what it held and to write one operation, its two snapshots
 and three index keys for it. It is now one entry, a ''stub'' in `ops`: the field, the
-value, and the uuids of the records that ''changed'' — those that lacked the value,
-or held it — sorted. Which ones those are comes from the holders of the value
-([[Mass writes in the store]]), not from the records.
+value, and the records that ''changed'' — those that lacked the value, or held it.
+Which ones those are comes from the holders of the value ([[Mass writes in the store]]),
+not from the records.
+
+The write names its records by ''dense id'': the query ends with a bitmap, and the
+write takes it as it is (`Writer::mass_add_ids`, `mass_remove_ids`; the routes of
+`field add` and `field remove` and the batch endpoint). Nothing is read per record —
+no uuid to resolve, no record, no existence check — so the keys a write reads do not
+depend on the number of records (`tests/kv_mass_log.rs` counts them). The stub keeps
+the ''ids'' (a bitmap); a reindex, which numbers the ids again, first turns every stub
+into the uuids of its records, in the order of its ids, so an operation keeps its
+record. A call that has uuids (`mass_add`) looks their ids up, once each.
 
 A stub holds as many operation ids as it names records: the ids that follow its key.
 What reads the log is given, for the id `first + k`, the operation a write to the
@@ -20,14 +29,14 @@ one per record and never reused; a write to many records moves HEAD by the numbe
 of records it changed.
 
 |!Where |!A stub |
-|`ops` |one key, at its first id; an operation's header, then the row and the uuids |
+|`ops` |one key, at its first id; an operation's header, then the row and the records |
 |`ops_by_label` |one key, whose value is the last id (an operation's is empty) |
 |`ops_by_entity` |one key under the nil uuid, which lists the stubs |
 |`snaps` |nothing |
 |`watcher_ops`, `user_ops` |one key |
 
 A metarecord's operations after an id are its own and, for each stub newer than the
-id, its place among the stub's sorted uuids: a search over the stubs after the id,
+id, its place among the stub's records: a search over the stubs after the id,
 not over every record's keys. A stub is read once for the operations it holds, which
 `ops_of` and the backward read keep.
 
@@ -47,7 +56,8 @@ command; the bound on the log is the bound on its entries.
   knows ([[Mass writes in the store]]);
 * the history of a metarecord is a search over the stubs after an id: a summary per
   block of operations is the next step if the number of stubs asks for it;
-* the stub keeps the uuids, not dense ids, so a reindex has nothing to rewrite in
-  it, at the price of sixteen bytes a record.
+* the schema check of a write by id reads each changed record when a constraint
+  names the field, and nothing otherwise; a constraint on the number of values or on
+  the value is meant to be checked once per operation, from the counters.
 
 `tests/kv_mass_log.rs` holds the reads of a stub to those of the operations it stands for.

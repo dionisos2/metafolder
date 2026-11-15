@@ -2,8 +2,8 @@
 //! "Mass operations in the log").
 //!
 //! A write of one value to, or off, a field of N records is logged as one
-//! *stub*: the field, the value, and the uuids of the records that changed,
-//! sorted. It holds the N operation ids that follow its key — `first`, which
+//! *stub*: the field, the value, and the records that changed — their dense ids
+//! as the write named them, their uuids once a reindex numbers the ids again. It holds the N operation ids that follow its key — `first`, which
 //! is its key in `ops`, to `first + N - 1` — and what reads the log is given
 //! the operations a write to each record alone would have logged: the
 //! record `k` places from the start holds operation `first + k`, an
@@ -39,6 +39,25 @@ use crate::store::{MassApplied, MassKind as Kind};
 const ADD: &str = "mass_add";
 const REMOVE: &str = "mass_remove";
 
+/// The records of a stub.
+#[derive(Clone)]
+pub(super) enum Who {
+    /// Their dense ids, as a write names them: nothing was read to write
+    /// them. A reindex, which numbers the ids again, turns them into uuids.
+    Ids(RoaringBitmap),
+    /// Their uuids, in the order their ids had.
+    Uuids(Vec<Uuid>),
+}
+
+impl Who {
+    fn len(&self) -> usize {
+        match self {
+            Who::Ids(ids) => ids.len() as usize,
+            Who::Uuids(uuids) => uuids.len(),
+        }
+    }
+}
+
 /// A stub, decoded.
 pub(super) struct Stub {
     pub(super) first: i64,
@@ -47,13 +66,14 @@ pub(super) struct Stub {
     pub(super) origin: Option<String>,
     pub(super) kind: Kind,
     pub(super) row: FieldRow,
-    /// Sorted: the record of operation `first + k` is `uuids[k]`.
-    pub(super) uuids: Vec<Uuid>,
+    /// The record of operation `first + k` is the `k`-th of them, in the
+    /// order of their ids or their uuids.
+    pub(super) who: Who,
 }
 
 impl Stub {
     pub(super) fn last(&self) -> i64 {
-        self.first + self.uuids.len() as i64 - 1
+        self.first + self.who.len() as i64 - 1
     }
 
     pub(super) fn covers(&self, id: i64) -> bool {
@@ -72,8 +92,17 @@ impl Stub {
             .opt_bytes(Some(self.row.name.as_bytes()))
             .opt_int(None)
             .bytes(&enc_row(&self.row));
-        for u in &self.uuids {
-            out.0.extend_from_slice(u.as_bytes());
+        match &self.who {
+            Who::Uuids(uuids) => {
+                out.0.push(0);
+                for u in uuids {
+                    out.0.extend_from_slice(u.as_bytes());
+                }
+            }
+            Who::Ids(ids) => {
+                out.0.push(1);
+                ids.serialize_into(&mut out.0).expect("a bitmap into a vector");
+            }
         }
         out.0
     }
@@ -98,7 +127,11 @@ impl Stub {
         r.opt_bytes()?;
         r.opt_int()?;
         let row = dec_row(r.bytes()?)?;
-        let uuids = r.0.chunks_exact(16).map(uuid_of).collect();
+        let (tag, rest) = r.0.split_first().context("a stub with no records")?;
+        let who = match tag {
+            0 => Who::Uuids(rest.chunks_exact(16).map(uuid_of).collect()),
+            _ => Who::Ids(RoaringBitmap::deserialize_from(rest)?),
+        };
         Ok(Some(Stub {
             first,
             label: head.label_id,
@@ -106,22 +139,33 @@ impl Stub {
             origin: head.origin,
             kind,
             row,
-            uuids,
+            who,
         }))
     }
 
+    /// The record of the stub's `k`-th operation.
+    pub(super) fn entity(&self, read: &Read, k: usize) -> Result<Uuid> {
+        match &self.who {
+            Who::Uuids(uuids) => Ok(uuids[k]),
+            Who::Ids(ids) => {
+                let id = ids.select(k as u32).context("a stub shorter than its ids")?;
+                read.uuid_of_id(id)
+            }
+        }
+    }
+
     /// The operation `id` is, one of the stub's.
-    pub(super) fn op(&self, id: i64) -> OpRow {
-        OpRow {
+    pub(super) fn op(&self, read: &Read, id: i64) -> Result<OpRow> {
+        Ok(OpRow {
             id,
             label_id: self.label,
             timestamp: self.timestamp,
             op_type: if self.kind == Kind::Add { "append_field" } else { "delete_field" }.into(),
-            entity_uuid: self.uuids[(id - self.first) as usize],
+            entity_uuid: self.entity(read, (id - self.first) as usize)?,
             field_name: Some(self.row.name.clone()),
             reverts_op_id: None,
             origin: self.origin.clone(),
-        }
+        })
     }
 
     /// The rows an operation of the stub has after it, or before.
@@ -134,8 +178,17 @@ impl Stub {
     }
 
     /// The place of a record among the stub's.
-    pub(super) fn position(&self, uuid: Uuid) -> Option<usize> {
-        self.uuids.binary_search(&uuid).ok()
+    pub(super) fn position(&self, read: &Read, uuid: Uuid) -> Result<Option<usize>> {
+        Ok(match &self.who {
+            Who::Uuids(uuids) => uuids.iter().position(|u| *u == uuid),
+            Who::Ids(ids) => {
+                read.count(1)?;
+                match super::derived::id_of(read.t, read.r, uuid.as_bytes())? {
+                    Some(id) if ids.contains(id) => Some(ids.rank(id) as usize - 1),
+                    _ => None,
+                }
+            }
+        })
     }
 }
 
@@ -165,7 +218,7 @@ impl Read<'_> {
         let mut stub: Option<Stub> = None;
         for id in ids {
             if let Some(s) = stub.as_ref().filter(|s| s.covers(id)) {
-                out.push(s.op(id));
+                out.push(s.op(self, id)?);
                 continue;
             }
             self.count(1)?;
@@ -173,7 +226,7 @@ impl Read<'_> {
             match b {
                 Some(b) => match Stub::decode(id, &b)? {
                     Some(s) => {
-                        out.push(s.op(id));
+                        out.push(s.op(self, id)?);
                         stub = Some(s);
                     }
                     None => out.push(dec_op(id, &b)?),
@@ -181,7 +234,7 @@ impl Read<'_> {
                 None => {
                     let s =
                         self.stub_at(id)?.with_context(|| format!("operation {id} vanished"))?;
-                    out.push(s.op(id));
+                    out.push(s.op(self, id)?);
                     stub = Some(s);
                 }
             }
@@ -237,7 +290,7 @@ impl Read<'_> {
             if stub.last() <= after {
                 break;
             }
-            if let Some(k) = stub.position(entity) {
+            if let Some(k) = stub.position(self, entity)? {
                 let id = first + k as i64;
                 if id > after {
                     out.push(id);
@@ -256,15 +309,45 @@ impl Read<'_> {
 }
 
 impl KvTxn<'_> {
-    /// Logs a write of `value` to, or off, `field` of `uuids` as one stub,
-    /// and derives what it changes (doc "Mass operations in the log").
+    /// The dense ids of `uuids`, for a write that names records by uuid. A
+    /// uuid that is no metarecord is refused when `must_exist`, left out
+    /// otherwise.
+    pub(super) fn dense_ids_of(&self, uuids: &[Uuid], must_exist: bool) -> Result<RoaringBitmap> {
+        let mut ids = RoaringBitmap::new();
+        for &u in uuids {
+            if !crate::store::Rows::exists(self, u)? {
+                if must_exist {
+                    return Err(crate::error::DomainError::NotFound(format!(
+                        "Metarecord not found: {u}"
+                    ))
+                    .into());
+                }
+                continue;
+            }
+            ids.insert(
+                self.dense_id(u.as_bytes())?.with_context(|| format!("no dense id for {u}"))?,
+            );
+        }
+        Ok(ids)
+    }
+
+    /// The uuids of dense ids, in the order of the ids.
+    pub(super) fn uuids_of_ids(&self, ids: &RoaringBitmap) -> Result<Vec<Uuid>> {
+        let txn = self.txn.borrow();
+        self.read_in(&txn, &mut |read: &Read| ids.iter().map(|id| read.uuid_of_id(id)).collect())
+    }
+
+    /// Logs a write of `value` to, or off, `field` of the records `ids` (live
+    /// ones) as one stub, and derives what it changes (doc "Mass operations
+    /// in the log"). No record is read, and nothing is read per id: which of
+    /// them change is a question to the holders of the value.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn mass_log(
         &self,
         kind: Kind,
         field: &str,
         value: &Value,
-        uuids: &[Uuid],
+        ids: &RoaringBitmap,
         label: i64,
         timestamp: i64,
         origin: Option<&str>,
@@ -273,57 +356,56 @@ impl KvTxn<'_> {
             return Ok(None);
         }
         let key = super::derived::value_key(value).context("a value with no key")?;
-        let mut ids = RoaringBitmap::new();
-        let mut named: BTreeMap<u32, Uuid> = BTreeMap::new();
-        let mut requested: Vec<(u32, Uuid)> = Vec::new();
-        for &u in uuids {
-            if !crate::store::Rows::exists(self, u)? {
-                if kind == Kind::Add {
-                    return Err(crate::error::DomainError::NotFound(format!(
-                        "Metarecord not found: {u}"
-                    ))
-                    .into());
-                }
-                continue;
-            }
-            let id =
-                self.dense_id(u.as_bytes())?.with_context(|| format!("no dense id for {u}"))?;
-            ids.insert(id);
-            named.insert(id, u);
-            requested.push((id, u));
-        }
         let have = self.effective(field, value, &key)?;
-        let changed = if kind == Kind::Add { &ids - &have } else { &ids & &have };
+        let changed = if kind == Kind::Add { ids - &have } else { ids & &have };
         if changed.is_empty() {
-            return Ok(Some(MassApplied { changed: Vec::new(), last_op: 0 }));
+            return Ok(Some(MassApplied { changed, last_op: 0 }));
         }
         let n = changed.len() as i64;
         let delta = if kind == Kind::Add { n } else { -n };
         self.count_type(field, value, delta)?;
         self.mass_end_ids(field, kind, vec![value.clone()], changed.clone())?;
-        let mut uuids: Vec<Uuid> = changed.iter().map(|id| named[&id]).collect();
-        uuids.sort();
-        // Told to the caller in the order it asked.
-        let mut seen = HashSet::new();
-        let reported: Vec<Uuid> = requested
-            .into_iter()
-            .filter(|(id, _)| changed.contains(*id))
-            .filter(|(_, u)| seen.insert(*u))
-            .map(|(_, u)| u)
-            .collect();
-        let first = self.next_op_id()?;
         let stub = Stub {
-            first,
+            first: self.next_op_id()?,
             label,
             timestamp,
             origin: origin.map(str::to_string),
             kind,
             row: FieldRow { name: field.to_string(), value: value.clone() },
-            uuids,
+            who: Who::Ids(changed.clone()),
         };
         let last = stub.last();
         self.put_stub(&stub)?;
-        Ok(Some(MassApplied { changed: reported, last_op: last }))
+        Ok(Some(MassApplied { changed, last_op: last }))
+    }
+
+    /// The stubs that hold ids become stubs that hold uuids: a reindex is
+    /// about to number the ids again. Dead records included, which the ids
+    /// still name until then.
+    pub(super) fn stubs_to_uuids(&self) -> Result<()> {
+        let mut found: Vec<(i64, Stub)> = Vec::new();
+        {
+            let txn = self.txn.borrow();
+            let r: &heed::RoTxn<'_> = &txn;
+            for e in self.t.ops_by_entity.prefix_iter(r, ROOT.as_slice())? {
+                let first = from_be(&e?.0[16..]);
+                if let Some(v) = self.t.ops.get(r, &be(first))? {
+                    if let Some(stub) = Stub::decode(first, v)? {
+                        if matches!(stub.who, Who::Ids(_)) {
+                            found.push((first, stub));
+                        }
+                    }
+                }
+            }
+        }
+        for (first, mut stub) in found {
+            let Who::Ids(ids) = &stub.who else { continue };
+            // In the order of the ids: an operation keeps its record.
+            stub.who = Who::Uuids(self.uuids_of_ids(ids)?);
+            let mut w = self.txn.borrow_mut();
+            self.t.ops.put(&mut w, &be(first), &stub.encode())?;
+        }
+        Ok(())
     }
 
     /// The last id of the stub that `id` is the first of, `id` itself when it
@@ -349,7 +431,7 @@ impl KvTxn<'_> {
         self.class(stub.origin.as_deref()).put(&mut w, &first, &[])?;
         t.meta.put(&mut w, b"next_op", &be(stub.last() + 1))?;
         let extra = t.meta.get(&w, b"mass_extra")?.map_or(0, from_be);
-        t.meta.put(&mut w, b"mass_extra", &be(extra + stub.uuids.len() as i64 - 1))?;
+        t.meta.put(&mut w, b"mass_extra", &be(extra + stub.who.len() as i64 - 1))?;
         Ok(())
     }
 
@@ -365,9 +447,9 @@ impl KvTxn<'_> {
         t.watcher_ops.delete(&mut w, &first)?;
         t.user_ops.delete(&mut w, &first)?;
         let extra = t.meta.get(&w, b"mass_extra")?.map_or(0, from_be);
-        let kept = stub.uuids.len() - k;
+        let kept = stub.who.len() - k;
         if kept == 0 {
-            t.meta.put(&mut w, b"mass_extra", &be(extra - (stub.uuids.len() as i64 - 1)))?;
+            t.meta.put(&mut w, b"mass_extra", &be(extra - (stub.who.len() as i64 - 1)))?;
             return Ok(());
         }
         t.meta.put(&mut w, b"mass_extra", &be(extra - k as i64))?;
@@ -379,7 +461,10 @@ impl KvTxn<'_> {
             origin: stub.origin.clone(),
             kind: stub.kind,
             row: stub.row.clone(),
-            uuids: stub.uuids[k..].to_vec(),
+            who: match &stub.who {
+                Who::Uuids(uuids) => Who::Uuids(uuids[k..].to_vec()),
+                Who::Ids(ids) => Who::Ids(ids.iter().skip(k).collect()),
+            },
         };
         let mut w = self.txn.borrow_mut();
         let first = be(rest.first);
@@ -413,7 +498,7 @@ impl KvTxn<'_> {
             named.sort_unstable();
             let k = named.len();
             let prefix = named.iter().enumerate().all(|(i, id)| *id == stub.first + i as i64);
-            ensure!(k <= stub.uuids.len(), "more operations than a stub holds");
+            ensure!(k <= stub.who.len(), "more operations than a stub holds");
             labels.insert(stub.label);
             if prefix {
                 self.cut_stub(&stub, k)?;

@@ -942,10 +942,10 @@ impl Read<'_> {
         self.count(1)?;
         match self.t.ops.get(self.r, &be(id))? {
             Some(b) => Ok(Some(match massops::Stub::decode(id, b)? {
-                Some(stub) => stub.op(id),
+                Some(stub) => stub.op(self, id)?,
                 None => dec_op(id, b)?,
             })),
-            None => Ok(self.stub_at(id)?.map(|stub| stub.op(id))),
+            None => self.stub_at(id)?.map(|stub| stub.op(self, id)).transpose(),
         }
     }
 
@@ -969,7 +969,7 @@ impl Read<'_> {
             match massops::Stub::decode(id, v)? {
                 Some(stub) => {
                     for at in (id..=stub.last().min(from)).rev().take(max - out.len()) {
-                        out.push(stub.op(at));
+                        out.push(stub.op(self, at)?);
                     }
                 }
                 None => out.push(dec_op(id, v)?),
@@ -1449,6 +1449,19 @@ impl Questions for KvStore {
 }
 
 impl KvStore {
+    /// The dense ids of metarecords, as a query names them (a tool for tests:
+    /// one lookup each, which is what a write by id avoids).
+    pub fn dense_ids(&self, uuids: &[Uuid]) -> Result<roaring::RoaringBitmap> {
+        let r = self.env.read_txn()?;
+        let mut out = roaring::RoaringBitmap::new();
+        for u in uuids {
+            if let Some(id) = derived::id_of(&self.t, &r, u.as_bytes())? {
+                out.insert(id);
+            }
+        }
+        Ok(out)
+    }
+
     /// How many keys the store's reads and query sources have read.
     pub fn reads(&self) -> u64 {
         self.reads.load(std::sync::atomic::Ordering::Relaxed)
@@ -2116,12 +2129,24 @@ impl WriteTxn for KvTxn<'_> {
         kind: MassKind,
         field: &str,
         value: &Value,
-        uuids: &[Uuid],
+        ids: &roaring::RoaringBitmap,
         label: i64,
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<crate::store::MassApplied>> {
-        self.mass_log(kind, field, value, uuids, label, timestamp, origin)
+        self.mass_log(kind, field, value, ids, label, timestamp, origin)
+    }
+
+    fn dense_ids(
+        &self,
+        uuids: &[Uuid],
+        must_exist: bool,
+    ) -> Result<Option<roaring::RoaringBitmap>> {
+        self.dense_ids_of(uuids, must_exist).map(Some)
+    }
+
+    fn uuids_of(&self, ids: &roaring::RoaringBitmap) -> Result<Vec<Uuid>> {
+        self.uuids_of_ids(ids)
     }
 
     fn mass_begin(&self, field: &str, kind: MassKind, values: &[Value]) -> Result<bool> {

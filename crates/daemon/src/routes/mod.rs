@@ -477,6 +477,58 @@ where
     .await
 }
 
+/// [`write_matches`] for a write that names the records by dense id, the
+/// bitmap the query ends with (doc "Mass operations in the log"): nothing is
+/// read per record, so a batch of ten thousand costs what one of ten does,
+/// the schema check apart — which reads each record only when a constraint
+/// names the field.
+async fn write_matched_ids<F>(
+    state: &AppState,
+    repo_uuid: Uuid,
+    name: String,
+    force: bool,
+    query: MetaQuery,
+    mut write: F,
+) -> Result<Json<serde_json::Value>, ApiError>
+where
+    F: FnMut(&mut Writer, &roaring::RoaringBitmap) -> Result<roaring::RoaringBitmap, ApiError>
+        + Send
+        + 'static,
+{
+    with_repo(state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        check_writable(&name, force)?;
+        slowlog::note("field", name.as_str());
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let cache = repo_state.tree();
+        let ids = query::resolve_query_ids(&conn, &cache, &query)?;
+
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
+        let writing = slowlog::phase("write.fields");
+        let changed = write(&mut writer, &ids)?;
+        let updated = changed.len();
+        let constrained = repo_state
+            .schema
+            .lock_recover()
+            .as_ref()
+            .is_some_and(|schema| schema.constrains(&name));
+        if constrained {
+            for uuid in writer.uuids_of(&changed)? {
+                slowlog::timed("validate.schema", || {
+                    validate_schema(repo_state, writer.store(), uuid, std::slice::from_ref(&name))
+                })?;
+            }
+        }
+        drop(writing);
+        let effects = writer.effects();
+        slowlog::timed("commit", || writer.commit())?;
+        repo_state.settle(&conn, &effects)?;
+        slowlog::note("updated", updated.to_string());
+        Ok(Json(json!({ "updated": updated })))
+    })
+    .await
+}
+
 /// The optional `?expected_version=` optimistic-concurrency query parameter on
 /// single-record write endpoints.
 #[derive(serde::Deserialize, Default)]

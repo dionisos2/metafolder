@@ -362,6 +362,16 @@ impl Eval<'_> {
         self.page(q, sort, limit, cursor, None)
     }
 
+    /// Every id the query matches, as the bitmap the evaluation ends with: a
+    /// write to all of them names records, and reads no uuid.
+    pub fn evaluate_ids_with_roots(
+        &self,
+        q: &Query,
+        roots: &QueryRoots,
+    ) -> Result<RoaringBitmap, Unsupported> {
+        self.eval(q, Some(roots))
+    }
+
     /// [`Self::evaluate_page`] with pre-resolved path-target roots ([`PathRoots`]).
     pub fn evaluate_page_with_roots(
         &self,

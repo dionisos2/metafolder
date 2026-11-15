@@ -504,7 +504,17 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       au milieu d'un stub le coupe (préfixe) ; (5) les ids d'un stub sont
       dans l'ordre des uuids, pas de la requête ; (6) compteur meta
       `mass_extra` pour counts(). Reste : le Writer reçoit encore les uuids
-      (une lecture ids par uuid) ; les requêtes en bitmaps viendraient après.
+      CORRIGÉ (remarque utilisateur : « pas de lecture par id ») : la requête
+      rend un bitmap d'ids denses (Engine::evaluate_ids_with_roots,
+      routes resolve_query_ids), Writer::mass_add_ids / mass_remove_ids le
+      prennent tel quel, le stub range le BITMAP (reindex : stubs_to_uuids
+      les convertit en uuids dans l'ordre des ids avant de renuméroter).
+      Test de coût : tests/kv_mass_log.rs (lectures indépendantes de N).
+      Routes field add/remove et /query/fields/batch (add/remove) par ids.
+      RESTE par id : validation du schéma (seulement si une contrainte vise
+      le champ ; à faire une fois par opération, via les compteurs), et
+      remplacer/unset (étape 9b) ; la lecture du journal d'un stub lit 1
+      uuid par op demandée.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

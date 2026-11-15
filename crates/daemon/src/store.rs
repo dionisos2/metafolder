@@ -841,8 +841,8 @@ pub enum MassKind {
 
 /// What [`WriteTxn::mass_apply`] did.
 pub struct MassApplied {
-    /// The records that changed, one operation each.
-    pub changed: Vec<Uuid>,
+    /// The records that changed (dense ids), one operation each.
+    pub changed: roaring::RoaringBitmap,
     /// The last of their operations; they hold the ids before it.
     pub last_op: i64,
 }
@@ -896,12 +896,25 @@ pub trait WriteTxn: Store {
         _kind: MassKind,
         _field: &str,
         _value: &Value,
-        _uuids: &[Uuid],
+        _ids: &roaring::RoaringBitmap,
         _label: i64,
         _timestamp: i64,
         _origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
         Ok(None)
+    }
+    /// The dense ids of `uuids`; `None` for a store with none. A uuid that is
+    /// no metarecord is refused when `must_exist`, left out otherwise.
+    fn dense_ids(
+        &self,
+        _uuids: &[Uuid],
+        _must_exist: bool,
+    ) -> Result<Option<roaring::RoaringBitmap>> {
+        Ok(None)
+    }
+    /// The uuids of dense ids, in the order of the ids.
+    fn uuids_of(&self, _ids: &roaring::RoaringBitmap) -> Result<Vec<Uuid>> {
+        anyhow::bail!("this store has no dense ids")
     }
     /// Removes a metarecord and every row it holds.
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()>;

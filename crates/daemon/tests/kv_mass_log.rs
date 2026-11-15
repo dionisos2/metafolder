@@ -259,3 +259,56 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     assert_eq!(all.len() as i64, store.counts().unwrap().0);
     assert!(all.iter().all(|o| o.label_id != label));
 }
+
+/// What a write by id reads is the same whatever the number of records.
+#[test]
+fn a_mass_write_by_id_reads_nothing_per_record() {
+    fn reads_of(n: usize, remove: bool) -> u64 {
+        let (mut store, _dir) = open();
+        let uuids = records(&mut store, n);
+        let ids = store.dense_ids(&uuids).unwrap();
+        let before = store.reads();
+        let changed = write(&mut store, |w| {
+            if remove {
+                w.mass_remove_ids("tag", &s("blue"), &ids).unwrap()
+            } else {
+                w.mass_add_ids("tag", s("jazz"), &ids).unwrap()
+            }
+        });
+        assert_eq!(changed.len() as usize, if remove { n / 2 } else { n });
+        store.reads() - before
+    }
+    for remove in [false, true] {
+        let (small, big) = (reads_of(100, remove), reads_of(3000, remove));
+        assert!(big <= small + 4, "remove {remove}: {small} reads for 100 records, {big} for 3000");
+    }
+}
+
+#[test]
+fn a_reindex_keeps_what_a_stub_names() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 60);
+    let ids = store.dense_ids(&uuids[..40]).unwrap();
+    let head = store.head().unwrap().unwrap();
+    // One record is deleted after the write, as the ids still name it.
+    write(&mut store, |w| w.mass_add_ids("tag", s("jazz"), &ids).unwrap());
+    write(&mut store, |w| w.delete_metarecord(uuids[5]).unwrap());
+    let before: Vec<_> = store
+        .ops_after(head)
+        .unwrap()
+        .into_iter()
+        .filter(|o| o.field_name.as_deref() == Some("tag"))
+        .map(|o| (o.id, o.entity_uuid))
+        .collect();
+    assert_eq!(before.len(), 40);
+    store.reindex().unwrap();
+    let after: Vec<_> = store
+        .ops_after(head)
+        .unwrap()
+        .into_iter()
+        .filter(|o| o.field_name.as_deref() == Some("tag"))
+        .map(|o| (o.id, o.entity_uuid))
+        .collect();
+    assert_eq!(before, after, "the same operations, on the same records, after the ids changed");
+    assert_eq!(store.entity_ops_after(uuids[7], head).unwrap().len(), 1);
+}

@@ -227,6 +227,26 @@ pub(crate) fn resolve_query_uuids(
     }
 }
 
+/// [`resolve_query_uuids`] for a write that names records by dense id: the
+/// bitmap the evaluation ends with, no uuid read for any of them.
+pub(crate) fn resolve_query_ids(
+    conn: &dyn crate::store::Store,
+    cache: &crate::forest::Forest,
+    query: &MetaQuery,
+) -> Result<roaring::RoaringBitmap, ApiError> {
+    let _phase = slowlog::phase("resolve.ids");
+    crate::query_validate::validate_query(query)?;
+    crate::query_validate::check_query_size(query)?;
+    let engine = engine(conn)?;
+    crate::query_validate::validate_query_types(query, &|f| engine.value_type(f))?;
+    let (roots, indexed) = prepare_indexed_query(conn, cache, &engine.eval(), query)?;
+    let evaluated = slowlog::timed("index.evaluate", || {
+        engine.eval().evaluate_ids_with_roots(&indexed, &roots)
+    });
+    engine.check()?;
+    evaluated.map_err(index_gap)
+}
+
 /// A query the index declined, turned into the answer the client gets. There is
 /// no second engine to ask any more (doc "No operand runs in SQL"), so
 /// only the cursor — the client's own input — can be at fault; anything else is
@@ -493,8 +513,8 @@ pub(super) async fn batch_add(
     let field = body.name.clone();
     // A match that already holds the value gains nothing, so it is not counted
     // (doc "No duplicate rows").
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
-        Ok(writer.mass_add(&field, value.clone(), uuids)?)
+    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
+        Ok(writer.mass_add_ids(&field, value.clone(), ids)?)
     })
     .await
 }
@@ -512,8 +532,8 @@ pub(super) async fn batch_remove(
     let repo_uuid = parse_uuid(&repo)?;
     let value = single_value(body.value, body.values)?;
     let field = body.name.clone();
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
-        Ok(writer.mass_remove(&field, &value, uuids)?)
+    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
+        Ok(writer.mass_remove_ids(&field, &value, ids)?)
     })
     .await
 }
@@ -600,8 +620,10 @@ type WriteOne = Box<dyn FnMut(&mut Writer, &[Uuid]) -> Result<Vec<Uuid>, ApiErro
 enum Ready {
     Create(Option<Uuid>, Vec<Field>),
     Set(Vec<Uuid>, String, Vec<Value>),
-    Add(Vec<Uuid>, String, Value),
-    Remove(Vec<Uuid>, String, Value),
+    /// An add or a remove names the records by dense id: nothing is read per
+    /// record to write it.
+    Add(roaring::RoaringBitmap, String, Value),
+    Remove(roaring::RoaringBitmap, String, Value),
     Unset(Vec<Uuid>, String),
 }
 
@@ -641,11 +663,11 @@ pub(super) async fn batch_writes(
                 }
                 BatchOp::Add { query, name, value, force } => {
                     check_writable(&name, force)?;
-                    Ready::Add(resolve_query_uuids(&*conn, &cache, &query)?, name, value)
+                    Ready::Add(resolve_query_ids(&*conn, &cache, &query)?, name, value)
                 }
                 BatchOp::Remove { query, name, value, force } => {
                     check_writable(&name, force)?;
-                    Ready::Remove(resolve_query_uuids(&*conn, &cache, &query)?, name, value)
+                    Ready::Remove(resolve_query_ids(&*conn, &cache, &query)?, name, value)
                 }
                 BatchOp::Unset { query, name, force } => {
                     check_writable(&name, force)?;
@@ -663,6 +685,25 @@ pub(super) async fn batch_writes(
             if !names.iter().any(|n| n == name) {
                 names.push(name.to_string());
             }
+        };
+        // The records an op changed, by id, are named for the schema check
+        // only when a constraint is on the field: reading them is the cost.
+        let touch_ids = |writer: &Writer,
+                         changed: &roaring::RoaringBitmap,
+                         name: &str,
+                         touch: &mut dyn FnMut(Uuid, &str)|
+         -> Result<(), ApiError> {
+            let constrained = repo_state
+                .schema
+                .lock_recover()
+                .as_ref()
+                .is_some_and(|schema| schema.constrains(name));
+            if constrained {
+                for uuid in writer.uuids_of(changed)? {
+                    touch(uuid, name);
+                }
+            }
+            Ok(())
         };
         let mut results = Vec::with_capacity(ready.len());
         for op in ready {
@@ -696,25 +737,17 @@ pub(super) async fn batch_writes(
                         }),
                     )
                 }
-                Ready::Add(uuids, name, value) => {
-                    let field = name.clone();
-                    (
-                        uuids,
-                        name,
-                        Box::new(move |w: &mut Writer, u: &[Uuid]| {
-                            Ok(w.mass_add(&field, value.clone(), u)?)
-                        }),
-                    )
+                Ready::Add(ids, name, value) => {
+                    let changed = writer.mass_add_ids(&name, value, &ids)?;
+                    results.push(json!({ "updated": changed.len() }));
+                    touch_ids(&writer, &changed, &name, &mut touch)?;
+                    continue;
                 }
-                Ready::Remove(uuids, name, value) => {
-                    let field = name.clone();
-                    (
-                        uuids,
-                        name,
-                        Box::new(move |w: &mut Writer, u: &[Uuid]| {
-                            Ok(w.mass_remove(&field, &value, u)?)
-                        }),
-                    )
+                Ready::Remove(ids, name, value) => {
+                    let changed = writer.mass_remove_ids(&name, &value, &ids)?;
+                    results.push(json!({ "updated": changed.len() }));
+                    touch_ids(&writer, &changed, &name, &mut touch)?;
+                    continue;
                 }
                 Ready::Unset(uuids, name) => {
                     let field = name.clone();

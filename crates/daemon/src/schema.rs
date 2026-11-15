@@ -103,6 +103,12 @@ impl CompiledSchema {
         serde_json::json!({"version": 1, "groups": []})
     }
 
+    /// Whether a write to `field` has anything to be checked against.
+    pub fn constrains(&self, field: &str) -> bool {
+        !(field.starts_with("mfr_") || field.starts_with("mf_"))
+            && self.by_field.contains_key(field)
+    }
+
     /// Every field name carrying at least one constraint (for full checks).
     pub fn constrained_fields(&self) -> Vec<String> {
         self.by_field.keys().cloned().collect()
