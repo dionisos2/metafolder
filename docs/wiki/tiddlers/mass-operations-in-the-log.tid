@@ -92,6 +92,8 @@ An undo of a deletion still pending does not recreate the records one by one: th
 
 Anything else — the fold has written the records out, a few records, a write in between — goes one by one as before. Undoing the undo is then an ordinary deletion of each record.
 
+The records are alive again and may be written to, while the log reads the rows of a pending deletion in the record itself. So once an operation that is not the deletion's own revert comes after the deletion on that record (operation numbers say so), the rows the deletion took are ''unknown'': `before_known` is `false` ([[Log endpoints]]), the log panel and `mf log show` say so instead of showing today's rows, and reverting that deletion is refused.
+
 The trash first asks, once, which of its records hold a link to a duplicate group (the
 holders of the field, among its ids), and only those leave their group one by one
 ([[Duplicates]]); the others are in the stub, whose origin is the trash's.

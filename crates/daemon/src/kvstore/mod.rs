@@ -1384,6 +1384,10 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.snapshot_rows(op_id, after))
             }
+            fn before_known(&self, op_id: i64) -> Result<bool> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.before_known(op_id))
+            }
             fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {

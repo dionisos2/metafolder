@@ -487,6 +487,10 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
     for op in resp["operations"].as_array().into_iter().flatten() {
         println!();
         println!("  {}", fmt_op_line(op));
+        if op["before_known"] == false {
+            println!("    before:  unknown (the record was written to after the deletion)");
+            continue;
+        }
         let before = op["snapshots_before"].as_array();
         let after = op["snapshots_after"].as_array();
         let empty = before.is_none_or(|a| a.is_empty()) && after.is_none_or(|a| a.is_empty());

@@ -365,6 +365,44 @@ fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pend
     assert!(Rows::exists(&store, root).unwrap());
 }
 
+/// What a deletion deleted is known while nothing came after it but its own
+/// revert: a record given back and written to since has lost the rows the
+/// deletion took, and the log says it does not know them rather than read the
+/// rows of today.
+#[test]
+fn the_rows_a_deletion_took_are_unknown_once_the_record_was_written_to() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let ops = revert::label_ops(&store, label).unwrap();
+    assert!(ops.iter().all(|o| store.before_known(o.id).unwrap()), "known while pending");
+
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert!(ops.iter().all(|o| store.before_known(o.id).unwrap()), "known after its own revert");
+
+    let touched = uuids[7];
+    write(&mut store, |w| {
+        w.set_field(touched, "tag", s("purple")).unwrap();
+    });
+    for op in &ops {
+        let known = store.before_known(op.id).unwrap();
+        assert_eq!(known, op.entity_uuid != touched, "{op:?}");
+    }
+    // Reverting a deletion whose rows are unknown is refused, not guessed.
+    write(&mut store, |w| w.delete_metarecord(touched).unwrap());
+    let unknown: Vec<_> = ops.iter().filter(|o| o.entity_uuid == touched).cloned().collect();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let err = revert::apply(&mut w, &unknown).unwrap_err().to_string();
+    assert!(err.contains("no longer known"), "{err}");
+}
+
 /// A field whose every holder is deleted has no type left to count: giving
 /// them back is then done one by one, and the field is whole again.
 #[test]

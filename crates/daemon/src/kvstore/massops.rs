@@ -419,6 +419,28 @@ impl Read<'_> {
         self.record_raw(id)
     }
 
+    /// Whether the rows operation `op_id` took off its record are known: not
+    /// for a deletion still pending, whose record was written to since by
+    /// anything but the revert of that deletion — the record is no longer
+    /// what the deletion took, and the log, which reads it there, would say
+    /// today's rows.
+    pub(super) fn before_known(&self, op_id: i64) -> Result<bool> {
+        let Some(stub) = self.stub_at(op_id)? else { return Ok(true) };
+        if !stub.delete || stub.in_snaps {
+            return Ok(true);
+        }
+        let Who::Ids(ids) = &stub.who else { return Ok(true) };
+        let Some(id) = ids.select((op_id - stub.first) as u32) else { return Ok(true) };
+        let uuid = self.uuid_of_id(id)?;
+        for later in self.entity_op_ids_after(uuid, op_id)? {
+            let Some(op) = self.op(later)? else { continue };
+            if op.reverts_op_id != Some(op_id) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// A record's operations after `after`, ascending: its own, and those of
     /// the stubs that name it.
     pub(super) fn entity_op_ids_after(&self, entity: Uuid, after: i64) -> Result<Vec<i64>> {

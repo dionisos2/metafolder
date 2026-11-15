@@ -461,6 +461,14 @@ pub trait Log {
     fn op(&self, id: i64) -> Result<Option<OpRow>>;
     /// An operation's snapshot rows: the state after it (`after`) or before.
     fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>>;
+    /// Whether the rows the operation took off its record (its before
+    /// snapshot) are known. Not when the operation is a deletion whose record
+    /// the store still holds and which was written to since — by anything but
+    /// the revert of that deletion: the record no longer holds what it
+    /// deleted, and what it held is lost.
+    fn before_known(&self, _op_id: i64) -> Result<bool> {
+        Ok(true)
+    }
     /// The oldest operation still in the log, `None` on an empty log.
     fn first_op(&self) -> Result<Option<i64>>;
     /// The operations at or before `from`, newest first — all of them, or the

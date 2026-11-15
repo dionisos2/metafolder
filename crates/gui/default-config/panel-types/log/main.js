@@ -46,7 +46,8 @@ const OP_LABELS = /** @type {Record<string, string>} */ ({
  * @typedef {{id: number, op_type: string, entity_uuid: string,
  *            field_name: string|null, reverts_op_id: number|null,
  *            snapshots_before: import('./snapshots.js').Snapshot[],
- *            snapshots_after: import('./snapshots.js').Snapshot[]}} Detail
+ *            snapshots_after: import('./snapshots.js').Snapshot[],
+ *            before_known?: boolean}} Detail
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
@@ -545,6 +546,14 @@ export async function mount(root, metafolder) {
           : null,
       ),
       entityEl(op.entity_uuid),
+      // A deletion given back and written to since: what it took is lost.
+      op.before_known === false
+        ? el(
+          'div',
+          { class: 'entity' },
+          'The rows this operation deleted are no longer known: the record was written to after it.',
+        )
+        : null,
       shown.length === 0
         ? null
         : el(
