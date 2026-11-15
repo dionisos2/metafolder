@@ -542,8 +542,9 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       obligatoire) ; seule la route explicite compte comme activité (pas les
       requêtes : une GUI qui interroge sans cesse bloquerait le repli) ;
       l'avant des remplacements reste calculé à l'écriture.
-      RESTE 10b : la GUI doit envoyer le signal d'activité (touches/clics,
-      throttlé, dépôts des workspaces visibles).
+  10b FAIT : la GUI envoie le signal (frontend/src/lib/userActivity.ts :
+      keydown/pointerdown/wheel, 1 envoi max / 2 s, dépôts des workspaces
+      visibles, via daemon_request).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

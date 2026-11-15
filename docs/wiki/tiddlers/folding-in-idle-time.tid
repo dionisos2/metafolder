@@ -14,7 +14,9 @@ asking for anything.
 
 Each loaded repository has a thread (`folding.rs`, started with the hash worker). It
 folds when the repository has had no ''activity'' for 30 seconds (`IDLE`): the GUI
-tells the daemon of the user's actions ([[POST /repos/:repo/activity]]), and a load counts as activity. The watcher's writes and
+tells the daemon of the user's actions ([[POST /repos/:repo/activity]]), and a load counts as activity.
+The GUI (`lib/userActivity.ts`) reports each key, click and scroll, at most once every
+two seconds, to the repositories of the workspaces on screen. The watcher's writes and
 requests do not: a GUI that polls, or a watcher flushing every few seconds, must not
 keep the repository busy for ever.
 

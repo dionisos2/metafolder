@@ -32,6 +32,7 @@ import { menuKey } from './menuKeys';
 import { historyApplies } from './historyCommands';
 import { datalistTakesKey } from './datalistEnter';
 import { appliesHere, functionProvider } from './panelFunctions';
+import { installUserActivity } from './userActivity';
 import type { SlotId } from './types';
 
 // The shell owns the single default context menu now (panels no longer run in
@@ -97,6 +98,7 @@ function deactivateHelpCursor() {
 }
 
 export function installKeys() {
+  installUserActivity(window);
   // The native context menu is suppressed everywhere (doc "Context menus");
   // the one default menu (Copy + layout commands) replaces it, over the
   // shell and every panel alike.
