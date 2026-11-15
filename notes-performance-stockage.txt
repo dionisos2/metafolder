@@ -51,9 +51,17 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    run → « changed since planning ») — corrigé par un reconcile de B dans
    a_directory_gone_in_a (6/6 sous charge). 4 passes complètes de cli_e2e sous
    charge : aucun autre échec.
+   MESURÉ (15 nov. 2026, SSD, L-storage 200 000 fichiers, lot de 5 000, scénarios
+   storage.undo.<add|delete>.<small|large>, l'écriture n'est pas chronométrée) :
+   annuler un ajout de tag = 425 ms (l'ajout : 11 ms, soit ~40x) ; annuler une
+   suppression = 2 139 ms (la suppression : 26 ms, soit ~80x). Sur S (666
+   records) : 46 ms et 264 ms. Lots de 100 : 22 ms et 68 ms. L'annulation d'un lot
+   coûte donc nettement plus que le lot — À OPTIMISER si l'utilisateur le
+   demande (pas de seuil fixé, pas investigué : où passent les 2 s ?).
 4. LAYOUT 9 (journal vidé à l'ouverture d'un store de disposition <= 8,
    décision de l'utilisateur) : les dépôts de développement perdent leur
-   historique au premier lancement du nouveau daemon.
+   historique au premier lancement du nouveau daemon. Testé (kv_layout.rs :
+   dispositions 6, 8 et arbre) ; rien d'autre à faire.
 
 Où lire ce qui a été fait : sections 9a, 9b, 10a–10d, 11, 11b, 12a–12c et
 « MESURE SSD » plus bas ; wiki : "Mass operations in the log", "Mass writes in

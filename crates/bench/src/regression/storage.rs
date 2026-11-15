@@ -48,6 +48,15 @@ pub const WRITES: &[&str] =
 /// small and a large number.
 pub const MASS_OPS: &[&str] = &["add", "remove", "replace", "delete"];
 
+/// The mass writes whose undo is measured (`storage.undo.<op>.<size>`): what
+/// reverting a batch costs, the write itself not timed. An add is undone by a
+/// removal of the records it reached, a deletion by their restoration.
+pub const UNDO_OPS: &[&str] = &["add", "delete"];
+
+/// The first repetition of [`targets`] an undo scenario takes: after the
+/// mass writes' (`RUNS` for the small, `RUNS` more for the large deletions).
+pub const UNDO_RUN: usize = 2 * RUNS;
+
 /// Every scenario id, in the order they run: the reads, the writes, the mass
 /// writes, then (after the mass phase) the reads again, and once more when the
 /// daemon has been asked to fold what the mass phase left pending
@@ -59,6 +68,11 @@ pub fn ids() -> Vec<String> {
             for n in ["small", "large"] {
                 ids.push(format!("storage.mass.{op}.{spread}.{n}"));
             }
+        }
+    }
+    for op in UNDO_OPS {
+        for n in ["small", "large"] {
+            ids.push(format!("storage.undo.{op}.{n}"));
         }
     }
     ids.extend(READS.iter().map(|r| format!("{r}.after_mass")));
@@ -466,6 +480,22 @@ async fn write(id: &str, ctx: &Ctx, run: usize) -> Result<Duration> {
                 other => anyhow::bail!("unknown mass write '{other}'"),
             }
         }
+        // The undo of a batch: the write is done first, untimed, and the
+        // timed request reverts its label (the newest, "head").
+        ["storage", "undo", op, size] => {
+            let n = if *size == "small" { SMALL } else { large(files) };
+            let set = ctx.set(&targets(files, n, UNDO_RUN + run, false));
+            match *op {
+                "add" => post(
+                    &format!("{base}/query/fields/add"),
+                    &json!({"query": set, "name": "tag", "value": string(&fresh("bench-undo-"))}),
+                )
+                .await?,
+                "delete" => post(&format!("{base}/query/delete"), &json!({"query": set})).await?,
+                other => anyhow::bail!("unknown undo '{other}'"),
+            };
+            (format!("{base}/revert"), json!({"target": {"label_id": "head"}}))
+        }
         _ => anyhow::bail!("unknown write '{id}'"),
     };
     if ctx.cond_cold {
@@ -575,10 +605,11 @@ pub async fn run(
         push(&id, values);
     }
     // The writes, then the mass writes: never warmed, each run a new write.
-    for id in ids()
-        .iter()
-        .filter(|id| id.starts_with("storage.write.") || id.starts_with("storage.mass."))
-    {
+    for id in ids().iter().filter(|id| {
+        id.starts_with("storage.write.")
+            || id.starts_with("storage.mass.")
+            || id.starts_with("storage.undo.")
+    }) {
         if !wanted(id) {
             continue;
         }
@@ -660,6 +691,25 @@ mod tests {
                     assert!(ids.contains(&id), "{id}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn every_undo_of_a_mass_write_has_a_scenario_taking_its_own_files() {
+        let ids = ids();
+        for op in UNDO_OPS {
+            for n in ["small", "large"] {
+                let id = format!("storage.undo.{op}.{n}");
+                assert!(ids.contains(&id), "{id}");
+            }
+        }
+        // The files an undo works on are those no other scenario touches: the
+        // repetitions after the mass writes', on the scattered ones.
+        let files = 150_000;
+        let others: HashSet<usize> =
+            (0..2 * RUNS).flat_map(|run| targets(files, large(files), run, false)).collect();
+        for run in UNDO_RUN..UNDO_RUN + RUNS {
+            assert!(targets(files, large(files), run, false).iter().all(|i| !others.contains(i)));
         }
     }
 
