@@ -919,6 +919,12 @@ pub trait WriteTxn: Store {
     ) -> Result<Option<MassApplied>> {
         Ok(None)
     }
+    /// The ids holding a row of `field` (a `Nothing` included), the
+    /// transaction's own writes among them; `None` for a store that cannot say
+    /// without reading the records.
+    fn holder_ids(&self, _field: &str) -> Result<Option<roaring::RoaringBitmap>> {
+        Ok(None)
+    }
     /// The dense ids of `uuids`; `None` for a store with none. A uuid that is
     /// no metarecord is refused when `must_exist`, left out otherwise.
     fn dense_ids(

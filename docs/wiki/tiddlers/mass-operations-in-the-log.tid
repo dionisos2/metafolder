@@ -58,7 +58,7 @@ counters: the rows that go are the sum of the field's counts over the records.
 
 !! A deletion
 
-Deleting many records (`POST /repos/:repo/query/delete`) is one stub of type
+Deleting many records (`POST /repos/:repo/query/delete`, and the trash's `POST /repos/:repo/metarecords/trash`) is one stub of type
 `mass_delete`, read as a `delete_metarecord` per record. The records are ''not''
 touched: their ids leave the universe, which every answer is sifted through
 ([[Deleting a metarecord in the store]]), and that is all the write does to them. The rows each
@@ -81,6 +81,10 @@ are sifted like any other. A folder that keeps a child is not — the children w
 left under a node that is gone, which the commit refuses for a `tree_ref`, and their
 subtree would leave its ancestors' descendants, which no universe sifts — so the records
 are deleted one by one, as before.
+
+The trash first asks, once, which of its records hold a link to a duplicate group (the
+holders of the field, among its ids), and only those leave their group one by one
+([[Duplicates]]); the others are in the stub, whose origin is the trash's.
 
 The fold ([[Folding in idle time]]) takes the deletions ''first'', before any part: it
 reads each record with the entries of its part still applied, writes its rows into the

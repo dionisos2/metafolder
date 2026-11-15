@@ -58,3 +58,58 @@ async fn the_wear_of_a_new_repository_is_nothing_pending() {
     let (status, _) = request(&app, "GET", &format!("/repos/{unknown}/wear"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// A trashing of many records is one deletion of many records (doc "Mass
+/// operations in the log"): which of them have a duplicate group is asked once,
+/// and only those leave it one by one.
+#[tokio::test]
+async fn a_trashing_is_a_deletion_of_many_records() {
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
+    let root = TempDir::new("wear_http_trash");
+    common::seed_config(&root);
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+
+    let mut uuids = Vec::new();
+    for _ in 0..4 {
+        let (status, record) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/metarecords"),
+            Some(
+                json!({"fields": [{"name": "rating", "value": {"type": "string", "value": "x"}}]}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{record}");
+        uuids.push(record["uuid"].as_str().unwrap().to_string());
+    }
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": uuids, "force": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["deleted"], json!(4));
+
+    let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
+    assert_eq!(wear["mass_entries"], json!(1), "one deletion waiting for its fold: {wear}");
+
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{}", uuids[0]), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // A uuid that is no metarecord is still refused.
+    let unknown = "0".repeat(32);
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": [unknown], "force": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

@@ -2201,6 +2201,10 @@ impl WriteTxn for KvTxn<'_> {
         self.mass_delete_log(ids, label, timestamp, origin)
     }
 
+    fn holder_ids(&self, field: &str) -> Result<Option<roaring::RoaringBitmap>> {
+        self.holder_ids_now(field).map(Some)
+    }
+
     fn dense_ids(
         &self,
         uuids: &[Uuid],

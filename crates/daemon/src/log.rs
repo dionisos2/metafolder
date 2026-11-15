@@ -644,6 +644,18 @@ impl<'c> Writer<'c> {
         Ok(self.tx.dense_ids(uuids, false)?.unwrap_or_default())
     }
 
+    /// The dense ids of `uuids`, every one of which must name a metarecord
+    /// (`NotFound` otherwise, as a write to it alone would say).
+    pub fn dense_ids_existing(&self, uuids: &[Uuid]) -> Result<RoaringBitmap> {
+        Ok(self.tx.dense_ids(uuids, true)?.unwrap_or_default())
+    }
+
+    /// Those of `ids` that hold a row of `field`, the transaction's writes so
+    /// far counted; `None` when the store cannot say without reading them.
+    pub fn holders_among(&self, field: &str, ids: &RoaringBitmap) -> Result<Option<RoaringBitmap>> {
+        Ok(self.tx.holder_ids(field)?.map(|holders| &holders & ids))
+    }
+
     /// The uuids of dense ids, in the order of the ids.
     pub fn uuids_of(&self, ids: &RoaringBitmap) -> Result<Vec<Uuid>> {
         self.tx.uuids_of(ids)

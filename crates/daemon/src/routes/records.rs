@@ -133,12 +133,20 @@ pub(super) async fn trash_delete_endpoint(
         let mut writer = repo_state.writer(&mut conn, request_context())?;
         writer.set_origin(crate::log::ORIGIN_TRASH)?;
         let _phase = slowlog::phase("write.trash_delete");
-        for uuid in &uuids {
-            // Every way of ceasing to be a live duplicate goes through here, so
-            // a group never outlives its members (doc "Duplicates").
-            crate::duplicates::leave_group(&mut writer, crate::log::OpType::SetField, *uuid)?;
-            writer.delete_metarecord(*uuid)?;
+        let ids = writer.dense_ids_existing(&uuids)?;
+        // Every way of ceasing to be a live duplicate goes through
+        // `leave_group`, so a group never outlives its members (doc
+        // "Duplicates"): only the records that hold a link to one need it, and
+        // which they are is one question to the field's holders.
+        let leaving = match writer.holders_among(crate::duplicates::GROUP_FIELD, &ids)? {
+            Some(grouped) => writer.uuids_of(&grouped)?,
+            None => uuids.clone(),
+        };
+        for uuid in leaving {
+            crate::duplicates::leave_group(&mut writer, crate::log::OpType::SetField, uuid)?;
         }
+        // The rest is one deletion (doc "Mass operations in the log").
+        writer.mass_delete_ids(&ids)?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
