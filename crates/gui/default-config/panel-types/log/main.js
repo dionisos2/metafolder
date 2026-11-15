@@ -767,7 +767,7 @@ export async function mount(root, metafolder) {
           : `Reverted ${describeTarget(target)} in label #${result.label} (${count} operation(s)).`;
       void statusBar.message([summary, ...result.notes].join(' · '), statusMessageMs);
       await refresh();
-      void mf.commands.invoke(['metarecords:dirty']);
+      await mf.workspace.set('metarecords:dirty', Date.now());
     } catch (error) {
       await statusBar.error(error);
     }

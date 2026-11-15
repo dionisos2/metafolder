@@ -303,6 +303,26 @@ describe('log panel: going into a label', () => {
   });
 });
 
+describe('log panel: after a revert', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+    document.body.replaceChildren();
+  });
+
+  test('the other panels are nudged through the workspace variable, not by a command', async () => {
+    const p = await mountPanel();
+    vi.stubGlobal('confirm', () => true);
+    await p.run('cursor:first');
+    p.api.daemon.call.mockResolvedValueOnce({ operations: [{ id: 12 }] } as never); // the plan
+    p.api.log.revert.mockResolvedValueOnce({ label: 20, reverted_operations: [12], notes: [] } as never);
+    await p.run('log:revert', 'label');
+    expect(p.api.log.revert).toHaveBeenCalled();
+    expect(p.api.workspace.set).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));
+    expect(p.api.commands.invoke).not.toHaveBeenCalledWith(['metarecords:dirty']);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('log panel: no operation is read until a label is gone into', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};

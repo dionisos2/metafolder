@@ -47,7 +47,7 @@
 # a killed process writes no coverage profile.
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
-#   with no scenario, runs them all: undo-redo duplicates duplicate-keep duplicate-walk orphans trash remove
+#   with no scenario, runs them all: undo-redo log-panel duplicates duplicate-keep duplicate-walk orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-escape script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings keybindings-pick validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
@@ -81,7 +81,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
+    || SCENARIOS=(undo-redo log-panel duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings keybindings-pick validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
@@ -428,6 +428,51 @@ scenario_undo_redo() {
 
     run log:redo
     status_is "redo at the tip: nothing to redo" info "Nothing to redo."
+}
+
+# The log panel (doc "log panel"): the top level lists the labels from their
+# summaries, a label is gone into, its badges say what undid what.
+scenario_log_panel() {
+    needs_clicks log-panel || return 0
+    new_repo log-panel
+    df_mf metarecord add note:string=one >/dev/null
+    df_mf metarecord add note:string=two >/dev/null
+    show_panel left log view:refresh log
+    sleep 2
+    # The top level: one row per label, the newest holding HEAD.
+    assert "log panel: the labels are listed from their summaries" until_ok 10 \
+        webview text '#rows tr' 'note:string=two' 
+    assert_eq "log panel: the status line counts the units" "6 units of work" "$(webview text '#status-line')"
+    assert "log panel: the newest label holds HEAD" until_ok 5 webview text '#rows tr' 'note:string=two' '.head-marker' HEAD
+    assert_not "log panel: an older label does not" webview text '#rows tr' 'note:string=one' '.head-marker'
+
+    # Going into a label lists its operations; the breadcrumb is the way back.
+    assert "log panel: a label is gone into" until_ok 5 click '#rows tr' 'note:string=one' 'button'
+    assert "log panel: its operation is listed" until_ok 5 webview text '#rows tr' 'op '
+    assert "log panel: the breadcrumb says where it is" until_ok 5 webview text '#breadcrumb' 'note:string=one'
+    run view:refresh log
+    assert "log panel: a refresh stays inside the label" until_ok 5 webview text '#rows tr' 'op '
+    assert_not "log panel: and does not list the top level" webview text '#rows tr' 'note:string=two'
+    run cursor:parent log
+    assert "log panel: back out to the labels" until_ok 5 webview text '#rows tr' 'note:string=two'
+
+    # Reverting a label whole: the row is marked undone, a new row says what it undid.
+    assert "log panel: a row is selected" until_ok 5 click '#rows tr' 'note:string=two' '.name'
+    answering yes log:revert label
+    status_is "log panel: the revert is reported, not an error" info "Reverted label #7 in label #8 *"
+    assert "log panel: the new row says what it undid" until_ok 10 \
+        webview text '#rows tr' '#8 log:revert label' '.badge.revert' 'undo of #7'
+    assert "log panel: the reverted row says what undid it" until_ok 5 \
+        webview text '#rows tr' 'note:string=two' '.badge.undone' 'undone by #8'
+    assert "log panel: HEAD moved to the revert" until_ok 5 webview text '#rows tr' '#8 log:revert label' '.head-marker' HEAD
+
+    # Past the first hundred units the older ones are fetched on demand.
+    for i in $(seq 1 105); do df_mf metarecord add note:string=bulk$i >/dev/null; done
+    run view:refresh log
+    assert "log panel: only the newest hundred are listed" until_ok 10 \
+        webview text '#status-line' '100 units'
+    assert "log panel: older ones are asked for" until_ok 5 click '#show-more'
+    assert "log panel: the window widened to every unit" until_ok 10 webview text '#status-line' '112 units'
 }
 
 scenario_duplicates() {
