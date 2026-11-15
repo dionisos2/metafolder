@@ -47,7 +47,7 @@
 # a killed process writes no coverage profile.
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
-#   with no scenario, runs them all: undo-redo log-panel duplicates duplicate-keep duplicate-walk orphans trash remove
+#   with no scenario, runs them all: undo-redo log-panel activity duplicates duplicate-keep duplicate-walk orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-escape script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings keybindings-pick validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
@@ -81,7 +81,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo log-panel duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
+    || SCENARIOS=(undo-redo log-panel activity duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings keybindings-pick validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
@@ -473,6 +473,35 @@ scenario_log_panel() {
         webview text '#status-line' '100 units'
     assert "log panel: older ones are asked for" until_ok 5 click '#show-more'
     assert "log panel: the window widened to every unit" until_ok 10 webview text '#status-line' '112 units'
+}
+
+# wear_pending — what the repository's store has pending a fold, in bytes. The
+# read says it is not activity (X-Metafolder-Activity), or it would hold the fold.
+wear_pending() {
+    curl -sf -H "Authorization: Bearer $(cat "$XDG_RUNTIME_DIR/metafolder/daemon.token")" \
+        -H "X-Metafolder-Activity: off" "http://127.0.0.1:$DF_PORT/repos/$DF_REPO/wear" |
+        python3 -c 'import json, sys; print(json.load(sys.stdin)["pending_bytes"])'
+}
+
+nothing_pending() { [ "$(wear_pending)" = 0 ]; }
+
+# The GUI reports the user's keys (doc "Folding in idle time"): the idle fold of
+# what a write to many records left pending waits while the user works, and goes
+# thirty seconds after the last key.
+scenario_activity() {
+    needs_keyboard activity || return 0
+    new_repo activity
+    for i in $(seq 1 20); do df_mf metarecord add note:string=x >/dev/null; done
+    df_mf metarecord -q 'note = "x"' field set tag:string=t
+    assert "activity: a write to many records leaves lists pending" test "$(wear_pending)" -gt 0
+    # Forty seconds of keys, one every three: past the thirty an idle repository
+    # would have folded in, nothing has.
+    for _ in $(seq 1 14); do keys shift; sleep 3; done
+    assert "activity: the user's keys hold the fold back" test "$(wear_pending)" -gt 0
+    # Then nothing: the fold comes thirty seconds after the last key, and not before.
+    sleep 15
+    assert "activity: not yet, fifteen seconds after the last key" test "$(wear_pending)" -gt 0
+    assert "activity: folded once the user stopped" until_ok 40 nothing_pending
 }
 
 scenario_duplicates() {
