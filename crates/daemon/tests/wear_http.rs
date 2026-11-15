@@ -113,3 +113,45 @@ async fn a_trashing_is_a_deletion_of_many_records() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// `mf repo check` folds what is pending first, so that it holds everything to
+/// the rows, the histograms the pending deletions leave counted included.
+#[tokio::test]
+async fn a_check_folds_what_is_pending_and_holds_the_histograms() {
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
+    let root = TempDir::new("wear_http_check");
+    common::seed_config(&root);
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+
+    let mut uuids = Vec::new();
+    for i in 0..6 {
+        let (status, record) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/metarecords"),
+            Some(json!({"fields": [{"name": "rank", "value": {"type": "int", "value": i}}]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{record}");
+        uuids.push(record["uuid"].as_str().unwrap().to_string());
+    }
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": &uuids[..4], "force": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
+    assert_eq!(wear["mass_entries"], json!(1), "{wear}");
+
+    let (status, checked) = request(&app, "POST", &format!("/repos/{repo}/check"), None).await;
+    assert_eq!(status, StatusCode::OK, "{checked}");
+    assert_eq!(checked["problems"], json!([]), "{checked}");
+    let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
+    assert_eq!(wear["mass_entries"], json!(0), "the check folded it: {wear}");
+}

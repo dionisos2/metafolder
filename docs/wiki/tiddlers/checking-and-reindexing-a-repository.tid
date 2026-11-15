@@ -26,7 +26,9 @@ thing — but nothing is lost: the primary data is intact.
 !! When to use them
 
 Run `check` when queries answer something the data contradicts, after a crash, or
-before trusting a store you restored by hand. It changes nothing.
+before trusting a store you restored by hand. It changes nothing the data says: it first
+folds what writes left pending ([[Folding in idle time]]), so that it holds the indexes to
+the rows whole — the histograms of a deletion of many records not yet folded included.
 
 Run `reindex` when `check` reports an index problem. You do not need it after an
 upgrade: a store whose indexes are of an older format is reindexed automatically

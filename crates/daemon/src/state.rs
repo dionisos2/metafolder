@@ -946,7 +946,15 @@ impl RepoState {
     /// What no longer holds together in the store (`mf repo check`,
     /// doc "Backups and restore"); empty when healthy.
     pub fn check_store(&self) -> Result<Vec<String>, ApiError> {
-        let conn = self.conn.lock_recover();
+        let mut conn = self.conn.lock_recover();
+        // What is pending (the lists of writes to many records, the deletions
+        // waiting for their fold) changes nothing the data says, but the check
+        // holds the indexes to the rows, which a fold brings in step: the
+        // histograms count the rows a pending deletion has deleted.
+        if let Some(kv) = conn.as_kv_mut() {
+            kv.fold()
+                .map_err(|e| ApiError::internal(format!("the check could not fold: {e:#}")))?;
+        }
         let mut problems = crate::store::Begin::check(&conn)
             .map_err(|e| ApiError::internal(format!("the check could not run: {e:#}")))?;
         problems.extend(

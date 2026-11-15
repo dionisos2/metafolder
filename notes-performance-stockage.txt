@@ -572,6 +572,13 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       ou des ensembles modifiés dans la même transaction. Histogrammes non
       vérifiés par check pendant l'attente. Route query/delete par ids ;
       la corbeille (trash) garde le chemin par record.
+  11b FAIT : la suppression de masse prend aussi un dossier avec tout son
+      contenu (condition : les enfants vivants d'un parent supprimé le sont
+      avec lui) et lit les écritures déjà faites de la transaction (parcours
+      des referrers cache + table : plus de garde « ensembles modifiés ») ;
+      la corbeille = une suppression de masse (seuls les fichiers ayant un
+      groupe de doublons font leave_group un par un) ; `POST /check` replie
+      tout d'abord (check strict, histogrammes compris).
   MESURE SSD (15 nov. 2026, --quick --storage --cold, taille S, une passe,
       avant = db369318, après = 0a0261aa ; machine 0ec86a28c252) :
       phase de masse (200 écritures) 278 s -> 17,8 s. Masse ajouter/retirer
