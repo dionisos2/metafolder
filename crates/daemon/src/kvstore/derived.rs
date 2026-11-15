@@ -1629,6 +1629,38 @@ impl KvStore {
         Ok(folded)
     }
 
+    /// How worn the store is: what writes left pending, and the ids no
+    /// metarecord holds (doc "Folding in idle time").
+    pub fn wear(&self) -> Result<Wear> {
+        let r = self.env.read_txn()?;
+        let mut wear = Wear::default();
+        let mut parts = std::collections::BTreeSet::new();
+        for entry in self.t.mass.iter(&r)? {
+            let (k, v) = entry?;
+            wear.mass_entries += 1;
+            wear.mass_bytes += (k.len() + v.len()) as u64;
+            parts.insert(u32::from_be_bytes(k[..4].try_into().expect("a part")));
+        }
+        wear.mass_parts = parts.len();
+        let mut fields = std::collections::BTreeSet::new();
+        for entry in self.t.events.iter(&r)? {
+            let (k, v) = entry?;
+            wear.events += 1;
+            wear.event_bytes += (k.len() + v.len()) as u64;
+            fields.insert(unesc(k)?.0);
+        }
+        wear.event_fields = fields.len();
+        for entry in self.t.sets.prefix_iter(&r, &[GRAM_PENDING])? {
+            wear.trigrams_pending += decode_set(entry?.1)?.len();
+        }
+        // The counter holds the next id to hand out; the first is 1.
+        wear.ids_allocated =
+            (self.t.meta.get(&r, b"next_id")?.map_or(1, from_be) - 1).max(0) as u64;
+        let live = self.t.metarecords.len(&r)?;
+        wear.ids_live = live;
+        Ok(wear)
+    }
+
     pub fn fold(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
         txn.fold_all_mass()?;
@@ -2694,5 +2726,46 @@ mod tests {
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "set unexpected: "), "{}", some(&diff));
         assert!(diff.iter().any(|l| l.contains("4000000")), "{}", some(&diff));
+    }
+}
+
+/// How worn the store is (`KvStore::wear`): the lists writes left pending, which
+/// a fold writes in and every read pays for until then, and the ids that
+/// metarecords no longer hold, which only a reindex gathers again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Wear {
+    /// Entries of the parts' lists, the parts they are in, their bytes.
+    pub mass_entries: usize,
+    pub mass_parts: usize,
+    pub mass_bytes: u64,
+    /// Pending events, the fields they are in, their bytes.
+    pub events: usize,
+    pub event_fields: usize,
+    pub event_bytes: u64,
+    /// Ids whose trigrams a fold has still to build.
+    pub trigrams_pending: u64,
+    /// Dense ids ever handed out, and those of metarecords that exist.
+    pub ids_allocated: u64,
+    pub ids_live: u64,
+}
+
+impl Wear {
+    /// The bytes a fold would write in.
+    pub fn pending_bytes(&self) -> u64 {
+        self.mass_bytes + self.event_bytes + self.trigrams_pending
+    }
+
+    /// Ids no live metarecord holds (deleted ones, reserved ones).
+    pub fn dead_ids(&self) -> u64 {
+        self.ids_allocated.saturating_sub(self.ids_live)
+    }
+
+    /// The share of the ids that are dead: what a reindex would win back.
+    pub fn dead_fraction(&self) -> f64 {
+        if self.ids_allocated == 0 {
+            0.0
+        } else {
+            self.dead_ids() as f64 / self.ids_allocated as f64
+        }
     }
 }

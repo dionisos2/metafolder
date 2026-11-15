@@ -72,6 +72,28 @@ pub(super) async fn note_activity(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
+/// `GET /repos/:repo/wear` — how worn the store is (doc "Storage wear"): what
+/// writes left pending and the ids a reindex would win back.
+pub(super) async fn storage_wear(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let wear = match crate::store::Rows::as_kv(&*conn) {
+            Some(kv) => kv.wear()?,
+            None => Default::default(),
+        };
+        let mut value = serde_json::to_value(wear).unwrap_or_default();
+        value["pending_bytes"] = json!(wear.pending_bytes());
+        value["dead_ids"] = json!(wear.dead_ids());
+        value["dead_fraction"] = json!(wear.dead_fraction());
+        Ok(Json(value))
+    })
+    .await
+}
+
 /// The log's directory for a loaded repository. Reading it does not need the
 /// repository to be *ready*: a repository still warming is exactly one whose
 /// slowness someone may be trying to explain.

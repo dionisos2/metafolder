@@ -137,13 +137,14 @@ fn a_fold_writes_the_entries_into_the_records() {
 }
 
 #[test]
-fn a_part_whose_list_grows_too_long_is_folded() {
+fn a_part_whose_list_grows_long_is_left_to_the_idle_fold() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 20);
     for i in 0..200 {
         write(&mut store, |w| w.mass_add("tag", s(&format!("t{i}")), &uuids).unwrap());
     }
-    assert!(store.pending_mass().unwrap() <= 64, "{} entries", store.pending_mass().unwrap());
+    // No limit: only the idle fold (doc "Folding in idle time") writes them in.
+    assert_eq!(store.pending_mass().unwrap(), 200);
     for &u in &uuids {
         assert_eq!(tags(&store, u).len(), 201, "its own tag and the two hundred added");
     }

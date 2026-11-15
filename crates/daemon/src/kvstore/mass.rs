@@ -41,10 +41,6 @@ pub(crate) use crate::store::MassKind as Kind;
 /// bitmap in an entry takes 8 KiB at most.
 pub(crate) const PART_BITS: u32 = 16;
 
-/// How many entries a part holds before a write folds it: a read of any
-/// record of the part applies them all.
-pub(crate) const PART_MAX: usize = 32;
-
 pub(crate) fn part_of(id: u32) -> u32 {
     id >> PART_BITS
 }
@@ -431,7 +427,8 @@ impl KvTxn<'_> {
     }
 
     /// Appends the entries of a write to many records: one per part its ids
-    /// are in. A part whose list grows past [`PART_MAX`] is folded.
+    /// are in. There is no limit to a list: the idle fold writes it in (doc
+    /// "Folding in idle time").
     pub(super) fn append_entries(
         &self,
         kind: Kind,
@@ -460,11 +457,6 @@ impl KvTxn<'_> {
             self.t.mass.put(&mut self.txn.borrow_mut(), &entry_key(part, op), &entry.encode())?;
         }
         self.mass_lists.store(true, std::sync::atomic::Ordering::Relaxed);
-        for part in parts {
-            if self.part_entries(part)?.len() > PART_MAX {
-                self.fold_part(part)?;
-            }
-        }
         Ok(())
     }
 

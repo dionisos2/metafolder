@@ -30,8 +30,9 @@ later (`NEXT`) if the repository is still quiet; with nothing left, the thread l
 again when it could be idle. No chunk size to tune: a list is the unit.
 
 A step is not made while a coordinated revert holds the repository or the root is
-absent. `mf repo reindex` still folds everything at once, as does a list that grows
-past its limit (`PART_MAX`, `EVENTS_MAX`).
+absent. `mf repo reindex` still folds everything at once. A list has ''no limit'': a
+write never folds one, so that a fold cannot start while someone works; how long the
+lists have grown is the wear ([[Storage wear]]).
 
 !! What is not here
 

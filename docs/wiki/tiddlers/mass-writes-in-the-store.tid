@@ -49,8 +49,7 @@ replayed.
 
 !! The fold
 
-`KvStore::fold` — and a reindex, and a write that leaves a field more than 64 events
-(`EVENTS_MAX`, to be measured) — writes the events into what is stored, oldest first,
+`KvStore::fold` — and a reindex, and the idle fold ([[Folding in idle time]]) — writes the events into what is stored, oldest first,
 and empties the list. A replacement is where its removed values are found: the
 field's stored values are walked for the records it was written on, and the
 histograms give back the rows they held. Until then the histogram of a field with
@@ -71,8 +70,9 @@ record.
 A record is read as what it holds, with the entries of its part that name it applied
 oldest first: an add puts the value in, a remove takes it out, a replace takes the
 field's rows out and puts its values in. Reading a record costs the entries of its
-part, which is why a part is folded when its list passes 32 entries (`PART_MAX`, to
-be measured). When no part has any entry, nothing is looked for.
+part, which is why the idle fold writes them in ([[Folding in idle time]]) — a list has
+no limit of its own, and [[Storage wear]] says how long they are. When no part has any
+entry, nothing is looked for.
 
 The most recent write wins, a write to one record included, so a record that an entry
 names carries the number of the operation that wrote each of its rows, what was taken

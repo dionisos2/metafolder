@@ -84,6 +84,7 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.watch.activity_of", &[(P, "/repos/:repo/watch/activity")]),
     s("api.slow", &[(G, "/repos/:repo/slow")]),
     s("api.activity", &[(P, "/repos/:repo/activity")]),
+    s("api.wear", &[(G, "/repos/:repo/wear")]),
     s("api.eligibility", &[(P, "/repos/:repo/eligibility")]),
     s("api.ignore.effective", &[(G, "/repos/:repo/ignore/effective")]),
     s("api.sync.links", &[(G, "/sync/:a/:b/links")]),
@@ -505,6 +506,7 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             std::fs::write(&file, b"recorded")?;
             post(&format!("{base}/metarecords"), json!({"path": file, "fields": []})).await?;
         }
+        "api.wear" => drop(get(&format!("{base}/wear")).await?),
         "api.activity" => drop(post(&format!("{base}/activity"), json!({})).await?),
         "api.slow.clear" => drop(send("DELETE", &format!("{base}/slow"), None).await?),
         "api.repo.rename" => {

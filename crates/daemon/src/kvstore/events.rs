@@ -37,10 +37,6 @@ use super::{
     COUNT_BITS, GRAM_PENDING, LONG_TEXTS, POSTINGS, REFERRERS, SETS, TRIGRAM_MAX, VALUE,
 };
 
-/// How many events a field's list holds before a write folds it: every read
-/// of the field's values replays them all.
-pub(crate) const EVENTS_MAX: usize = 64;
-
 pub(crate) use crate::store::MassKind as Kind;
 
 /// One pending event of a field.
@@ -319,9 +315,6 @@ impl KvTxn<'_> {
         let key = [&name_key(field)[..], &seq.to_be_bytes()].concat();
         self.t.events.put(&mut self.txn.borrow_mut(), &key, &event.encode())?;
         self.events.borrow_mut().insert(field.to_string(), pending + 1);
-        if pending + 1 > EVENTS_MAX {
-            self.fold_events(field)?;
-        }
         Ok(())
     }
 

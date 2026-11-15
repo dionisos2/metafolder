@@ -1,0 +1,7 @@
+title: GET /repos/:repo/wear
+tags: [[HTTP endpoint]] Storage
+kind: reference
+audience: dev
+summary: How worn the repository's store is: what is pending a fold, and the ids a reindex would win back.
+
+The fields of [[Storage wear]], plus `pending_bytes`, `dead_ids` and `dead_fraction`.

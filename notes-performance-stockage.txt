@@ -545,6 +545,10 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
   10b FAIT : la GUI envoie le signal (frontend/src/lib/userActivity.ts :
       keydown/pointerdown/wheel, 1 envoi max / 2 s, dépôts des workspaces
       visibles, via daemon_request).
+  10c FAIT : plus AUCUN seuil de repli à l'écriture (PART_MAX/EVENTS_MAX
+      retirés, décision utilisateur) ; KvStore::wear + GET /repos/:repo/wear
+      (doc "Storage wear") : listes en attente (repli) et ids morts
+      (reindex), sans seuil de conseil fixé.
   MESURE SSD (15 nov. 2026, --quick --storage --cold, taille S, une passe,
       avant = db369318, après = 0a0261aa ; machine 0ec86a28c252) :
       phase de masse (200 écritures) 278 s -> 17,8 s. Masse ajouter/retirer

@@ -68,6 +68,7 @@ pub mod memory;
 mod source;
 mod table;
 
+pub use derived::Wear;
 pub use source::{KvSource, RangeRows};
 use table::{Db, Wtxn};
 

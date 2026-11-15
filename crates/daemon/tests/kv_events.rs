@@ -212,17 +212,14 @@ fn every_mass_operation_reads_as_the_rows_it_wrote() {
 }
 
 #[test]
-fn a_field_with_many_pending_events_is_folded_by_the_write() {
+fn a_field_with_many_pending_events_is_left_to_the_idle_fold() {
     let (mut store, _dir) = open();
     let all = records(&mut store, 100);
     for i in 0..100 {
         write(&mut store, |w| w.mass_add("tag", s(&format!("v{i}")), &all[i % 50..]).unwrap());
     }
-    assert!(
-        store.pending_events("tag").unwrap() <= 64,
-        "{} events pending",
-        store.pending_events("tag").unwrap()
-    );
+    // No limit: only the idle fold (doc "Folding in idle time") writes them in.
+    assert_eq!(store.pending_events("tag").unwrap(), 100);
     settled(&mut store, all[0]);
 }
 
