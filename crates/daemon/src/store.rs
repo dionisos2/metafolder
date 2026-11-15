@@ -839,6 +839,14 @@ pub enum MassKind {
     Replace,
 }
 
+/// What [`WriteTxn::mass_apply`] did.
+pub struct MassApplied {
+    /// The records that changed, one operation each.
+    pub changed: Vec<Uuid>,
+    /// The last of their operations; they hold the ids before it.
+    pub last_op: i64,
+}
+
 /// One operation a write transaction appends to the log.
 pub struct NewOp {
     pub op_type: OpType,
@@ -876,6 +884,24 @@ pub trait WriteTxn: Store {
         _uuids: &[Uuid],
     ) -> Result<()> {
         Ok(())
+    }
+    /// A write of `value` to, or off, `field` of many records, logged as one
+    /// entry (doc "Mass operations in the log"): the records that change get
+    /// an operation each, and nothing is read or written per record. `None`
+    /// when the store does not do this one in bulk — nothing was written,
+    /// and the caller writes the records one by one.
+    #[allow(clippy::too_many_arguments)]
+    fn mass_apply(
+        &self,
+        _kind: MassKind,
+        _field: &str,
+        _value: &Value,
+        _uuids: &[Uuid],
+        _label: i64,
+        _timestamp: i64,
+        _origin: Option<&str>,
+    ) -> Result<Option<MassApplied>> {
+        Ok(None)
     }
     /// Removes a metarecord and every row it holds.
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()>;

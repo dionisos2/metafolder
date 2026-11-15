@@ -240,11 +240,22 @@ impl KvTxn<'_> {
         uuids: &[Uuid],
     ) -> Result<()> {
         *self.mass.borrow_mut() = None;
-        let listed = values.clone();
         let mut ids = RoaringBitmap::new();
         for u in uuids {
             ids.insert(self.id(u.as_bytes())?.with_context(|| format!("no dense id for {u}"))?);
         }
+        self.mass_end_ids(field, kind, values, ids)
+    }
+
+    /// [`Self::mass_end`] for the ids of the records.
+    pub(in super::super) fn mass_end_ids(
+        &self,
+        field: &str,
+        kind: Kind,
+        values: Vec<Value>,
+        ids: RoaringBitmap,
+    ) -> Result<()> {
+        let listed = values.clone();
         if ids.is_empty() {
             return Ok(());
         }
@@ -374,7 +385,12 @@ impl KvTxn<'_> {
 
     /// The holders of a value as the transaction sees them: stored, the
     /// field's events replayed.
-    fn effective(&self, field: &str, _value: &Value, key: &[u8]) -> Result<RoaringBitmap> {
+    pub(in super::super) fn effective(
+        &self,
+        field: &str,
+        _value: &Value,
+        key: &[u8],
+    ) -> Result<RoaringBitmap> {
         let stored = self.stored_holders(field, key)?;
         if self.eventful(field)? == 0 {
             return Ok(stored);

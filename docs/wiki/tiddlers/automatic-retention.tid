@@ -18,6 +18,9 @@ Nothing in the log depends on an older operation being there — a revert applie
 current state ([[Reverting onto the current state]]) — so each origin can lose its oldest
 operations without making any other one impossible to revert ([[The operation log]]).
 
+A write that adds a value to many records, or removes it, is one entry in the log, which
+counts once and goes whole ([[Mass operations in the log]]).
+
 The limits being on by default, a repository is trimmed on its first write after the
 setting takes effect — permanently, without asking. That is the point (an unbounded log is
 what it protects against), but a one-way door: a repository whose whole history matters

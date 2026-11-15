@@ -46,7 +46,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 
@@ -63,6 +63,7 @@ use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Questions, Rows, Writ
 
 mod derived;
 mod mass;
+mod massops;
 pub mod memory;
 mod source;
 mod table;
@@ -939,22 +940,17 @@ impl Read<'_> {
 
     fn op(&self, id: i64) -> Result<Option<OpRow>> {
         self.count(1)?;
-        let Some(b) = self.t.ops.get(self.r, &be(id))? else { return Ok(None) };
-        Ok(Some(dec_op(id, b)?))
+        match self.t.ops.get(self.r, &be(id))? {
+            Some(b) => Ok(Some(match massops::Stub::decode(id, b)? {
+                Some(stub) => stub.op(id),
+                None => dec_op(id, b)?,
+            })),
+            None => Ok(self.stub_at(id)?.map(|stub| stub.op(id))),
+        }
     }
 
     fn ops_of(&self, ids: impl Iterator<Item = i64>) -> Result<Vec<OpRow>> {
-        let mut out = Vec::new();
-        for id in ids {
-            self.count(1)?;
-            let b = self
-                .t
-                .ops
-                .get(self.r, &be(id))?
-                .with_context(|| format!("operation {id} vanished"))?;
-            out.push(dec_op(id, b)?);
-        }
-        Ok(out)
+        self.ops_resolved(ids)
     }
 
     /// The operations at or before `from`, at most `max`, newest first: a
@@ -969,25 +965,31 @@ impl Read<'_> {
             }
             self.count(1)?;
             let (k, v) = e?;
-            out.push(dec_op(from_be(k), v)?);
+            let id = from_be(k);
+            match massops::Stub::decode(id, v)? {
+                Some(stub) => {
+                    for at in (id..=stub.last().min(from)).rev().take(max - out.len()) {
+                        out.push(stub.op(at));
+                    }
+                }
+                None => out.push(dec_op(id, v)?),
+            }
         }
         Ok(out)
     }
 
     fn all_op_ids(&self) -> Result<Vec<i64>> {
-        let mut out = Vec::new();
-        for e in self.t.ops.iter(self.r)? {
-            out.push(from_be(e?.0));
-        }
-        self.count(out.len() as u64 + 1)?;
-        Ok(out)
+        self.ids_from(0, usize::MAX)
     }
 
     fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
         let mut out = Vec::new();
         for e in self.t.ops_by_label.prefix_iter(self.r, &be(label))? {
-            let (k, _) = e?;
-            out.push(from_be(&k[8..]));
+            let (k, v) = e?;
+            let first = from_be(&k[8..]);
+            // A stub's entry says where its operations end.
+            let last = if v.is_empty() { first } else { from_be(v) };
+            out.extend(first..=last);
         }
         self.count(out.len() as u64 + 1)?;
         Ok(out)
@@ -1023,9 +1025,13 @@ impl Read<'_> {
         if op_timestamp(v)? > timestamp_ms {
             return Ok(None);
         }
-        let mut lo = from_be(first);
+        // A write to many records is one entry holding many ids, all of its time.
+        let end_of = |id: i64, v: &[u8]| -> Result<i64> {
+            Ok(massops::Stub::decode(id, v)?.map_or(id, |s| s.last()))
+        };
+        let mut lo = end_of(from_be(first), v)?;
         let Some((last, v)) = self.t.ops.last(self.r)? else { return Ok(None) };
-        let mut hi = from_be(last);
+        let mut hi = end_of(from_be(last), v)?;
         if op_timestamp(v)? <= timestamp_ms {
             return Ok(Some(hi));
         }
@@ -1039,7 +1045,7 @@ impl Read<'_> {
                 self.t.ops.range(self.r, &range)?.next().context("an operation past mid")??;
             let id = from_be(k);
             if id <= hi && op_timestamp(v)? <= timestamp_ms {
-                lo = id;
+                lo = end_of(id, v)?;
             } else {
                 hi = mid - 1;
             }
@@ -1270,6 +1276,10 @@ macro_rules! kv_reads {
             fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
+                    // One of a stub's operations has no snapshot stored.
+                    if let Some(stub) = $read.stub_at(op_id)? {
+                        return Ok(stub.snapshot(after));
+                    }
                     let mut out = Vec::new();
                     let prefix = key(&[&be(op_id), &[after as u8]]);
                     for e in $read.t.snaps.prefix_iter($read.r, &prefix)? {
@@ -1315,7 +1325,8 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     // Two B-tree statistics, not a walk.
                     $read.count(2)?;
-                    Ok(($read.t.ops.len($read.r)? as i64, $read.t.labels.len($read.r)? as i64))
+                    let ops = $read.t.ops.len($read.r)? as i64 + $read.mass_extra()?;
+                    Ok((ops, $read.t.labels.len($read.r)? as i64))
                 })
             }
             fn label_ops(&self, label: i64) -> Result<Vec<OpRow>> {
@@ -1369,6 +1380,9 @@ macro_rules! kv_reads {
                             ids.push(id);
                         }
                     }
+                    // The operations of a write to many records that named it.
+                    ids.extend($read.stub_ops_of(entity, after)?);
+                    ids.sort_unstable();
                     $read.ops_of(ids.into_iter())
                 })
             }
@@ -1378,25 +1392,15 @@ macro_rules! kv_reads {
             fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    let mut ids = Vec::new();
-                    let from = be(op.saturating_add(1));
-                    let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
-                    for e in $read.t.ops.range($read.r, &range)? {
-                        ids.push(from_be(e?.0));
-                    }
-                    $read.count(ids.len() as u64 + 1)?;
+                    let ids = $read.ids_from(op.saturating_add(1), usize::MAX)?;
                     $read.ops_of(ids.into_iter())
                 })
             }
             fn ops_after_count(&self, op: i64, cap: i64) -> Result<i64> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    let from = be(op.saturating_add(1));
-                    let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
                     let cap = usize::try_from(cap).unwrap_or(0);
-                    let n = $read.t.ops.range($read.r, &range)?.take(cap).count();
-                    $read.count(n as u64 + 1)?;
-                    Ok(n as i64)
+                    Ok($read.ids_from(op.saturating_add(1), cap)?.len() as i64)
                 })
             }
             fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>> {
@@ -2107,6 +2111,19 @@ impl KvTxn<'_> {
 }
 
 impl WriteTxn for KvTxn<'_> {
+    fn mass_apply(
+        &self,
+        kind: MassKind,
+        field: &str,
+        value: &Value,
+        uuids: &[Uuid],
+        label: i64,
+        timestamp: i64,
+        origin: Option<&str>,
+    ) -> Result<Option<crate::store::MassApplied>> {
+        self.mass_log(kind, field, value, uuids, label, timestamp, origin)
+    }
+
     fn mass_begin(&self, field: &str, kind: MassKind, values: &[Value]) -> Result<bool> {
         if !self.mass_eligible(field, kind, values)? {
             return Ok(false);
@@ -2380,7 +2397,8 @@ impl WriteTxn for KvTxn<'_> {
                 if id >= keep_from {
                     break;
                 }
-                doomed.push(id);
+                // A write to many records goes whole.
+                doomed.extend(id..=self.entry_end(id)?);
             }
             count(read);
         }
@@ -2402,8 +2420,11 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn delete_ops(&self, ids: &[i64]) -> Result<usize> {
-        let mut hit: HashSet<i64> = HashSet::new();
+        let (stubs, mut hit) = self.delete_stub_ops(ids)?;
         for &id in ids {
+            if stubs.contains(&id) {
+                continue;
+            }
             if let Some(op) = Log::op(self, id)? {
                 hit.insert(op.label_id);
                 self.remove_op(id)?;

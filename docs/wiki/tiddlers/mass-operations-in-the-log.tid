@@ -1,0 +1,53 @@
+title: Mass operations in the log
+tags: Storage [[Event log]]
+kind: rationale
+audience: dev
+summary: A write adding a value to, or removing it from, a field of many records is one entry in the log, which reads as one operation per record; nothing is read or written per record.
+
+A write that adds one value to a field of ten thousand records, or removes it, used
+to read each record to log what it held and to write one operation, its two snapshots
+and three index keys for it. It is now one entry, a ''stub'' in `ops`: the field, the
+value, and the uuids of the records that ''changed'' — those that lacked the value,
+or held it — sorted. Which ones those are comes from the holders of the value
+([[Mass writes in the store]]), not from the records.
+
+A stub holds as many operation ids as it names records: the ids that follow its key.
+What reads the log is given, for the id `first + k`, the operation a write to the
+`k`-th record alone would have logged — `append_field` with the row after it, or
+`delete_field` with the row before it — made up on reading, so a revert, the history,
+the change feed and the trash correlation know nothing of stubs. Ids are still
+one per record and never reused; a write to many records moves HEAD by the number
+of records it changed.
+
+|!Where |!A stub |
+|`ops` |one key, at its first id; an operation's header, then the row and the uuids |
+|`ops_by_label` |one key, whose value is the last id (an operation's is empty) |
+|`ops_by_entity` |one key under the nil uuid, which lists the stubs |
+|`snaps` |nothing |
+|`watcher_ops`, `user_ops` |one key |
+
+A metarecord's operations after an id are its own and, for each stub newer than the
+id, its place among the stub's sorted uuids: a search over the stubs after the id,
+not over every record's keys. A stub is read once for the operations it holds, which
+`ops_of` and the backward read keep.
+
+!! Pruning and retention
+
+A prune that names an id inside a stub cuts it: the older operations go, the stub
+begins at the id (a stub's operations are removed oldest first, never from its
+middle). Retention counts a stub as one operation of its class and takes it whole
+when it is among the oldest. A mass write is one unit of history, as it is one
+command; the bound on the log is the bound on its entries.
+
+!! What is not here yet
+
+* a replacement (`field set`, `field unset` on a query) still reads each record,
+  for what it replaces is not known without them, and logs one operation per
+  record: its ''before'' needs the old values, which the fold of the field's events
+  knows ([[Mass writes in the store]]);
+* the history of a metarecord is a search over the stubs after an id: a summary per
+  block of operations is the next step if the number of stubs asks for it;
+* the stub keeps the uuids, not dense ids, so a reindex has nothing to rewrite in
+  it, at the price of sixteen bytes a record.
+
+`tests/kv_mass_log.rs` holds the reads of a stub to those of the operations it stands for.

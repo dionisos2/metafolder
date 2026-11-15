@@ -50,6 +50,9 @@ row ([[The column form of a value]]):
 
 A directory's `file_deleted` gives each descendant its own operation in the same write.
 
+A write that adds a value to, or removes it from, a field of many records logs one entry,
+which reads as these operations, one per record ([[Mass operations in the log]]).
+
 !! Versions recomputed
 
 A snapshot row carries no id (the column an old store wrote one in is ignored). The version is never restored from the log either: it is a hash of the content

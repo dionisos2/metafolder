@@ -2,7 +2,7 @@ title: Mass writes in the store
 tags: Storage
 kind: rationale
 audience: dev
-summary: A write to many records files one event per operation in the field's list, and one entry per part of the ids in the parts' lists, instead of a write per record; reads replay the pending events and apply the entries, a fold writes them in. The log is still written record by record.
+summary: A write to many records files one event per operation in the field's list, and one entry per part of the ids in the parts' lists, instead of a write per record; reads replay the pending events and apply the entries, a fold writes them in. The log of an add or a remove is one entry too ([[Mass operations in the log]]).
 
 Setting a tag on ten thousand files (`mf … field set|add|remove` on a query,
 [[Query endpoints]]) is one write to many records. Indexing it record by record has
@@ -88,9 +88,9 @@ The fold (`KvStore::fold`, a reindex, a part past its limit) writes the entries 
 the records of their part and empties the list; a metarecord that is gone is not
 written back.
 
-What is not there yet: the ''log''. A mass write still reads every record it changes,
-to log what it was, and writes one operation per record; the log as bitmaps is the
-next step of the storage redesign, and the gain of this one waits for it.
+The log of an add or a remove is one entry as well ([[Mass operations in the log]]);
+a replacement still reads every record it changes, to log what it was, and writes one
+operation per record.
 
 Positions (`tree_ref`, `hierarchy_ref`) are never part of an event: each is written
 on its own ([[One position per forest]]). Nor is a `Nothing` or a text over 512 bytes

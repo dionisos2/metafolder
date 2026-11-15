@@ -1170,6 +1170,10 @@ impl<'c> Writer<'c> {
     /// write to many records (doc "Mass writes in the store"); the records it
     /// changed.
     pub fn mass_add(&mut self, name: &str, value: Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        self.validate_value_type(name, &value)?;
+        if let Some(changed) = self.mass_logged(MassKind::Add, name, &value, uuids)? {
+            return Ok(changed);
+        }
         let one = value.clone();
         self.mass(MassKind::Add, name, vec![value], uuids, move |w, uuid| {
             Ok(w.append_field(uuid, name, one.clone())?.created())
@@ -1179,6 +1183,10 @@ impl<'c> Writer<'c> {
     /// Removes `value` from `name` on every one of `uuids` that holds it; the
     /// records it changed.
     pub fn mass_remove(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        if let Some(changed) = self.mass_logged(MassKind::Remove, name, value, uuids)? {
+            self.field_types.remove(name); // rows removed: the type may have unlocked
+            return Ok(changed);
+        }
         self.mass(MassKind::Remove, name, vec![value.clone()], uuids, |w, uuid| {
             Ok(w.delete_fields_valued(uuid, name, value)? > 0)
         })
@@ -1204,6 +1212,47 @@ impl<'c> Writer<'c> {
         self.mass(MassKind::Replace, name, Vec::new(), uuids, |w, uuid| {
             Ok(w.delete_fields_named(uuid, name)? > 0)
         })
+    }
+
+    /// An add or a remove the store does in bulk (doc "Mass operations in the
+    /// log"): one entry in the log, no record read or written; the records
+    /// that changed. `None` when the store does not do it so, and nothing was
+    /// written.
+    fn mass_logged(
+        &mut self,
+        kind: MassKind,
+        name: &str,
+        value: &Value,
+        uuids: &[Uuid],
+    ) -> Result<Option<Vec<Uuid>>> {
+        // A revert writes what it undoes one operation at a time.
+        if self.reverting.is_some() {
+            return Ok(None);
+        }
+        // The ids of this write's operations come first.
+        self.flush_pending()?;
+        let origin = self.origin.clone();
+        let Some(done) = self.tx.mass_apply(
+            kind,
+            name,
+            value,
+            uuids,
+            self.label_id,
+            self.timestamp,
+            origin.as_deref(),
+        )?
+        else {
+            return Ok(None);
+        };
+        if let Some(n) = i64::try_from(done.changed.len()).ok().filter(|&n| n > 0) {
+            self.first_op.get_or_insert(done.last_op - n + 1);
+            self.flushed += n;
+            self.chain_head = Some(done.last_op);
+            if DECIDES_WATCHES.contains(&name) {
+                self.effects.watch = true;
+            }
+        }
+        Ok(Some(done.changed))
     }
 
     /// One operation on a field of many records: `one` writes each record's

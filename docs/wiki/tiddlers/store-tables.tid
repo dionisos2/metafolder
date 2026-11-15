@@ -27,10 +27,10 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 |`mass` |part · operation number |field · kind · values · the ids of the part |the writes to many records not yet written into the records ([[Mass writes in the store]]) |
 |`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
 |`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
-|`ops` |op id |the operation |the log, in order ([[The operation log]]) |
+|`ops` |op id |the operation — or, at its first id, a stub: one entry for the operations of a write to many records ([[Mass operations in the log]]) |the log, in order ([[The operation log]]) |
 |`snaps` |op id · after? · index |a snapshot row |what an operation changed, before and after |
 |`ops_by_label` |label · op id |— |an undo or revert by label |
-|`ops_by_entity` |uuid · op id |— |a metarecord's history |
+|`ops_by_entity` |uuid · op id |— |a metarecord's history; under the nil uuid, the stubs |
 |`labels` |label id |name · description · parent · created |[[Labels and contexts]] |
 |`label_kids` |parent label · child label |— |the labels' nesting |
 |`label_keys` |command key |label id |a command finding its label at its next write |

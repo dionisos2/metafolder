@@ -483,6 +483,28 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       encore chaque record et écrit une opération par record.
       Mesure : kv_cost « osm path » inchangé (3 630 clés). Pas de mesure
       sur disque : à faire avec scripts/dev/bench.sh --storage.
+  9a FAIT (15 nov. 2026) : journal de masse pour AJOUTER / RETIRER (doc
+      "Mass operations in the log", code kvstore/massops.rs, tests
+      tests/kv_mass_log.rs). DÉCISION utilisateur : plage d'ids virtuelle.
+      Une écriture de masse = UN « stub » dans `ops` (champ, valeur, uuids
+      des metarecords CHANGÉS, triés) qui réserve N ids d'op contigus ; le
+      Log les rend en N OpRow (append_field / delete_field, snapshots
+      fabriqués) : revert, historique, flux, corbeille, sync inchangés.
+      Écrit : 1 clé dans ops, ops_by_label (valeur = dernier id),
+      ops_by_entity (uuid nul = liste des stubs), user_ops/watcher_ops ;
+      rien dans snaps ni records. Writer::mass_logged → WriteTxn::mass_apply
+      (None = repli sur l'ancien chemin par metarecord). Le « avant » n'a
+      pas besoin de bitmap « l'avait déjà » : seuls les changés ont une op.
+      ÉCARTS AVEC LE PLAN : (1) uuids et non ids denses dans le stub (le
+      reindex n'a rien à réécrire ; 16 o par metarecord) ; (2) REMPLACER
+      (set/unset) garde l'ancien chemin : son avant exige les anciennes
+      valeurs (étape 9b) ; (3) pas de résumés par bloc : l'historique d'un
+      metarecord cherche dans les stubs plus récents que l'id (à mesurer) ;
+      (4) rétention : un stub compte pour UNE op et part entier ; un prune
+      au milieu d'un stub le coupe (préfixe) ; (5) les ids d'un stub sont
+      dans l'ordre des uuids, pas de la requête ; (6) compteur meta
+      `mass_extra` pour counts(). Reste : le Writer reçoit encore les uuids
+      (une lecture ids par uuid) ; les requêtes en bitmaps viendraient après.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).
