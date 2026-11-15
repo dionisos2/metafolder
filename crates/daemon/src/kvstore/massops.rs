@@ -32,8 +32,8 @@ use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 use super::derived::{
-    count_prefix, decode_set, dense, set_prefix, COUNT_BITS, NO_TARGET, PARENTS, REFERRERS, SETS,
-    UNIVERSE,
+    count_prefix, decode_set, dense, referrers_prefix, set_prefix, COUNT_BITS, NO_TARGET, PARENTS,
+    REFERRERS, SETS, UNIVERSE,
 };
 use super::mass::{entry_key, Listed, DELETES_PART};
 use super::{
@@ -619,10 +619,6 @@ impl KvTxn<'_> {
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
-        // What this transaction changed in the sets is not written yet.
-        if !self.sets.borrow().is_empty() {
-            return Ok(None);
-        }
         let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
         let changed = ids & &universe;
         if changed.is_empty() {
@@ -639,16 +635,21 @@ impl KvTxn<'_> {
             }
         }
         let (fields, positional) = self.fields_held()?;
+        // A folder deleted here has all its children deleted here too, or the
+        // children are unpicked one by one.
+        let left = &universe - &changed;
         for field in &positional {
             let parents = self.read_chunked(SETS, &set_prefix(PARENTS, Some(field)))?;
-            if !(&parents & &changed).is_empty() {
-                return Ok(None);
+            for parent in &parents & &changed {
+                let kids = self.read_chunked(SETS, &referrers_prefix(field, parent))?;
+                if !(&kids & &left).is_empty() {
+                    return Ok(None);
+                }
             }
         }
         for field in &fields {
             self.count_rows_gone(field, &changed)?;
         }
-        let left = &universe - &changed;
         for field in &positional {
             self.parents_after(field, &changed, &left)?;
         }
@@ -694,20 +695,35 @@ impl KvTxn<'_> {
     /// sequential pass over the field's referrers.
     fn parents_after(&self, field: &str, gone: &RoaringBitmap, left: &RoaringBitmap) -> Result<()> {
         let prefix = set_prefix(REFERRERS, Some(field));
-        let mut groups: Vec<(u32, RoaringBitmap)> = Vec::new();
+        // The stored chunks, the transaction's own in their stead: its earlier
+        // writes are in the order they were made.
+        let mut chunks: BTreeMap<(u32, u16), RoaringBitmap> = BTreeMap::new();
         {
             let txn = self.txn.borrow();
             for e in self.t.sets.prefix_iter(&txn, &prefix)? {
                 let (k, v) = e?;
-                if k.len() != prefix.len() + 6 {
-                    continue;
+                if k.len() == prefix.len() + 6 {
+                    let at = (
+                        dense(&k[prefix.len()..]),
+                        u16::from_be_bytes([k[k.len() - 2], k[k.len() - 1]]),
+                    );
+                    chunks.insert(at, decode_set(v)?);
                 }
-                let parent = dense(&k[prefix.len()..]);
-                let kids = decode_set(v)?;
-                match groups.last_mut() {
-                    Some((p, all)) if *p == parent => *all |= kids,
-                    _ => groups.push((parent, kids)),
-                }
+            }
+        }
+        let own = [&[SETS][..], &prefix].concat();
+        for (k, bm) in self.sets.borrow().iter() {
+            if k.len() == own.len() + 6 && k.starts_with(&own) {
+                let at =
+                    (dense(&k[own.len()..]), u16::from_be_bytes([k[k.len() - 2], k[k.len() - 1]]));
+                chunks.insert(at, bm.clone());
+            }
+        }
+        let mut groups: Vec<(u32, RoaringBitmap)> = Vec::new();
+        for ((parent, _), kids) in chunks {
+            match groups.last_mut() {
+                Some((p, all)) if *p == parent => *all |= kids,
+                _ => groups.push((parent, kids)),
             }
         }
         for (parent, kids) in groups {

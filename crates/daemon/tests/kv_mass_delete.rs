@@ -297,3 +297,101 @@ fn a_prune_in_the_middle_of_a_pending_deletion_leaves_the_rest_its_rows() {
     }
     sound(&store);
 }
+
+/// What an earlier write of the same transaction changed in the sets — records
+/// created, a value added — is read as it stands, in the order of the writes.
+#[test]
+fn a_deletion_after_other_writes_of_the_transaction_is_still_one_entry() {
+    let (mut store, _dir) = open();
+    let tree = |parent, name: &str| Field::new("loc", Value::TreeRef { parent, name: name.into() });
+    let root = write(&mut store, |w| w.create_metarecord(vec![tree(None, "")]).unwrap().uuid);
+    let kids = {
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        let kids: Vec<Uuid> = (0..5)
+            .map(|i| w.create_metarecord(vec![tree(Some(root), &format!("f{i}"))]).unwrap().uuid)
+            .collect();
+        w.mass_add("tag", s("jazz"), &kids).unwrap();
+        let ids = w.dense_ids(&kids).unwrap();
+        assert_eq!(w.mass_delete_ids(&ids).unwrap().len(), 5);
+        w.commit().unwrap();
+        kids
+    };
+    // 5 creations, the add and the deletion: not an operation per deleted record.
+    assert_eq!(store.last_write_keys().get("ops"), Some(&7), "{:?}", store.last_write_keys());
+    for u in &kids {
+        assert!(!Rows::exists(&store, *u).unwrap());
+    }
+    sound(&store);
+}
+
+#[test]
+fn a_folder_deleted_with_all_its_children_is_one_entry() {
+    let (mut store, _dir) = open();
+    let tree = |parent, name: &str| Field::new("loc", Value::TreeRef { parent, name: name.into() });
+    let (all, root) = write(&mut store, |w| {
+        let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
+        let dir = w.create_metarecord(vec![tree(Some(root), "d")]).unwrap().uuid;
+        let sub = w.create_metarecord(vec![tree(Some(dir), "s")]).unwrap().uuid;
+        let a = w.create_metarecord(vec![tree(Some(dir), "a")]).unwrap().uuid;
+        let b = w.create_metarecord(vec![tree(Some(sub), "b")]).unwrap().uuid;
+        (vec![dir, sub, a, b], root)
+    });
+    delete(&mut store, &all);
+    assert_eq!(store.last_write_keys().get("ops"), Some(&1), "{:?}", store.last_write_keys());
+    assert!(Rows::exists(&store, root).unwrap());
+    sound(&store);
+    while store.fold_step().unwrap() {}
+    sound(&store);
+}
+
+#[test]
+fn a_folder_deleted_with_a_child_left_is_refused_as_ever() {
+    let (mut store, _dir) = open();
+    let tree = |parent, name: &str| Field::new("loc", Value::TreeRef { parent, name: name.into() });
+    let (dir, _a) = write(&mut store, |w| {
+        let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
+        let dir = w.create_metarecord(vec![tree(Some(root), "d")]).unwrap().uuid;
+        let a = w.create_metarecord(vec![tree(Some(dir), "a")]).unwrap().uuid;
+        (dir, a)
+    });
+    let ids = store.dense_ids(&[dir]).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    assert!(w.commit().is_err(), "a child would be left under a folder that is gone");
+}
+
+#[test]
+fn undoing_the_deletion_of_a_folder_with_its_children_puts_the_tree_back() {
+    use metafolder_daemon::revert;
+    for folded in [false, true] {
+        let (mut store, _dir) = open();
+        let tree =
+            |parent, name: &str| Field::new("loc", Value::TreeRef { parent, name: name.into() });
+        let (all, root) = write(&mut store, |w| {
+            let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
+            let dir = w.create_metarecord(vec![tree(Some(root), "d")]).unwrap().uuid;
+            let sub = w.create_metarecord(vec![tree(Some(dir), "s")]).unwrap().uuid;
+            let a = w.create_metarecord(vec![tree(Some(dir), "a")]).unwrap().uuid;
+            let b = w.create_metarecord(vec![tree(Some(sub), "b")]).unwrap().uuid;
+            (vec![dir, sub, a, b], root)
+        });
+        let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+        let label = w.label_id();
+        let ids = w.dense_ids(&all).unwrap();
+        assert_eq!(w.mass_delete_ids(&ids).unwrap().len(), 4);
+        w.commit().unwrap();
+        if folded {
+            while store.fold_step().unwrap() {}
+        }
+        let ops = revert::label_ops(&store, label).unwrap();
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        revert::apply(&mut w, &ops).unwrap();
+        w.commit().unwrap();
+        for u in all.iter().chain([&root]) {
+            assert!(Rows::exists(&store, *u).unwrap(), "folded: {folded}");
+        }
+        assert_eq!(Rows::metarecord_count(&store).unwrap(), 5);
+        while store.fold_step().unwrap() {}
+        sound(&store);
+    }
+}
