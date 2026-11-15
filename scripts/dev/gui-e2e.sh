@@ -47,7 +47,7 @@
 # a killed process writes no coverage profile.
 #
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
-#   with no scenario, runs them all: undo-redo log-panel activity duplicates duplicate-keep duplicate-walk orphans trash remove
+#   with no scenario, runs them all: undo-redo log-panel activity mass-delete duplicates duplicate-keep duplicate-walk orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
 #   script-escape script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings keybindings-pick validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
@@ -81,7 +81,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo log-panel activity duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
+    || SCENARIOS=(undo-redo log-panel activity mass-delete duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings keybindings-pick validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
@@ -502,6 +502,54 @@ scenario_activity() {
     sleep 15
     assert "activity: not yet, fifteen seconds after the last key" test "$(wear_pending)" -gt 0
     assert "activity: folded once the user stopped" until_ok 40 nothing_pending
+}
+
+# live_count — how many metarecords hold note=m.
+live_count() { df_mf metarecord -q 'note = "m"' get 2>/dev/null | wc -l; }
+
+# fold_now — POST /repos/:repo/fold: what is pending is folded into the store.
+fold_now() {
+    curl -sf -X POST -H "Authorization: Bearer $(cat "$XDG_RUNTIME_DIR/metafolder/daemon.token")" \
+        -H "X-Metafolder-Activity: off" "http://127.0.0.1:$DF_PORT/repos/$DF_REPO/fold" >/dev/null
+}
+
+# A deletion of many metarecords (doc "Mass operations in the log", doc "Deleting
+# a metarecord in the store") is one label: undone and redone from the GUI, before
+# the fold writes it in and after.
+scenario_mass_delete() {
+    new_repo mass-delete
+    local i keep
+    for i in $(seq 1 30); do df_mf metarecord add note:string=m n:string=v$i >/dev/null; done
+    keep=$(df_mf metarecord -q 'n = "v7"' get)
+    assert_eq "mass delete: the records exist" 30 "$(live_count)"
+
+    df_mf metarecord -q 'note = "m"' delete --force </dev/null >/dev/null
+    assert_eq "mass delete: all gone" 0 "$(live_count)"
+    run log:undo
+    command_ok "mass delete: log:undo runs"
+    status_is "mass delete: the undo takes the whole label back" info "Undid label * (30 operations)*"
+    assert_eq "mass delete: the records are back" 30 "$(live_count)"
+    assert "mass delete: with their fields" field_is "$keep" n v7
+    run log:redo
+    status_is "mass delete: the redo deletes them again" info "Redid label * (30 operations)*"
+    assert_eq "mass delete: gone again" 0 "$(live_count)"
+
+    # After the fold: the same label, undone once the store has written it in.
+    fold_now
+    run log:undo
+    status_is "mass delete: undone after the fold" info "Undid label * (30 operations)*"
+    assert_eq "mass delete: back after the fold" 30 "$(live_count)"
+    assert "mass delete: fields intact after the fold" field_is "$keep" n v7
+    run log:redo
+    assert_eq "mass delete: redone after the fold" 0 "$(live_count)"
+    fold_now
+    run log:undo
+    assert_eq "mass delete: undone again, both folded" 30 "$(live_count)"
+
+    # The log panel lists it as one row with the undo on top.
+    show_panel left log view:refresh log
+    assert "mass delete: the log shows the undo of the deletion" until_ok 10 \
+        webview text '#rows tr' '#41 log:undo' '.badge.revert' 'undo of #36'
 }
 
 scenario_duplicates() {
