@@ -61,6 +61,23 @@ pub(super) async fn clear_slow_log(
     Ok(Json(json!({"cleared": cleared})))
 }
 
+/// `POST /repos/:repo/fold` — folds what writes left pending now, one list at a
+/// time (doc "Folding in idle time"), instead of waiting for the repository to
+/// be quiet: `{"folded": n}`, the number of lists.
+pub(super) async fn fold_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let folded = crate::folding::fold_all(repo_state)
+            .map_err(|e| ApiError::internal(format!("the fold failed: {e:#}")))?;
+        Ok(Json(json!({"folded": folded})))
+    })
+    .await
+}
+
 /// `POST /repos/:repo/activity` — the user is at work (doc "Folding in idle
 /// time"): what writes left pending is folded only after a quiet while. Sent
 /// by the GUI on the user's actions; answers `204`.

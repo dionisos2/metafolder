@@ -144,6 +144,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/slow", get(slow_log).delete(clear_slow_log))
         .route("/repos/{repo}/activity", post(note_activity))
         .route("/repos/{repo}/wear", get(storage_wear))
+        .route("/repos/{repo}/fold", post(fold_repo))
         .route("/repos/{repo}/eligibility", post(eligibility_explain))
         .route("/repos/{repo}/ignore/effective", get(effective_ignore))
         // ── Cross-repo sync (doc "Sync endpoints") ─────────────────────────────────────

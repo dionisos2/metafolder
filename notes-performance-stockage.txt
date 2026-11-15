@@ -619,6 +619,12 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       attente, que le repli efface : confirmé. Le bench a maintenant les
       scénarios <lecture>.after_fold (il interroge /wear avec
       X-Metafolder-Activity: off pour ne pas retarder le repli).
+  combined_sorted, relevé des listes (SSD, S, --cold) : 15,6 ms avant masse ;
+      80,1 ms avec 3 listes en attente — 190 entrées dans 1 partie (95 Kio),
+      190 événements sur 1 champ (94 Kio), et 20 201 ids de trigrammes (ceux
+      de la génération du dépôt, pas de la phase de masse) ; 20,7 ms après
+      POST /fold (3 listes, 0,7 s). Route POST /repos/:repo/fold ajoutée ;
+      le bench l'appelle (plus d'attente de 30 s) et affiche les listes.
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

@@ -50,7 +50,8 @@ pub const MASS_OPS: &[&str] = &["add", "remove", "replace", "delete"];
 
 /// Every scenario id, in the order they run: the reads, the writes, the mass
 /// writes, then (after the mass phase) the reads again, and once more when the
-/// daemon has folded what the mass phase left pending (`.after_fold`).
+/// daemon has been asked to fold what the mass phase left pending
+/// (`.after_fold`).
 pub fn ids() -> Vec<String> {
     let mut ids: Vec<String> = READS.iter().chain(WRITES).map(|s| s.to_string()).collect();
     for op in MASS_OPS {
@@ -330,28 +331,29 @@ async fn go_cold(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-/// Waits, saying nothing the daemon would count as activity, until the daemon
-/// has folded every list the mass phase left pending (doc "Folding in idle
-/// time"): it folds after thirty seconds without activity, one list a second.
-/// The polling says it is not activity, or it would keep the fold from starting.
-async fn wait_for_the_fold(ctx: &Ctx) -> Result<()> {
-    let url = format!("{}/wear", ctx.base());
-    let deadline = Instant::now() + Duration::from_secs(600);
-    loop {
-        let wear: Json = client()
-            .get(&url)
-            .header(metafolder_core::context::ACTIVITY_HEADER, "off")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        if wear["mass_entries"] == 0 && wear["events"] == 0 && wear["trigrams_pending"] == 0 {
-            return Ok(());
-        }
-        anyhow::ensure!(Instant::now() < deadline, "the store was not folded in time: {wear}");
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+/// What the mass phase left pending, in a line (the daemon's `/wear`, whose
+/// polling says it is not activity).
+async fn pending_summary(ctx: &Ctx) -> Result<String> {
+    let wear: Json = client()
+        .get(format!("{}/wear", ctx.base()))
+        .header(metafolder_core::context::ACTIVITY_HEADER, "off")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let n = |k: &str| wear[k].as_u64().unwrap_or(0);
+    Ok(format!(
+        "pending: {} entries in {} parts ({} KiB), {} events in {} fields ({} KiB), \
+         {} ids of trigrams",
+        n("mass_entries"),
+        n("mass_parts"),
+        n("mass_bytes") / 1024,
+        n("events"),
+        n("event_fields"),
+        n("event_bytes") / 1024,
+        n("trigrams_pending"),
+    ))
 }
 
 /// A name no earlier run wrote.
@@ -599,12 +601,14 @@ pub async fn run(
             if !after(suffix) {
                 continue;
             }
+            println!("  {suffix}: {}", pending_summary(&ctx).await?);
             if suffix == ".after_fold" {
-                print!("  waiting for the idle fold ... ");
+                print!("  folding ... ");
                 std::io::stdout().flush().ok();
                 let t = Instant::now();
-                wait_for_the_fold(&ctx).await?;
-                println!("{:.1}s", t.elapsed().as_secs_f64());
+                let folded = post(&format!("{}/fold", ctx.base()), &json!({})).await?;
+                println!("{} lists, {:.1}s", folded["folded"], t.elapsed().as_secs_f64());
+                println!("  {suffix}: {}", pending_summary(&ctx).await?);
             }
             for (read_id, id) in reads(suffix) {
                 if !wanted(&id) {

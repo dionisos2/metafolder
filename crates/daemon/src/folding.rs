@@ -96,6 +96,17 @@ pub fn step(repo: &RepoState, idle: Duration) -> anyhow::Result<Option<bool>> {
     }
 }
 
+/// Folds every list pending now, one at a time — the connection is free
+/// between two — whatever the repository's activity: what `POST /repos/:repo/fold`
+/// asks for. How many lists it folded.
+pub fn fold_all(repo: &RepoState) -> anyhow::Result<usize> {
+    let mut folded = 0;
+    while step(repo, Duration::ZERO)? == Some(true) {
+        folded += 1;
+    }
+    Ok(folded)
+}
+
 enum Msg {
     Shutdown,
 }

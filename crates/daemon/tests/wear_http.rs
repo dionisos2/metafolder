@@ -155,3 +155,47 @@ async fn a_check_folds_what_is_pending_and_holds_the_histograms() {
     let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
     assert_eq!(wear["mass_entries"], json!(0), "the check folded it: {wear}");
 }
+
+/// `POST /repos/:repo/fold` folds every list pending now, one list at a time.
+#[tokio::test]
+async fn an_explicit_fold_writes_the_pending_lists_in() {
+    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
+    let root = TempDir::new("wear_http_fold");
+    common::seed_config(&root);
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+
+    let mut uuids = Vec::new();
+    for i in 0..5 {
+        let (status, record) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/metarecords"),
+            Some(json!({"fields": [{"name": "rank", "value": {"type": "int", "value": i}}]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{record}");
+        uuids.push(record["uuid"].as_str().unwrap().to_string());
+    }
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": &uuids[..3], "force": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
+    assert_eq!(wear["mass_entries"], json!(1), "{wear}");
+
+    let (status, folded) = request(&app, "POST", &format!("/repos/{repo}/fold"), None).await;
+    assert_eq!(status, StatusCode::OK, "{folded}");
+    assert_eq!(folded["folded"], json!(1), "one list: {folded}");
+    let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
+    assert_eq!(wear["mass_entries"], json!(0), "{wear}");
+    // Nothing left: nothing folded.
+    let (_, folded) = request(&app, "POST", &format!("/repos/{repo}/fold"), None).await;
+    assert_eq!(folded["folded"], json!(0), "{folded}");
+}
