@@ -1,0 +1,25 @@
+title: $:/mf/gen/CLI command/mf log labels
+catalog: CLI command
+target: mf log labels
+summary: List the labels with their counts and what undid them, newest first, reading no operation
+
+!! Reference
+
+```
+List the labels with their counts and what undid them, newest first, reading no operation
+
+Usage: mf log labels [OPTIONS]
+
+Options:
+      --in <PARENT>
+          Only the labels nested in this one (default: the units of work)
+
+      --limit <LIMIT>
+          Show at most N labels; default 20
+
+      --all
+          Remove the default limit of 20
+
+  -h, --help
+          Print help
+```

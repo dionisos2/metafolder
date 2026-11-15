@@ -100,6 +100,7 @@ async fn the_summaries_say_how_many_operations_a_label_holds_and_what_reverts_it
     let mass = listed["labels"][0].clone();
     assert_eq!(mass["operations"], json!(12), "{mass}");
     assert_eq!(mass["is_head"], json!(true));
+    assert!(mass["updated"].as_i64().unwrap() > 0, "{mass}");
     assert_eq!(mass["undone"], Value::Null);
     assert_eq!(mass["reverts"], json!([]));
     assert_eq!(listed["head_label"], mass["id"]);

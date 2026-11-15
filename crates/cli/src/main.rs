@@ -571,6 +571,18 @@ enum LogCommand {
         #[arg(long)]
         all: bool,
     },
+    /// List the labels with their counts and what undid them, newest first, reading no operation
+    Labels {
+        /// Only the labels nested in this one (default: the units of work)
+        #[arg(long = "in")]
+        parent: Option<i64>,
+        /// Show at most N labels; default 20
+        #[arg(long = "limit")]
+        limit: Option<usize>,
+        /// Remove the default limit of 20
+        #[arg(long)]
+        all: bool,
+    },
     /// Print the id of the newest operation
     Head,
     /// Show full details of one label (a label id, or HEAD for the newest operation's)
@@ -1871,6 +1883,9 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         None => log::log(ctx, &log::LogArgs::default()),
         Some(LogCommand::List { ops, metarecord, limit, since, until, all }) => {
             log::log(ctx, &log::LogArgs { ops, metarecord, limit, since, until, all })
+        }
+        Some(LogCommand::Labels { parent, limit, all }) => {
+            log::log_labels(ctx, &log::LabelsArgs { parent, limit, all })
         }
         Some(LogCommand::Head) => log::log_head(ctx),
         Some(LogCommand::Show { target, raw }) => log::log_show(ctx, &target, raw),

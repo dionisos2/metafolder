@@ -428,8 +428,15 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
         };
         let mut value = label_json(*id, meta);
         value["operations"] = json!(log.label_op_count(*id)?);
+        let last = log.label_last_op(*id)?;
         value["first_op"] = json!(first);
-        value["last_op"] = json!(log.label_last_op(*id)?);
+        value["last_op"] = json!(last);
+        // When it was last written in: a context is older than most of what is
+        // written under it.
+        value["updated"] = json!(match last {
+            Some(l) => log.op(l)?.map(|o| o.timestamp),
+            None => None,
+        });
         value["origin"] = json!(first_op.as_ref().and_then(|o| o.origin.clone()));
         value["watcher"] = json!(first_op.as_ref().is_some_and(is_watcher_op));
         value["children"] = json!(log.label_children(*id)?.len());

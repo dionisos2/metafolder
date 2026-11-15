@@ -331,6 +331,87 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// What `mf log labels` lists.
+#[derive(Default)]
+pub struct LabelsArgs {
+    pub parent: Option<i64>,
+    pub limit: Option<usize>,
+    pub all: bool,
+}
+
+/// `mf log labels` — the labels, newest first, as the daemon summarises them
+/// (doc "Label summaries"): the operations of a label are not read, so a
+/// write to ten thousand records costs one line.
+pub fn log_labels(ctx: &Ctx, args: &LabelsArgs) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let wanted = if args.all { usize::MAX } else { args.limit.unwrap_or(DEFAULT_LOG_WINDOW) };
+    let mut shown = 0usize;
+    let mut before: Option<i64> = None;
+    loop {
+        let mut query: Vec<(&str, String)> =
+            vec![("limit", wanted.saturating_sub(shown).min(500).to_string())];
+        if let Some(parent) = args.parent {
+            query.push(("parent", parent.to_string()));
+        }
+        if let Some(before) = before {
+            query.push(("before", before.to_string()));
+        }
+        let resp = ctx.client.get(&format!("{base}/log/labels"), &query)?;
+        let labels = resp["labels"].as_array().cloned().unwrap_or_default();
+        if shown == 0 && labels.is_empty() {
+            println!("(empty history)");
+            return Ok(0);
+        }
+        for label in &labels {
+            println!("{}", fmt_label_line(label));
+            shown += 1;
+        }
+        match resp["next_before"].as_i64() {
+            Some(next) if shown < wanted => before = Some(next),
+            Some(_) => {
+                println!("(more labels: --limit N, or --all)");
+                return Ok(0);
+            }
+            None => return Ok(0),
+        }
+    }
+}
+
+/// `> label 12  2026-11-15 14:02  name  (12 operations, 3 nested)  [undone]`.
+fn fmt_label_line(label: &Json) -> String {
+    let id = label["id"].as_i64().unwrap_or(0);
+    let when = label["updated"].as_i64().or(label["created"].as_i64()).unwrap_or(0);
+    let marker = if label["is_head"].as_bool() == Some(true) { ">" } else { " " };
+    let ops = label["operations"].as_i64().unwrap_or(0);
+    let nested = label["children"].as_i64().unwrap_or(0);
+    let mut counts = format!("{ops} operation{}", if ops == 1 { "" } else { "s" });
+    if nested > 0 {
+        counts.push_str(&format!(", {nested} nested"));
+    }
+    let mut line = format!(
+        "{marker} label {id}  {}  {}  ({counts})",
+        fmt_minute(when),
+        label["name"].as_str().unwrap_or("")
+    );
+    match label["undone"].as_str() {
+        Some("fully") => line.push_str("  [undone]"),
+        Some("partly") => line.push_str("  [partly undone]"),
+        _ => {}
+    }
+    for reverted in label["reverts"].as_array().into_iter().flatten() {
+        let of = reverted["label"].as_i64().unwrap_or(0);
+        if reverted["whole"].as_bool() == Some(true) {
+            line.push_str(&format!("  [undoes label {of}]"));
+        } else {
+            line.push_str(&format!("  [undoes part of label {of}]"));
+        }
+    }
+    if label["is_head"].as_bool() == Some(true) {
+        line.push_str("   \u{2190} HEAD");
+    }
+    line
+}
+
 /// `op 23  set_field(rating)  on <uuid>`.
 fn fmt_op_line(op: &Json) -> String {
     let id = op["id"].as_i64().unwrap_or(0);

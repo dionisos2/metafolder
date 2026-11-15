@@ -16,7 +16,7 @@ the keys of the log say alone.
 first, each with:
 
 * its own `operations`, counted off `ops_by_label` — one key per operation, one per stub, which says where its operations end — and its `first_op` and `last_op`;
-* its `origin` and whether it is the `watcher`'s, read off its first operation;
+* when it was last written in (`updated`), its `origin` and whether it is the `watcher`'s, read off its first and last operations;
 * how many `children` it has;
 * `reverts` and `reverted_by`: the labels it undid and the labels that undid it, each with `whole` (the label and its children undone, or some of its operations);
 * `undone`: `null`, `partly` or `fully`, worked out from those marks alone.
@@ -49,5 +49,5 @@ Labels are ordered by their id: the order they were opened in, which is the orde
 were written in but for a label that kept receiving writes (a long script's) after
 others began.
 
-`tests/kv_label_marks.rs` and `tests/label_summaries_http.rs` hold the counts, the
-marks and the paging.
+`mf log labels` ([[mf log labels]]) prints them; `tests/kv_label_marks.rs` and
+`tests/label_summaries_http.rs` hold the counts, the marks and the paging.

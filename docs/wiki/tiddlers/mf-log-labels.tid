@@ -1,0 +1,16 @@
+title: mf log labels
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: List the labels with their counts and what undid them, newest first, reading no operation
+
+```
+> label 12  2026-11-15 14:02  field add tag:string=jazz  (10000 operations)  [undoes label 9]   ← HEAD
+  label 9   2026-11-15 13:40  field add tag:string=blue  (10000 operations)  [undone]
+```
+
+One line per label, newest first: its own operations, how many labels are nested in it, and
+what an undo says — `[undone]` or `[partly undone]` on a label that was undone, `[undoes
+label N]` on the undo. `--in LABEL` lists the labels nested in one (the units of work
+otherwise), `--limit N` and `--all` bound the list. Unlike [[mf log list]], no operation is
+read, so a write to ten thousand records costs one line ([[Label summaries]]); `mf log show`
+goes into one label.

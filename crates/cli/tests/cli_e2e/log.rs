@@ -769,3 +769,33 @@ fn test_log_rollback_needs_a_time() {
     let out = mf(&["-u", &repo, "log", "rollback", "yesterday"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
+
+// ── `mf log labels` (doc "Label summaries") ────────────────────────────────
+
+/// The labels, newest first, each with its operations counted and what an undo
+/// of it says — read without the operations being.
+#[test]
+fn test_log_labels_lists_summaries_and_marks_an_undo() {
+    let (repo, _root) = init_repo("log_labels");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
+
+    let out = mf(&["-u", &repo, "log", "labels"]);
+    assert_ok(&out);
+    let first = out.stdout.lines().next().unwrap();
+    assert!(first.starts_with('>') && first.contains("\u{2190} HEAD"), "first line: {first}");
+    assert!(first.contains("1 operation"), "first line: {first}");
+    assert!(first.contains("field set rating:int=5"), "named after its command: {first}");
+
+    assert_ok(&take_back(&repo, "undo", &[]));
+    let out = mf(&["-u", &repo, "log", "labels"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("[undone]"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("[undoes label "), "stdout: {}", out.stdout);
+
+    // A limit shows that many, and says there are more.
+    let out = mf(&["-u", &repo, "log", "labels", "--limit", "1"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().filter(|l| l.contains("label ")).count(), 1, "{}", out.stdout);
+    assert!(out.stdout.contains("more"), "stdout: {}", out.stdout);
+}
