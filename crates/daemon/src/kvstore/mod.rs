@@ -21,6 +21,7 @@
 //! | ops_by_entity | uuid · op id                     | —                         |
 //! | labels        | label id                         | name · description · parent · created |
 //! | label_kids    | parent label · child label       | —                         |
+//! | label_reverts | 0 · reverter · reverted, 1 · reverted · reverter | 1 if the whole label |
 //! | label_keys    | command key                      | label id                  |
 //! | reverted_by   | op id · op id of a revert of it  | —                         |
 //! | watcher_ops   | op id                            | —                         |
@@ -105,6 +106,7 @@ struct Tables {
     grams: Db,
     hist: Db,
     events: Db,
+    label_reverts: Db,
 }
 
 /// The tables' names, in `Tables`' order.
@@ -133,6 +135,7 @@ const NAMES: [&str; table::TABLES] = [
     "grams",
     "hist",
     "events",
+    "label_reverts",
 ];
 
 impl Tables {
@@ -152,7 +155,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [meta, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist, events] =
+        let [meta, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist, events, label_reverts] =
             dbs;
         Ok(Tables {
             meta,
@@ -179,6 +182,7 @@ impl Tables {
             grams,
             hist,
             events,
+            label_reverts,
         })
     }
 
@@ -209,6 +213,7 @@ impl Tables {
             self.grams,
             self.hist,
             self.events,
+            self.label_reverts,
         ]
     }
 }
@@ -318,7 +323,7 @@ fn key(parts: &[&[u8]]) -> Vec<u8> {
 /// without its metarecord's dense id; 7: a forest entry holding uuid · row id
 /// · dense id, the rows one key each in `field_cells`; 8: a record's rows under
 /// one key, its dense id, in `records`).
-const LAYOUT: i64 = 8;
+const LAYOUT: i64 = 9;
 
 /// Where the dense id starts in a forest entry's value: uuid · dense id. The
 /// id is what tells a position from one a deleted metarecord left behind,
@@ -1043,6 +1048,59 @@ impl Read<'_> {
         })
     }
 
+    /// The ids of the labels older than `before` (all when none), newest first,
+    /// at most `max`: the end of a table keyed by id.
+    fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
+        let hi = be(before.map_or(i64::MAX, |b| b.saturating_sub(1)));
+        let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&hi[..]));
+        let mut out = Vec::new();
+        for e in self.t.labels.rev_range(self.r, &range)?.take(max) {
+            out.push(from_be(e?.0));
+        }
+        self.count(out.len() as u64 + 1)?;
+        Ok(out)
+    }
+
+    /// How many operations a label holds of its own, off the keys of
+    /// `ops_by_label` — one per operation, one per stub, which says its last
+    /// id — so that no operation is read, nor any record a stub names.
+    fn label_op_count(&self, label: i64) -> Result<i64> {
+        let (mut n, mut seen) = (0i64, 0u64);
+        for e in self.t.ops_by_label.prefix_iter(self.r, &be(label))? {
+            let (k, v) = e?;
+            seen += 1;
+            n += if v.len() == 8 { from_be(v) - from_be(&k[8..]) + 1 } else { 1 };
+        }
+        self.count(seen + 1)?;
+        Ok(n)
+    }
+
+    /// A label's newest operation of its own.
+    fn label_last_op(&self, label: i64) -> Result<Option<i64>> {
+        let (lo, hi) = (key(&[&be(label), &be(0)]), key(&[&be(label), &be(i64::MAX)]));
+        let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
+        self.count(1)?;
+        Ok(match self.t.ops_by_label.rev_range(self.r, &range)?.next() {
+            Some(e) => {
+                let (k, v) = e?;
+                Some(if v.len() == 8 { from_be(v) } else { from_be(&k[8..]) })
+            }
+            None => None,
+        })
+    }
+
+    /// The labels `label` reverts (`kind` 0), or the labels that revert it
+    /// (`kind` 1), each with whether it is the whole label.
+    fn label_marks(&self, kind: u8, label: i64) -> Result<Vec<(i64, bool)>> {
+        let mut out = Vec::new();
+        for e in self.t.label_reverts.prefix_iter(self.r, &key(&[&[kind], &be(label)]))? {
+            let (k, v) = e?;
+            out.push((from_be(&k[9..]), v.first() == Some(&1)));
+        }
+        self.count(out.len() as u64 + 1)?;
+        Ok(out)
+    }
+
     fn label_children(&self, label: i64) -> Result<Vec<i64>> {
         let mut out = Vec::new();
         for e in self.t.label_kids.prefix_iter(self.r, &be(label))? {
@@ -1380,6 +1438,30 @@ macro_rules! kv_reads {
             fn label_children(&self, label: i64) -> Result<Vec<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.label_children(label))
+            }
+            fn label_op_count(&self, label: i64) -> Result<i64> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_op_count(label))
+            }
+            fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_op_ids(label))
+            }
+            fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_ids_before(before, max))
+            }
+            fn label_last_op(&self, label: i64) -> Result<Option<i64>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_last_op(label))
+            }
+            fn label_reverts(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_marks(0, label))
+            }
+            fn label_reverted_by(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.label_marks(1, label))
             }
             fn reverters(&self, op: i64) -> Result<Vec<i64>> {
                 let $me = self;
@@ -1807,9 +1889,9 @@ impl KvStore {
     ///   history tree (layouts 1 and 2: operations chained to a parent,
     ///   `op_children`, `restorations`), and the sequence before it was split
     ///   by origin (3), the one grouped by writes (4), and the one with no
-    ///   index of its reverts (5). The log is emptied, the metarecords kept (user
-    ///   decision, October 2026; doc "The operation log"). Layouts 6 and 7 keep
-    ///   theirs.
+    ///   index of its reverts (5), the one with no marks on its labels for the
+    ///   labels they revert (6 to 8). The log is emptied, the metarecords kept
+    ///   (user decision, October and November 2026; doc "The operation log").
     ///
     /// A new store has nothing to move and only records the layout. Answers
     /// whether the derived key spaces must be derived again: they must when a
@@ -1932,7 +2014,11 @@ impl KvStore {
                     }
                 }
             }
-            if from.is_none_or(|layout| layout <= 5) {
+            // The log of a store of an older layout is dropped (layout 9 added
+            // what a label says of the labels it reverts, which an older log has
+            // not: the log is emptied rather than converted, user decision,
+            // November 2026).
+            if from.is_none_or(|layout| layout <= 8) {
                 for old in gone.into_iter().flatten() {
                     old.clear(w.unjournaled())?;
                 }
@@ -1947,11 +2033,13 @@ impl KvStore {
                     t.reverted_by,
                     t.watcher_ops,
                     t.user_ops,
+                    t.label_reverts,
                 ] {
                     db.clear(&mut w)?;
                 }
                 t.meta.delete(&mut w, b"head")?;
                 t.meta.delete(&mut w, b"watcher_label")?;
+                t.meta.delete(&mut w, b"mass_extra")?;
             }
         }
         txn.meta_put("layout", LAYOUT)?;
@@ -2413,6 +2501,32 @@ impl WriteTxn for KvTxn<'_> {
         if let Some(command) = command {
             self.t.label_keys.delete(&mut w, command.as_bytes())?;
         }
+        // What it reverts, and what reverts it, each side of the pair.
+        for kind in [0u8, 1] {
+            let prefix = key(&[&[kind], &be(id)]);
+            let pairs: Vec<Vec<u8>> = self
+                .t
+                .label_reverts
+                .prefix_iter(&w, &prefix)?
+                .map(|e| e.map(|(k, _)| k.to_vec()))
+                .collect::<std::result::Result<_, _>>()?;
+            for k in pairs {
+                let other = &k[9..];
+                self.t.label_reverts.delete(&mut w, &k)?;
+                self.t.label_reverts.delete(&mut w, &key(&[&[1 - kind], other, &be(id)]))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn note_label_reverts(&self, reverter: i64, reverted: i64, tree: bool) -> Result<()> {
+        let mut w = self.txn.borrow_mut();
+        let forward = key(&[&[0u8], &be(reverter), &be(reverted)]);
+        let already =
+            self.t.label_reverts.get(&w, &forward)?.is_some_and(|v| v.first() == Some(&1));
+        let flag = [u8::from(tree || already)];
+        self.t.label_reverts.put(&mut w, &forward, &flag)?;
+        self.t.label_reverts.put(&mut w, &key(&[&[1u8], &be(reverted), &be(reverter)]), &flag)?;
         Ok(())
     }
 

@@ -304,6 +304,8 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
     // even when the one it lands on is; the check moves to commit.
     writer.defer_type_checks();
     let mut done = 0usize;
+    // The labels the operations undone are in, said on this write's label.
+    let mut touched: std::collections::BTreeSet<i64> = Default::default();
     for op in ops.iter().rev() {
         // Everything written for this op names it, so a later reader can tell a
         // correction from a change (doc "Log storage").
@@ -377,8 +379,12 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
             }
         }
         done += 1;
+        touched.insert(op.label_id);
     }
     writer.reverting(None);
+    for label in touched {
+        writer.note_label_reverts(label, false)?;
+    }
     Ok(done)
 }
 

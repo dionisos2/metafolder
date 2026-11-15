@@ -1,0 +1,11 @@
+title: GET /repos/:repo/log/labels
+tags: [[HTTP endpoint]] [[Event log]]
+kind: reference
+audience: dev
+summary: Label summaries, newest first, without reading an operation: counts, first and last operation, what each reverts and is reverted by.
+
+Query: `parent` (`none`, the default, for the units of work; a label id for the labels
+nested in it), `before` (a label id: only older ones), `limit` (50 by default, 500 at
+most). Answer: `head`, `head_label`, `labels`, `next_before` (the `before` of the next
+page, `null` on the last) and `total_labels`. What a summary holds, and how the marks
+are worked out: [[Label summaries]].

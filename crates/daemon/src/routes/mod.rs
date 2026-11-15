@@ -109,6 +109,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/query/fields/resolve-tree", post(query_resolve_tree))
         .route("/repos/{repo}/log", get(get_log))
         .route("/repos/{repo}/log/since", get(get_log_since))
+        .route("/repos/{repo}/log/labels", get(list_labels))
         .route("/repos/{repo}/log/labels/{id}", get(get_label_detail))
         .route("/repos/{repo}/labels", post(create_label))
         .route("/repos/{repo}/labels/{id}", get(get_label))

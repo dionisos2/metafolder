@@ -41,6 +41,42 @@ pub(super) struct RevertPlanParams {
     only: Option<String>,
 }
 
+/// The label a `label_id` of a target names: a number, or `"head"`, the label
+/// of the newest operation.
+fn label_of_target(
+    conn: &dyn crate::store::Store,
+    head: Option<i64>,
+    label: &serde_json::Value,
+) -> Result<i64, ApiError> {
+    match label {
+        serde_json::Value::String(s) if s == "head" => {
+            let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
+            Ok(conn
+                .op(head)?
+                .ok_or_else(|| ApiError::not_found("HEAD names no operation"))?
+                .label_id)
+        }
+        serde_json::Value::Number(n) => {
+            n.as_i64().ok_or_else(|| ApiError::bad_request("label_id must be an integer"))
+        }
+        _ => Err(ApiError::bad_request("label_id must be a number or \"head\"")),
+    }
+}
+
+/// The label a target reverts whole — the one a `label_id` names, and no
+/// other kind of target — which the revert's own label says it undid (doc
+/// "Label summaries").
+fn whole_label_of(
+    conn: &dyn crate::store::Store,
+    head: Option<i64>,
+    target: &RevertTarget,
+) -> Result<Option<i64>, ApiError> {
+    match (&target.label_id, &target.op_ids, target.since) {
+        (Some(label), None, None) => Ok(Some(label_of_target(conn, head, label)?)),
+        _ => Ok(None),
+    }
+}
+
 /// Resolves a revert target to its operations, oldest first.
 fn resolve_revert_target(
     conn: &dyn crate::store::Store,
@@ -68,18 +104,7 @@ fn resolve_revert_target(
     }
     let ops = match (&target.label_id, &target.op_ids) {
         (Some(label), None) => {
-            let label_id = match label {
-                serde_json::Value::String(s) if s == "head" => {
-                    let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
-                    conn.op(head)?
-                        .ok_or_else(|| ApiError::not_found("HEAD names no operation"))?
-                        .label_id
-                }
-                serde_json::Value::Number(n) => n
-                    .as_i64()
-                    .ok_or_else(|| ApiError::bad_request("label_id must be an integer"))?,
-                _ => return Err(ApiError::bad_request("label_id must be a number or \"head\"")),
-            };
+            let label_id = label_of_target(conn, head, label)?;
             // A label nothing was written in reverts nothing; one that does not
             // exist (or was dropped with its last operation) is a 404.
             if conn.labels(&[label_id])?.is_empty() {
@@ -289,6 +314,7 @@ pub(super) async fn revert(
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
         let mut effective = resolve_revert_target(&conn, head, &body.target)?;
+        let whole = whole_label_of(&conn, head, &body.target)?;
         let mut skipped = Vec::new();
         // Which operations need a file action: asked of the log once, since a
         // trashing's is read through its `reverts_op_id` chain.
@@ -329,6 +355,11 @@ pub(super) async fn revert(
         let mut writer = repo_state.writer(&mut conn, context)?;
         let applied: Vec<i64> = effective.iter().map(|o| o.id).collect();
         crate::revert::apply(&mut writer, &effective)?;
+        // Said on the new label: the whole label undone, unless some of its
+        // operations were left out.
+        if let (Some(whole), true) = (whole, skipped.is_empty()) {
+            writer.note_label_reverts(whole, true)?;
+        }
         let label_id = writer.label_id();
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
@@ -401,7 +432,8 @@ pub(super) async fn revert_start(
             let cache = repo_state.tree();
             revert_plan_json(&conn, &effective, Some((&cache, &repo_state.config.root)))?
         };
-        *lock = Some(RevertLock { ops: effective.iter().map(|o| o.id).collect() });
+        let label = whole_label_of(&conn, head, &body.target)?;
+        *lock = Some(RevertLock { ops: effective.iter().map(|o| o.id).collect(), label });
         Ok(Json(plan))
     })
     .await
@@ -428,12 +460,15 @@ pub(super) async fn revert_commit(
         // `abort` had answered, or after another commit had written it, and
         // released the lock of a revert started in between.
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let locked: Vec<i64> = match repo_state.revert_lock.lock_recover().as_ref() {
-            Some(RevertLock { ops }) => ops.clone(),
-            None => {
-                return Err(ApiError::conflict("no revert in progress; call revert/start first"))
-            }
-        };
+        let (locked, whole): (Vec<i64>, Option<i64>) =
+            match repo_state.revert_lock.lock_recover().as_ref() {
+                Some(RevertLock { ops, label }) => (ops.clone(), *label),
+                None => {
+                    return Err(ApiError::conflict(
+                        "no revert in progress; call revert/start first",
+                    ))
+                }
+            };
 
         let result = (|| -> Result<serde_json::Value, ApiError> {
             let head = crate::store::Log::head(&*conn)?;
@@ -456,6 +491,9 @@ pub(super) async fn revert_commit(
             let mut writer = repo_state
                 .revert_writer(&mut conn, request_context().named(revert_name_of(&locked)))?;
             crate::revert::apply(&mut writer, &kept)?;
+            if let (Some(whole), true) = (whole, kept.len() == locked.len()) {
+                writer.note_label_reverts(whole, true)?;
+            }
             let label_id = writer.label_id();
             let effects = writer.effects();
             slowlog::timed("commit", || writer.commit())?;

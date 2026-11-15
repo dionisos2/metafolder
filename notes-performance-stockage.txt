@@ -625,6 +625,15 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       de la génération du dépôt, pas de la phase de masse) ; 20,7 ms après
       POST /fold (3 listes, 0,7 s). Route POST /repos/:repo/fold ajoutée ;
       le bench l'appelle (plus d'attente de 30 s) et affiche les listes.
+  12a FAIT (daemon) : résumés de labels (doc "Label summaries") : GET
+      /repos/:repo/log/labels (comptes par ops_by_label, sans lire d'opération
+      ni d'uuid), table label_reverts (marques « annule / annulé par »,
+      entier ou partiel, écrites par la route de revert), `undone`
+      (null|partly|fully) calculé sur les labels ; GET /log/labels/:id compte
+      sans refabriquer les opérations. LAYOUT 9 : le journal d'un store de
+      disposition <= 8 est VIDÉ à l'ouverture (décision utilisateur, comme les
+      dispositions 3 à 6), metarecords gardés. RESTE : `mf log labels` (12b),
+      panneau log de la GUI (12c).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

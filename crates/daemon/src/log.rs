@@ -620,6 +620,13 @@ impl<'c> Writer<'c> {
         self.label_id
     }
 
+    /// Notes that this write reverts label `target`: all of it, its children
+    /// included, when `tree`, some of its operations otherwise — what the log's
+    /// summaries say of an undo without reading its operations.
+    pub fn note_label_reverts(&mut self, target: i64, tree: bool) -> Result<()> {
+        self.tx.note_label_reverts(self.label_id, target, tree)
+    }
+
     /// Marks this write as made on someone's behalf rather than at a
     /// client's plain request (doc "Operations and their origin"): a trashing.
     /// The watcher's flush gets [`ORIGIN_WATCHER`] from its context

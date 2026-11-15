@@ -241,7 +241,8 @@ fn test_unload_refused_during_a_coordinated_revert() {
     let uuid = state.init_repo(&root, None, None, false).unwrap();
 
     // Simulate an in-progress coordinated revert.
-    *state.repo(uuid).unwrap().revert_lock.lock().unwrap() = Some(RevertLock { ops: vec![] });
+    *state.repo(uuid).unwrap().revert_lock.lock().unwrap() =
+        Some(RevertLock { ops: vec![], label: None });
 
     // Unload is refused with a 409 while the revert holds the lock.
     let err = state.unload_repo(uuid).unwrap_err();

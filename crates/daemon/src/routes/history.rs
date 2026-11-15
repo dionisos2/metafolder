@@ -228,28 +228,74 @@ pub(super) async fn get_label_detail(
         };
 
         let mut label = label_json(&*conn, id)?;
-        let all = crate::store::Log::label_ops(&*conn, id)?;
+        // The ids, not the operations: a count and a window need no more, and
+        // a stub's operations are made up only for the ones shown.
+        let all = crate::store::Log::label_op_ids(&*conn, id)?;
         // HEAD and the count are the whole label's, whatever the window.
-        label["is_head"] = json!(all.iter().any(|op| Some(op.id) == head));
+        label["is_head"] = json!(all.iter().any(|op| Some(*op) == head));
         label["operation_count"] = json!(all.len());
-        let selected: Vec<&crate::log::OpRow> = match params.op {
+        let selected: Vec<i64> = match params.op {
             Some(op_id) => {
-                let op = all.iter().find(|op| op.id == op_id).ok_or_else(|| {
-                    ApiError::not_found(format!("operation {op_id} is not in label {id}"))
-                })?;
-                vec![op]
+                if !all.contains(&op_id) {
+                    return Err(ApiError::not_found(format!(
+                        "operation {op_id} is not in label {id}"
+                    )));
+                }
+                vec![op_id]
             }
             None => all
                 .iter()
+                .copied()
                 .skip(params.offset.unwrap_or(0))
                 .take(params.limit.unwrap_or(usize::MAX))
                 .collect(),
         };
         let mut ops = Vec::with_capacity(selected.len());
-        for op in selected {
-            ops.push(op_json(&conn, op, true)?);
+        for op_id in selected {
+            let op = crate::store::Log::op(&*conn, op_id)?
+                .ok_or_else(|| ApiError::internal(format!("operation {op_id} vanished")))?;
+            ops.push(op_json(&conn, &op, true)?);
         }
         Ok(Json(json!({"label": label, "operations": ops})))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+pub(super) struct LabelListParams {
+    /// `none` (the default): the units of work; a label id: the labels
+    /// nested in it.
+    #[serde(default)]
+    parent: Option<String>,
+    #[serde(default)]
+    before: Option<i64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// `GET /repos/:repo/log/labels`: label summaries, newest first (doc "Label
+/// summaries") — what a client showing the log by label reads, the
+/// operations of a label being read only when it goes into one.
+pub(super) async fn list_labels(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<LabelListParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let under = match params.parent.as_deref() {
+        None | Some("none") => crate::log_view::Under::Roots,
+        Some(id) => crate::log_view::Under::Label(
+            id.parse().map_err(|_| ApiError::bad_request(format!("invalid parent '{id}'")))?,
+        ),
+    };
+    let query = crate::log_view::SummaryQuery {
+        under,
+        before: params.before,
+        limit: params.limit.unwrap_or(50),
+    };
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        Ok(Json(crate::log_view::label_summaries(&*conn, &query)?))
     })
     .await
 }

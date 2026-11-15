@@ -35,6 +35,7 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 |`label_kids` |parent label · child label |— |the labels' nesting |
 |`label_keys` |command key |label id |a command finding its label at its next write |
 |`reverted_by` |op id · op id of a revert of it |— |whether an operation still stands ([[The undo selection]]) |
+|`label_reverts` |`0` · reverting label · reverted label, and `1` · reverted label · reverting label |`1` if the whole label was reverted, else `0` |what a label reverts and what reverts it, without reading operations ([[Label summaries]]) |
 |`watcher_ops`, `user_ops` |op id |— |the two retention classes ([[Automatic retention]]) |
 
 A record's rows are ''one key'', its dense id, in `records`: reading a record is one

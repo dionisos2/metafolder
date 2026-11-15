@@ -147,7 +147,7 @@ fn a_store_of_layout_7_converts_when_it_opens() {
     );
     drop(kv);
 
-    assert_eq!(layout(dir.path()), Some(8i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(9i64.to_be_bytes().to_vec()));
     let env = raw_env(dir.path());
     let legacy: Vec<_> =
         ["field_cells", "row_owner", "by_field"].map(|name| (name, open_raw(&env, name))).into();
@@ -175,7 +175,7 @@ fn a_converted_store_is_not_converted_again() {
     drop(KvStore::open(dir.path()).unwrap());
     let after = std::fs::read(dir.path().join("data.mdb")).unwrap();
     assert_eq!(before.len(), after.len());
-    assert_eq!(layout(dir.path()), Some(8i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(9i64.to_be_bytes().to_vec()));
 }
 
 /// A metarecord of a store from before has no dense id when the derived data
@@ -205,15 +205,11 @@ fn a_record_without_a_dense_id_is_given_one() {
 }
 
 /// A store of layout 6, whose forest entries held no dense id, converts when
-/// it opens — and keeps its log (doc "Persisted format changes").
+/// it opens — and loses its log, as every store of a layout before 9 does (a
+/// label says what it reverts since: doc "Persisted format changes").
 #[test]
-fn a_store_of_layout_6_converts_and_keeps_its_log() {
+fn a_store_of_layout_6_converts_and_drops_its_log() {
     use metafolder_daemon::store::Log;
-    let (head, ops) = {
-        let dir = fixture();
-        let kv = KvStore::open(dir.path()).unwrap();
-        (kv.head().unwrap(), kv.counts().unwrap().0)
-    };
     let dir = fixture();
     {
         let env = raw_env(dir.path());
@@ -233,8 +229,8 @@ fn a_store_of_layout_6_converts_and_keeps_its_log() {
         w.commit().unwrap();
     }
     let kv = KvStore::open(dir.path()).unwrap();
-    assert_eq!(kv.head().unwrap(), head, "the log is kept");
-    assert_eq!(kv.counts().unwrap().0, ops);
+    assert_eq!(kv.head().unwrap(), None, "the log is dropped");
+    assert_eq!(kv.counts().unwrap(), (0, 0));
     let root = kv.metarecords().unwrap().into_iter().find(|&u| index_of(&kv, u).is_none()).unwrap();
     assert_eq!(kv.children("loc", root).unwrap().len(), 30);
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
@@ -246,7 +242,7 @@ fn a_store_of_layout_6_converts_and_keeps_its_log() {
 fn a_new_store_records_its_layout() {
     let dir = TempDir::new("kv-layout-new");
     drop(KvStore::open(dir.path()).unwrap());
-    assert_eq!(layout(dir.path()), Some(8i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(9i64.to_be_bytes().to_vec()));
 }
 
 /// A store of the first layout is migrated when it opens: every record and
@@ -276,6 +272,14 @@ fn a_store_of_the_first_layout_migrates_when_it_opens() {
     assert!(layout(dir.path()).is_some());
 }
 
+/// The next operation id of the store at `dir`, as its `meta` table holds it.
+fn next_op(dir: &std::path::Path) -> i64 {
+    let env = raw_env(dir);
+    let meta = open_raw(&env, "meta");
+    let r = env.read_txn().unwrap();
+    i64::from_be_bytes(meta.get(&r, b"next_op").unwrap().unwrap().try_into().unwrap())
+}
+
 /// A store of the history tree's layout (2: operations chained to a parent,
 /// `op_children`, `restorations`) has its log **emptied** when it opens — not
 /// converted, the user's decision (doc "The operation log") — and keeps every
@@ -286,11 +290,12 @@ fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
     use metafolder_daemon::store::Log;
     let (before, last_op) = {
         let dir = fixture();
+        let last_op = next_op(dir.path()) - 1;
+        assert!(last_op > 0, "the fixture wrote a log");
         let kv = KvStore::open(dir.path()).unwrap();
-        assert!(kv.counts().unwrap().0 > 0, "the fixture wrote a log");
         let records: Vec<_> =
             kv.metarecords().unwrap().into_iter().map(|u| (u, rows_of(&kv, u))).collect();
-        (records, kv.head().unwrap().unwrap())
+        (records, last_op)
     };
     let dir = fixture();
     {

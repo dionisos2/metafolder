@@ -280,3 +280,170 @@ pub fn snapshots_json(log: &dyn Log, op_id: i64, after: bool) -> Result<serde_js
     }
     Ok(serde_json::Value::Array(out))
 }
+
+// ── Label summaries (doc "Label summaries") ──────────────────────────────────
+
+/// Which labels `GET /repos/:repo/log/labels` lists.
+#[derive(Debug, Clone, Copy)]
+pub enum Under {
+    /// The units of work: the labels that are nested in none.
+    Roots,
+    /// The labels nested directly in one.
+    Label(i64),
+}
+
+/// One request for label summaries.
+#[derive(Debug, Clone, Copy)]
+pub struct SummaryQuery {
+    pub under: Under,
+    /// Only the labels older than this one: where the last page stopped.
+    pub before: Option<i64>,
+    pub limit: usize,
+}
+
+/// The most summaries one request returns.
+pub const SUMMARIES_MAX: usize = 500;
+
+/// Whether a label is standing or has been undone, whole or in part.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Undone {
+    No,
+    Partly,
+    Fully,
+}
+
+/// Whether the operations the watcher wrote on the filesystem's behalf: its
+/// origin, or the types it records when no origin says.
+fn is_watcher_op(op: &OpRow) -> bool {
+    op.origin.as_deref() == Some(crate::log::ORIGIN_WATCHER)
+        || (op.reverts_op_id.is_none()
+            && matches!(op.op_type.as_str(), "file_deleted" | "file_moved" | "file_modified"))
+}
+
+/// Whether `label` stands, from what the labels say of each other and nothing
+/// read of the operations: a revert that undid it whole (or one that undid the
+/// label it is nested in whole) makes it undone unless that revert is itself
+/// undone whole — a redo — and one that undid some of its operations makes it
+/// partly undone. Not exact when partial reverts overlap: it says `partly`
+/// where it could say `fully`, never the other way.
+fn undone_state(log: &dyn Log, label: i64, memo: &mut HashMap<i64, Undone>) -> Result<Undone> {
+    if let Some(known) = memo.get(&label) {
+        return Ok(*known);
+    }
+    // A cycle (a revert that names itself, a corrupted store) stands.
+    memo.insert(label, Undone::No);
+    let mut chain = vec![(label, true)];
+    let mut next = log.labels(&[label])?.remove(&label).and_then(|m| m.parent);
+    while let Some(parent) = next {
+        if chain.len() > crate::log::MAX_TREE_DEPTH {
+            break;
+        }
+        chain.push((parent, false));
+        next = log.labels(&[parent])?.remove(&parent).and_then(|m| m.parent);
+    }
+    let mut state = Undone::No;
+    for (of, own) in chain {
+        for (reverter, whole) in log.label_reverted_by(of)? {
+            if undone_state(log, reverter, memo)? == Undone::Fully {
+                continue;
+            }
+            if whole {
+                state = Undone::Fully;
+            } else if own && state == Undone::No {
+                state = Undone::Partly;
+            }
+        }
+    }
+    memo.insert(label, state);
+    Ok(state)
+}
+
+/// The body of `GET /repos/:repo/log/labels`: labels, newest first, each with
+/// what the log knows of it without reading an operation — how many it holds,
+/// its first and its last, who wrote it, what it reverts and is reverted by.
+/// The cost is a few keys per label, whatever the number of operations in it.
+pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Value> {
+    let limit = q.limit.clamp(1, SUMMARIES_MAX);
+    let mut ids: Vec<i64> = Vec::new();
+    let mut more = false;
+    match q.under {
+        Under::Label(parent) => {
+            let mut kids = log.label_children(parent)?;
+            kids.reverse();
+            kids.retain(|id| q.before.is_none_or(|b| *id < b));
+            more = kids.len() > limit;
+            kids.truncate(limit);
+            ids = kids;
+        }
+        Under::Roots => {
+            const CHUNK: usize = 256;
+            let mut before = q.before;
+            'scan: loop {
+                let chunk = log.label_ids_before(before, CHUNK)?;
+                if chunk.is_empty() {
+                    break;
+                }
+                before = chunk.last().copied();
+                let metas = log.labels(&chunk)?;
+                for id in &chunk {
+                    if metas.get(id).is_some_and(|m| m.parent.is_none()) {
+                        if ids.len() == limit {
+                            more = true;
+                            break 'scan;
+                        }
+                        ids.push(*id);
+                    }
+                }
+                if chunk.len() < CHUNK {
+                    break;
+                }
+            }
+        }
+    }
+    let metas = log.labels(&ids)?;
+    let head = log.head()?;
+    let head_label = match head {
+        Some(h) => log.op(h)?.map(|op| op.label_id),
+        None => None,
+    };
+    let mut memo = HashMap::new();
+    let mut labels = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let Some(meta) = metas.get(id) else { continue };
+        let first = log.label_first_op(*id)?;
+        let first_op = match first {
+            Some(f) => log.op(f)?,
+            None => None,
+        };
+        let undone = match undone_state(log, *id, &mut memo)? {
+            Undone::No => serde_json::Value::Null,
+            Undone::Partly => json!("partly"),
+            Undone::Fully => json!("fully"),
+        };
+        let marks = |pairs: Vec<(i64, bool)>| -> serde_json::Value {
+            pairs
+                .into_iter()
+                .map(|(label, whole)| json!({"label": label, "whole": whole}))
+                .collect()
+        };
+        let mut value = label_json(*id, meta);
+        value["operations"] = json!(log.label_op_count(*id)?);
+        value["first_op"] = json!(first);
+        value["last_op"] = json!(log.label_last_op(*id)?);
+        value["origin"] = json!(first_op.as_ref().and_then(|o| o.origin.clone()));
+        value["watcher"] = json!(first_op.as_ref().is_some_and(is_watcher_op));
+        value["children"] = json!(log.label_children(*id)?.len());
+        value["reverts"] = marks(log.label_reverts(*id)?);
+        value["reverted_by"] = marks(log.label_reverted_by(*id)?);
+        value["undone"] = undone;
+        value["is_head"] = json!(head_label == Some(*id));
+        labels.push(value);
+    }
+    Ok(json!({
+        "head": head,
+        "head_label": head_label,
+        "labels": labels,
+        "next_before": if more { ids.last().copied() } else { None },
+        "total_labels": log.counts()?.1,
+    }))
+}

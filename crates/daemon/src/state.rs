@@ -183,6 +183,9 @@ pub struct RevertLock {
     /// The operations `start` fixed. `commit` may only narrow this set, never
     /// widen it.
     pub ops: Vec<i64>,
+    /// The label the revert undoes whole, when its target was one (doc "Label
+    /// summaries").
+    pub label: Option<i64>,
 }
 
 /// The pair stores a repository hosts close with it (doc "The sync database").

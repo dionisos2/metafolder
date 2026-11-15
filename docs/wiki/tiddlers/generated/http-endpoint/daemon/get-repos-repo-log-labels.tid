@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/log/labels
+catalog: HTTP endpoint
+target: GET /repos/:repo/log/labels
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``list_labels`` |

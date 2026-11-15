@@ -163,6 +163,30 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::label_children($conn, label)
             }
+            fn label_op_count(&self, label: i64) -> Result<i64> {
+                let $me = self;
+                Log::label_op_count($conn, label)
+            }
+            fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
+                let $me = self;
+                Log::label_op_ids($conn, label)
+            }
+            fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
+                let $me = self;
+                Log::label_ids_before($conn, before, max)
+            }
+            fn label_last_op(&self, label: i64) -> Result<Option<i64>> {
+                let $me = self;
+                Log::label_last_op($conn, label)
+            }
+            fn label_reverts(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+                let $me = self;
+                Log::label_reverts($conn, label)
+            }
+            fn label_reverted_by(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+                let $me = self;
+                Log::label_reverted_by($conn, label)
+            }
             fn reverters(&self, op: i64) -> Result<Vec<i64>> {
                 let $me = self;
                 Log::reverters($conn, op)
@@ -454,6 +478,23 @@ pub trait Log {
     fn label_first_op(&self, label: i64) -> Result<Option<i64>>;
     /// A label's children, oldest first.
     fn label_children(&self, label: i64) -> Result<Vec<i64>>;
+    /// How many operations a label holds of its own, counted without reading
+    /// them (a stub of a write to many records counts for all of its own).
+    fn label_op_count(&self, label: i64) -> Result<i64>;
+    /// The ids of a label's own operations, oldest first, without reading
+    /// them (a stub's are the ids between its first and its last).
+    fn label_op_ids(&self, label: i64) -> Result<Vec<i64>>;
+    /// The ids of the labels older than `before` (all when none), newest
+    /// first, at most `max`.
+    fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>>;
+    /// A label's newest operation of its own, `None` when it has none.
+    fn label_last_op(&self, label: i64) -> Result<Option<i64>>;
+    /// The labels `label` reverts, each with whether the whole label (its
+    /// children included) was reverted, or only some of its operations (doc
+    /// "Label summaries").
+    fn label_reverts(&self, label: i64) -> Result<Vec<(i64, bool)>>;
+    /// The labels that revert `label`, as [`Self::label_reverts`] says them.
+    fn label_reverted_by(&self, label: i64) -> Result<Vec<(i64, bool)>>;
     /// The operations that reverted `op` (their `reverts_op_id` is `op`),
     /// oldest first.
     fn reverters(&self, op: i64) -> Result<Vec<i64>>;
@@ -957,6 +998,12 @@ pub trait WriteTxn: Store {
     fn create_command_label(&self, meta: &LabelMeta, key: Uuid) -> Result<i64>;
     /// Removes a label that holds nothing (no operation, no child).
     fn drop_label(&self, id: i64) -> Result<()>;
+    /// Notes that `reverter`'s operations revert `reverted`'s: the whole label
+    /// when `tree`, some of its operations otherwise. Said again, a whole label
+    /// stays whole.
+    fn note_label_reverts(&self, _reverter: i64, _reverted: i64, _tree: bool) -> Result<()> {
+        Ok(())
+    }
     /// Records the label the watcher's flushes are opened under.
     fn set_watcher_label(&self, id: i64) -> Result<()>;
     /// Appends `ops` under `label`, written at `timestamp`; returns the id
