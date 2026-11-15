@@ -8,6 +8,7 @@ pub mod eligibility;
 pub mod error;
 pub mod executor;
 pub mod fingerprint;
+pub mod folding;
 pub mod forest;
 pub mod forest_query;
 pub mod fs_meta;

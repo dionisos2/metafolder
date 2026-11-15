@@ -84,7 +84,8 @@ as ever, without a number. A record's value is its rows, then — when it has an
 those numbers and marks, so one written before reads unchanged
 ([[Persisted format changes]]).
 
-The fold (`KvStore::fold`, a reindex, a part past its limit) writes the entries into
+The fold (`KvStore::fold`, a reindex, a part past its limit, and the idle fold of
+[[Folding in idle time]], one list at a time) writes the entries into
 the records of their part and empties the list; a metarecord that is gone is not
 written back.
 

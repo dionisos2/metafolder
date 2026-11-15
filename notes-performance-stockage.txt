@@ -532,6 +532,18 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       aux changés. Étape 10 pourrait déplacer ce calcul au repli.
       Suite complète verte (slow_log::..._waited_for_the_database : timing,
       flaky sous charge, vert 3/3 seul).
+  10a FAIT (15 nov. 2026) : repli en inactivité côté daemon (doc "Folding in
+      idle time", folding.rs). KvStore::fold_step = UNE liste (partie de
+      masse, événements d'un champ, trigrammes en attente d'un champ), la
+      plus grosse d'abord, une transaction chacune. Un thread par dépôt
+      replie après 30 s sans activité, puis 1 s entre deux listes.
+      POST /repos/:repo/activity (204) note l'activité.
+      ÉCARTS : constantes IDLE/NEXT dans le code (pas de clé de config
+      obligatoire) ; seule la route explicite compte comme activité (pas les
+      requêtes : une GUI qui interroge sans cesse bloquerait le repli) ;
+      l'avant des remplacements reste calculé à l'écriture.
+      RESTE 10b : la GUI doit envoyer le signal d'activité (touches/clics,
+      throttlé, dépôts des workspaces visibles).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

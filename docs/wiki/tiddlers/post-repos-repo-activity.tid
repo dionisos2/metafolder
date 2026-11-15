@@ -1,0 +1,9 @@
+title: POST /repos/:repo/activity
+tags: [[HTTP endpoint]] Storage
+kind: reference
+audience: dev
+summary: Says the user is at work: what writes left pending is folded only after a quiet while.
+
+No body; answers `204`. The GUI sends it on the user's actions; the daemon folds a
+repository's pending lists once thirty seconds have passed without one
+([[Folding in idle time]]).

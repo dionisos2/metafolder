@@ -1146,19 +1146,44 @@ impl KvTxn<'_> {
     /// value go. What a text that changed or left wrote before stays — a
     /// candidate too many, never one too few.
     pub(super) fn fold_grams(&self) -> Result<()> {
-        let t = self.t;
+        for field in self.gram_fields()? {
+            self.fold_gram_field(&field)?;
+        }
+        Ok(())
+    }
+
+    /// The fields that have trigram state.
+    pub(super) fn gram_fields(&self) -> Result<Vec<String>> {
         let mut fields: Vec<String> = Vec::new();
-        for entry in t.grams.prefix_iter(&self.txn.borrow(), &[GRAM_STATE])? {
+        for entry in self.t.grams.prefix_iter(&self.txn.borrow(), &[GRAM_STATE])? {
             let (name, _) = unesc(&entry?.0[1..])?;
             fields.push(String::from_utf8(name).context("a field name")?);
         }
         fields.extend(self.grams_changed.borrow().iter().cloned());
         fields.sort();
         fields.dedup();
-        for field in fields {
+        Ok(fields)
+    }
+
+    /// What [`Self::fold_gram_field`] has to do for `field`, as a size to
+    /// rank it by: the ids pending, one more for leftovers to purge.
+    pub(super) fn gram_fold_size(&self, field: &str) -> Result<u64> {
+        let state = self.gram_state(field)?;
+        if !state.by_ids {
+            return Ok(0);
+        }
+        let pending = self.read_chunked(SETS, &set_prefix(GRAM_PENDING, Some(field)))?;
+        Ok(pending.len() + u64::from(state.leftovers))
+    }
+
+    /// [`Self::fold_grams`] for one field.
+    pub(super) fn fold_gram_field(&self, field: &str) -> Result<()> {
+        let t = self.t;
+        let field = field.to_string();
+        {
             let mut state = self.gram_state(&field)?;
             if !state.by_ids {
-                continue;
+                return Ok(());
             }
             let pending = self.read_chunked(SETS, &set_prefix(GRAM_PENDING, Some(&field)))?;
             for id in &pending {
@@ -1590,6 +1615,20 @@ impl KvStore {
     /// Integrates what the writes left pending for a quiet moment: the
     /// trigrams of the fields kept by metarecord (doc "Text search in the
     /// store"). A reindex does as much.
+    /// Folds the biggest list pending — a part's entries, a field's events
+    /// or a field's pending trigrams — in one transaction of its own, so
+    /// that what waits for the store waits for one list (doc "Folding in
+    /// idle time"). Returns whether there was one.
+    pub fn fold_step(&mut self) -> Result<bool> {
+        let txn = KvTxn::new(self)?;
+        let folded = txn.fold_biggest()?;
+        txn.finish()?;
+        if folded {
+            self.mass.store(self.pending_mass()? > 0, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(folded)
+    }
+
     pub fn fold(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
         txn.fold_all_mass()?;

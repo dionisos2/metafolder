@@ -61,6 +61,17 @@ pub(super) async fn clear_slow_log(
     Ok(Json(json!({"cleared": cleared})))
 }
 
+/// `POST /repos/:repo/activity` — the user is at work (doc "Folding in idle
+/// time"): what writes left pending is folded only after a quiet while. Sent
+/// by the GUI on the user's actions; answers `204`.
+pub(super) async fn note_activity(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    state.repo(parse_uuid(&repo)?)?.note_activity();
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
 /// The log's directory for a loaded repository. Reading it does not need the
 /// repository to be *ready*: a repository still warming is exactly one whose
 /// slowness someone may be trying to explain.

@@ -119,6 +119,9 @@ pub struct RepoState {
     /// The files waiting for their hash to be refreshed (doc "Content hashes
     /// kept fresh"), filled by the flush and reconcile, drained by the worker.
     pub hash_queue: crate::hashing::HashQueue,
+    /// When the repository last had activity, which the folding worker waits
+    /// out (doc "Folding in idle time").
+    pub activity: crate::folding::Activity,
     /// The rule index (doc "The watch rule index") and how far the
     /// ingest filter may trust it. Behind its own lock, held for a pointer copy:
     /// the ingest thread reads it without ever waiting for the connection.
@@ -253,6 +256,7 @@ impl RepoState {
                 crate::watch_activity::DEFAULT_CAP,
             )),
             hash_queue: crate::hashing::HashQueue::default(),
+            activity: crate::folding::Activity::default(),
             watch_rules: Mutex::new(RulesSlot::default()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
@@ -1081,11 +1085,12 @@ impl RepoState {
         let quiet = self.watch_quiet_period;
         let executor = crate::executor::spawn(self, quiet);
         let hasher = crate::hashing::spawn_worker(self);
+        let folder = crate::folding::spawn_worker(self);
         let watcher = {
             let _p = Phase::begin(&who, "start the watcher");
             crate::watcher::start(self, executor.pinger())?
         };
-        *self.handles.lock_recover() = Some(RepoHandles { watcher, executor, hasher });
+        *self.handles.lock_recover() = Some(RepoHandles { watcher, executor, hasher, folder });
         // Before the placement: a drive plugged in meanwhile is a change.
         crate::mount::follow::register(self);
 
@@ -1149,6 +1154,12 @@ impl RepoState {
 
     /// Rejects a metadata write with `423 Locked` while a coordinated revert
     /// is in progress (doc "Filesystem coordination").
+    /// Records that the user is at work: what is pending is folded only
+    /// after a quiet while (doc "Folding in idle time").
+    pub fn note_activity(&self) {
+        self.activity.note();
+    }
+
     pub fn ensure_writable(&self) -> Result<(), ApiError> {
         if self.is_revert_locked() {
             Err(ApiError::locked("repository is in a coordinated revert; commit or abort it first"))
@@ -1270,6 +1281,7 @@ pub struct RepoHandles {
     pub watcher: crate::watcher::WatcherHandle,
     pub executor: crate::executor::ExecutorHandle,
     pub hasher: crate::hashing::WorkerHandle,
+    pub folder: crate::folding::FoldHandle,
 }
 
 pub struct AppState {

@@ -577,4 +577,49 @@ impl KvTxn<'_> {
         }
         Ok(())
     }
+
+    /// Folds the biggest list pending (see `KvStore::fold_step`): size is the
+    /// bytes of a part's entries or of a field's events, the ids pending of a
+    /// field's trigrams. Returns whether any list was.
+    pub(in super::super) fn fold_biggest(&self) -> Result<bool> {
+        enum List {
+            Part(u32),
+            Events(String),
+            Grams(String),
+        }
+        let mut best: Option<(u64, List)> = None;
+        let mut consider = |size: u64, list: List| {
+            if size > 0 && best.as_ref().is_none_or(|(b, _)| size > *b) {
+                best = Some((size, list));
+            }
+        };
+        let mut parts: std::collections::BTreeMap<u32, u64> = Default::default();
+        for entry in self.t.mass.iter(&self.txn.borrow())? {
+            let (k, v) = entry?;
+            let part = u32::from_be_bytes(k[..4].try_into().expect("a part"));
+            *parts.entry(part).or_default() += (k.len() + v.len()) as u64;
+        }
+        for (part, size) in parts {
+            consider(size, List::Part(part));
+        }
+        let mut fields: std::collections::BTreeMap<String, u64> = Default::default();
+        for entry in self.t.events.iter(&self.txn.borrow())? {
+            let (k, v) = entry?;
+            let (name, _) = unesc(k)?;
+            let name = String::from_utf8(name).context("a field name")?;
+            *fields.entry(name).or_default() += (k.len() + v.len()) as u64;
+        }
+        for (field, size) in fields {
+            consider(size, List::Events(field));
+        }
+        for field in self.gram_fields()? {
+            consider(self.gram_fold_size(&field)?, List::Grams(field));
+        }
+        match best {
+            None => Ok(false),
+            Some((_, List::Part(part))) => self.fold_part(part).map(|()| true),
+            Some((_, List::Events(field))) => self.fold_events(&field).map(|()| true),
+            Some((_, List::Grams(field))) => self.fold_gram_field(&field).map(|()| true),
+        }
+    }
 }

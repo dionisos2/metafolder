@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/activity
+catalog: HTTP endpoint
+target: POST /repos/:repo/activity
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``note_activity`` |
