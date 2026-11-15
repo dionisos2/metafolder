@@ -17,8 +17,13 @@ A handful of tests depend on real time, and fail now and then in a full
 These tests are marked `#[ignore = "timing: ..."]`. `scripts/dev/run-tests.sh` (so
 `check.sh`) runs the suite without them, then runs only them, one at a time
 (`-- --ignored --test-threads=1`), once nothing else loads the machine; its summary
-prints a total for each pass. `--no-timing` leaves the second pass out. A new test
-that asserts on, or sets a threshold against, the clock gets the attribute; a
+prints a total for each pass. `--no-timing` leaves the second pass out. Two kinds
+carry it: those that measure or threshold a duration (`slow_log.rs`, the two
+linearity tests), and those whose waits are budgets that a busy machine can
+exhaust — every test of `on_every_regime!` (`watcher_e2e.rs`, `early_journey.rs`;
+the macro adds the attribute), `watch_source.rs`, the `bash_complete` tests, the
+`test_sync_*` tests of `cli_e2e/duplicates.rs`. A new test
+of either kind gets the attribute; a
 counted assertion does not ([[Performance testing]]).
 
 !! Telling it from a regression

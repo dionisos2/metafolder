@@ -173,6 +173,7 @@ fn dead_socket() -> PathBuf {
 // ── The choice at load ────────────────────────────────────────────────────────
 
 #[test]
+#[ignore = "timing: may fail on a loaded machine, see the note Tests that fail under load"]
 fn test_without_a_broker_the_notify_source_watches_and_says_so() {
     // No option anywhere: the socket is probed, and the fallback is announced
     // (doc "Watch sources and regimes"). The socket name is
@@ -198,6 +199,7 @@ fn test_without_a_broker_the_notify_source_watches_and_says_so() {
 }
 
 #[test]
+#[ignore = "timing: may fail on a loaded machine, see the note Tests that fail under load"]
 fn test_a_root_the_broker_refuses_falls_back_with_the_brokers_reason() {
     let socket = dead_socket();
     let (repo, root) = setup("refused", fanotify_settings(&socket));
@@ -213,6 +215,7 @@ fn test_a_root_the_broker_refuses_falls_back_with_the_brokers_reason() {
 // ── The fanotify source through the pipeline ──────────────────────────────────
 
 #[test]
+#[ignore = "timing: may fail on a loaded machine, see the note Tests that fail under load"]
 fn test_events_from_the_broker_become_metarecords() {
     let socket = dead_socket(); // the stand-in binds this name
     let (repo, root) = setup("events", fanotify_settings(&socket));
@@ -235,6 +238,7 @@ fn test_events_from_the_broker_become_metarecords() {
 }
 
 #[test]
+#[ignore = "timing: may fail on a loaded machine, see the note Tests that fail under load"]
 fn test_an_excluded_subtree_is_not_recorded_under_the_coverage_source() {
     // `mfr_watch_exceeded` means *leave this subtree uncovered* in every
     // regime (doc "Watch sources and regimes") — under coverage
@@ -271,6 +275,7 @@ fn test_an_excluded_subtree_is_not_recorded_under_the_coverage_source() {
 }
 
 #[test]
+#[ignore = "timing: may fail on a loaded machine, see the note Tests that fail under load"]
 fn test_an_excluded_directory_s_own_move_is_recorded_under_the_coverage_source() {
     // The excluded directory is an entry of a covered one: the budget regime
     // sees its move through the parent's watch, and so must the coverage
@@ -355,6 +360,7 @@ impl Drop for CountingBroker {
 }
 
 #[test]
+#[ignore = "timing: may fail on a loaded machine, see the note Tests that fail under load"]
 fn test_unloading_ends_the_broker_connection_for_good() {
     // The client thread holds no `Arc<RepoState>`, but it must not outlive the
     // repository either: an unload closes the subscription, and nothing
