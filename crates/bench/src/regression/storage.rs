@@ -49,7 +49,8 @@ pub const WRITES: &[&str] =
 pub const MASS_OPS: &[&str] = &["add", "remove", "replace", "delete"];
 
 /// Every scenario id, in the order they run: the reads, the writes, the mass
-/// writes, then (after the mass phase) the reads again.
+/// writes, then (after the mass phase) the reads again, and once more when the
+/// daemon has folded what the mass phase left pending (`.after_fold`).
 pub fn ids() -> Vec<String> {
     let mut ids: Vec<String> = READS.iter().chain(WRITES).map(|s| s.to_string()).collect();
     for op in MASS_OPS {
@@ -60,6 +61,7 @@ pub fn ids() -> Vec<String> {
         }
     }
     ids.extend(READS.iter().map(|r| format!("{r}.after_mass")));
+    ids.extend(READS.iter().map(|r| format!("{r}.after_fold")));
     ids
 }
 
@@ -328,6 +330,30 @@ async fn go_cold(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
+/// Waits, saying nothing the daemon would count as activity, until the daemon
+/// has folded every list the mass phase left pending (doc "Folding in idle
+/// time"): it folds after thirty seconds without activity, one list a second.
+/// The polling says it is not activity, or it would keep the fold from starting.
+async fn wait_for_the_fold(ctx: &Ctx) -> Result<()> {
+    let url = format!("{}/wear", ctx.base());
+    let deadline = Instant::now() + Duration::from_secs(600);
+    loop {
+        let wear: Json = client()
+            .get(&url)
+            .header(metafolder_core::context::ACTIVITY_HEADER, "off")
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if wear["mass_entries"] == 0 && wear["events"] == 0 && wear["trigrams_pending"] == 0 {
+            return Ok(());
+        }
+        anyhow::ensure!(Instant::now() < deadline, "the store was not folded in time: {wear}");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 /// A name no earlier run wrote.
 fn fresh(prefix: &str) -> String {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -560,30 +586,44 @@ pub async fn run(
         }
         push(id, values);
     }
-    // The mass phase, then the reads again.
-    if reads(".after_mass").any(|(_, id)| wanted(&id)) {
+    // The mass phase, then the reads again — as the mass phase left the store,
+    // and once the daemon has folded what it left pending.
+    let after = |suffix: &'static str| reads(suffix).any(|(_, id)| wanted(&id));
+    if after(".after_mass") || after(".after_fold") {
         print!("  mass phase: {} mass writes ... ", cond.mass_ops);
         std::io::stdout().flush().ok();
         let t = Instant::now();
         mass_phase(&ctx, cond.mass_ops).await?;
         println!("{:.1}s", t.elapsed().as_secs_f64());
-        for (read_id, id) in reads(".after_mass") {
-            if !wanted(&id) {
+        for suffix in [".after_mass", ".after_fold"] {
+            if !after(suffix) {
                 continue;
             }
-            let mut values = Vec::with_capacity(RUNS);
-            if !cond.cold {
-                read(&read_id, &ctx).await?;
-            }
-            for _ in 0..RUNS {
-                if cond.cold {
-                    go_cold(&ctx).await?;
-                }
+            if suffix == ".after_fold" {
+                print!("  waiting for the idle fold ... ");
+                std::io::stdout().flush().ok();
                 let t = Instant::now();
-                read(&read_id, &ctx).await.with_context(|| format!("scenario {id}"))?;
-                values.push(ms(t.elapsed()));
+                wait_for_the_fold(&ctx).await?;
+                println!("{:.1}s", t.elapsed().as_secs_f64());
             }
-            push(&id, values);
+            for (read_id, id) in reads(suffix) {
+                if !wanted(&id) {
+                    continue;
+                }
+                let mut values = Vec::with_capacity(RUNS);
+                if !cond.cold {
+                    read(&read_id, &ctx).await?;
+                }
+                for _ in 0..RUNS {
+                    if cond.cold {
+                        go_cold(&ctx).await?;
+                    }
+                    let t = Instant::now();
+                    read(&read_id, &ctx).await.with_context(|| format!("scenario {id}"))?;
+                    values.push(ms(t.elapsed()));
+                }
+                push(&id, values);
+            }
         }
     }
     post(&format!("{}/unload", ctx.base()), &json!({})).await?;
@@ -606,6 +646,7 @@ mod tests {
         for read in READS {
             assert!(ids.iter().any(|id| id == read), "{read}");
             assert!(ids.iter().any(|id| *id == format!("{read}.after_mass")), "{read}");
+            assert!(ids.iter().any(|id| *id == format!("{read}.after_fold")), "{read}");
         }
         // Every mass write, both spreads, both sizes.
         for op in ["add", "remove", "replace", "delete"] {

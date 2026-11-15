@@ -613,6 +613,12 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       13,7 | 11,6 ; S 291 | 8,1 | 8,0. Lectures après masse L : tag_text
       965 | 71 | 56 ms, combined_sorted 154 | 11,6 | 10,1. S : combined_sorted
       après masse 14,9 | 65,7 | 73,7 ms (listes en attente, voir plus haut).
+  combined_sorted (SSD, S, --cold, f8bc4e88 + scénarios .after_fold du bench) :
+      avant masse 16,0 ms | après la phase de masse 78,6 | après le repli en
+      inactivité 19,1 (attente 33,6 s). La dégradation vient des listes en
+      attente, que le repli efface : confirmé. Le bench a maintenant les
+      scénarios <lecture>.after_fold (il interroge /wear avec
+      X-Metafolder-Activity: off pour ne pas retarder le repli).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

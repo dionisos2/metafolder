@@ -97,7 +97,7 @@ to four values of a `tag` drawn from 200 (a few held by most files), a `mfr_mime
 * ''Reads'' (`storage.metarecord.get`, `storage.query.*`): a page, a page sorted on the multi-valued `tag`, a frequent tag, the files with no tag, a text search on the tags, a combination sorted by date.
 * ''Writes, one metarecord'' (`storage.write.*`): a deletion, a file created in a folder, a tag added.
 * ''Mass writes'' (`storage.mass.<op>.<spread>.<n>`): a tag added, removed (added first, untimed), the tag field replaced, and a deletion, on `neighbours` (consecutive dense ids) or `scattered` (spread over the repository), `small` (100) or `large` (5 000, or a thirtieth of the files). The size the run uses is printed.
-* ''After the mass phase'': `--mass-ops` (200 by default) random adds, removes and replaces of tags on 50 to 500 files, then the reads again as `<id>.after_mass` — what pending mass writes cost a read.
+* ''After the mass phase'': `--mass-ops` (200 by default) random adds, removes and replaces of tags on 50 to 500 files, then the reads again as `<id>.after_mass` — what pending mass writes cost a read — and once more as `<id>.after_fold`, after the run has waited for the daemon's idle fold ([[Folding in idle time]]; its polling of `/wear` says it is not activity): what a read costs when the pending lists are folded. The wait is at least thirty seconds.
 
 Each scenario is timed three times; a write is never warmed (each run is a new write).
 `--dir DIR` generates the repositories in `DIR` (a hard disk, say) instead of
