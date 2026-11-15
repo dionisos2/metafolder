@@ -33,8 +33,8 @@ use uuid::Uuid;
 use super::super::{get_value, name_key, put_value, In, KvStore, KvTxn, Out, Tables};
 use super::{
     count_prefix, decode_set, dense, hist_bucket, hist_key, long_prefix, part_key, part_prefix,
-    referrers_prefix, search_text, set_prefix, unesc, value_key, ABSENT, COUNT_BITS, GRAM_PENDING,
-    LONG_TEXTS, REFERRERS, SETS, TRIGRAM_MAX, VALUE,
+    posting_prefix, referrers_prefix, search_text, set_prefix, unesc, value_key, ABSENT,
+    COUNT_BITS, GRAM_PENDING, LONG_TEXTS, POSTINGS, REFERRERS, SETS, TRIGRAM_MAX, VALUE,
 };
 
 /// How many events a field's list holds before a write folds it: every read
@@ -490,6 +490,79 @@ impl KvTxn<'_> {
         drop(w);
         self.events.borrow_mut().insert(field.to_string(), 0);
         Ok(())
+    }
+
+    /// The values `field` holds on `ids` as the transaction sees them, each
+    /// with the places — among `ids`, in the order of their ids — of the
+    /// records holding it; a `Nothing` row too. What a replacement of the
+    /// field on `ids` is about to take off, for the log to say.
+    ///
+    /// It reads the field's values, not its records: the postings, the rows of
+    /// the values that have none, the events pending — and one record for each
+    /// distinct value found, to give back the value itself (a key is not
+    /// always its value: an int and a float of one number share it).
+    pub(in super::super) fn values_held(
+        &self,
+        field: &str,
+        ids: &RoaringBitmap,
+    ) -> Result<Vec<(Value, RoaringBitmap)>> {
+        let events = read_events(&self.t, &self.txn.borrow(), field)?;
+        let mut stored: std::collections::BTreeMap<Vec<u8>, RoaringBitmap> = Default::default();
+        for key in named(&events) {
+            stored.entry(key).or_default();
+        }
+        {
+            let txn = self.txn.borrow();
+            let posted = [&[POSTINGS][..], &name_key(field)].concat();
+            let mut posting_keys = BTreeSet::new();
+            for entry in self.t.sets.prefix_iter(&txn, &posted)? {
+                let k = entry?.0;
+                posting_keys.insert(k[posted.len()..k.len() - 2].to_vec());
+            }
+            drop(txn);
+            // The postings this transaction made are not in the table yet.
+            let whole = [&[SETS][..], &posted[..]].concat();
+            for k in self.sets.borrow().keys() {
+                if k.starts_with(&whole) && k.len() >= whole.len() + 2 {
+                    posting_keys.insert(k[whole.len()..k.len() - 2].to_vec());
+                }
+            }
+            for key in posting_keys {
+                let holders = self.read_chunked(SETS, &posting_prefix(field, &key))?;
+                *stored.entry(key).or_default() |= &(holders & ids);
+            }
+        }
+        {
+            let txn = self.txn.borrow();
+            let prefix = part_prefix(field, VALUE);
+            for entry in self.t.parts.prefix_iter(&txn, &prefix)? {
+                let k = entry?.0;
+                let id = dense(&k[k.len() - 4..]);
+                if ids.contains(id) {
+                    stored.entry(k[prefix.len()..k.len() - 4].to_vec()).or_default().insert(id);
+                }
+            }
+        }
+        let places = |holders: &RoaringBitmap| -> RoaringBitmap {
+            holders.iter().map(|id| (ids.rank(id) - 1) as u32).collect()
+        };
+        let mut out = Vec::new();
+        for (key, held) in stored {
+            let holders = &replay(&events, &key, held) & ids;
+            let Some(first) = holders.min() else { continue };
+            let rows = self.load_record(first)?.plain_rows();
+            let value = rows
+                .into_iter()
+                .find(|r| r.name == field && value_key(&r.value).as_deref() == Some(&key[..]))
+                .with_context(|| format!("a row of '{field}' that its holder lacks"))?
+                .value;
+            out.push((value, places(&holders)));
+        }
+        let unknown = &self.read_chunked(SETS, &set_prefix(ABSENT, Some(field)))? & ids;
+        if !unknown.is_empty() {
+            out.push((Value::Nothing, places(&unknown)));
+        }
+        Ok(out)
     }
 
     /// [`Self::fold_events`] for every field with events pending.

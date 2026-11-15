@@ -1183,7 +1183,9 @@ impl<'c> Writer<'c> {
     pub fn mass_add(&mut self, name: &str, value: Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
         self.validate_value_type(name, &value)?;
         if let Some(ids) = self.tx.dense_ids(uuids, true)? {
-            if let Some(changed) = self.mass_logged(MassKind::Add, name, &value, &ids)? {
+            if let Some(changed) =
+                self.mass_logged(MassKind::Add, name, std::slice::from_ref(&value), &ids)?
+            {
                 return self.in_request_order(uuids, &changed);
             }
         }
@@ -1197,7 +1199,9 @@ impl<'c> Writer<'c> {
     /// records it changed.
     pub fn mass_remove(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
         if let Some(ids) = self.tx.dense_ids(uuids, false)? {
-            if let Some(changed) = self.mass_logged(MassKind::Remove, name, value, &ids)? {
+            if let Some(changed) =
+                self.mass_logged(MassKind::Remove, name, std::slice::from_ref(value), &ids)?
+            {
                 self.field_types.remove(name); // rows removed: the type may have unlocked
                 return self.in_request_order(uuids, &changed);
             }
@@ -1216,6 +1220,17 @@ impl<'c> Writer<'c> {
         uuids: &[Uuid],
     ) -> Result<Vec<Uuid>> {
         let kept = collapse_duplicates(&values);
+        if !kept.is_empty() {
+            for value in &kept {
+                self.validate_value_type(name, value)?;
+            }
+            if let Some(ids) = self.tx.dense_ids(uuids, true)? {
+                if let Some(changed) = self.mass_logged(MassKind::Replace, name, &kept, &ids)? {
+                    self.field_types.remove(name); // rows replaced: the type may have unlocked
+                    return self.in_request_order(uuids, &changed);
+                }
+            }
+        }
         self.mass(MassKind::Replace, name, kept, uuids, move |w, uuid| {
             w.set_field_multi(uuid, name, values.clone())?;
             Ok(true)
@@ -1224,6 +1239,12 @@ impl<'c> Writer<'c> {
 
     /// Removes `name` from every one of `uuids`; the records that held it.
     pub fn mass_unset(&mut self, name: &str, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        if let Some(ids) = self.tx.dense_ids(uuids, false)? {
+            if let Some(changed) = self.mass_logged(MassKind::Replace, name, &[], &ids)? {
+                self.field_types.remove(name); // rows removed: the type may have unlocked
+                return self.in_request_order(uuids, &changed);
+            }
+        }
         self.mass(MassKind::Replace, name, Vec::new(), uuids, |w, uuid| {
             Ok(w.delete_fields_named(uuid, name)? > 0)
         })
@@ -1240,7 +1261,9 @@ impl<'c> Writer<'c> {
         ids: &RoaringBitmap,
     ) -> Result<RoaringBitmap> {
         self.validate_value_type(name, &value)?;
-        if let Some(changed) = self.mass_logged(MassKind::Add, name, &value, ids)? {
+        if let Some(changed) =
+            self.mass_logged(MassKind::Add, name, std::slice::from_ref(&value), ids)?
+        {
             return Ok(changed);
         }
         let uuids = self.tx.uuids_of(ids)?;
@@ -1256,12 +1279,49 @@ impl<'c> Writer<'c> {
         value: &Value,
         ids: &RoaringBitmap,
     ) -> Result<RoaringBitmap> {
-        if let Some(changed) = self.mass_logged(MassKind::Remove, name, value, ids)? {
+        if let Some(changed) =
+            self.mass_logged(MassKind::Remove, name, std::slice::from_ref(value), ids)?
+        {
             self.field_types.remove(name); // rows removed: the type may have unlocked
             return Ok(changed);
         }
         let uuids = self.tx.uuids_of(ids)?;
         let changed = self.mass_remove(name, value, &uuids)?;
+        Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
+    }
+
+    /// Replaces the rows of `name` by `values` on the records `ids`, which all
+    /// count as changed: [`Self::mass_set`] for a caller that holds dense ids.
+    pub fn mass_set_ids(
+        &mut self,
+        name: &str,
+        values: Vec<Value>,
+        ids: &RoaringBitmap,
+    ) -> Result<RoaringBitmap> {
+        let kept = collapse_duplicates(&values);
+        if !kept.is_empty() {
+            for value in &kept {
+                self.validate_value_type(name, value)?;
+            }
+            if let Some(changed) = self.mass_logged(MassKind::Replace, name, &kept, ids)? {
+                self.field_types.remove(name); // rows replaced: the type may have unlocked
+                return Ok(changed);
+            }
+        }
+        let uuids = self.tx.uuids_of(ids)?;
+        let changed = self.mass_set(name, values, &uuids)?;
+        Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
+    }
+
+    /// Takes `name` off the records `ids`: [`Self::mass_unset`] for a caller
+    /// that holds dense ids.
+    pub fn mass_unset_ids(&mut self, name: &str, ids: &RoaringBitmap) -> Result<RoaringBitmap> {
+        if let Some(changed) = self.mass_logged(MassKind::Replace, name, &[], ids)? {
+            self.field_types.remove(name); // rows removed: the type may have unlocked
+            return Ok(changed);
+        }
+        let uuids = self.tx.uuids_of(ids)?;
+        let changed = self.mass_unset(name, &uuids)?;
         Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
     }
 
@@ -1280,7 +1340,7 @@ impl<'c> Writer<'c> {
         &mut self,
         kind: MassKind,
         name: &str,
-        value: &Value,
+        values: &[Value],
         ids: &RoaringBitmap,
     ) -> Result<Option<RoaringBitmap>> {
         // A revert writes what it undoes one operation at a time.
@@ -1293,7 +1353,7 @@ impl<'c> Writer<'c> {
         let Some(done) = self.tx.mass_apply(
             kind,
             name,
-            value,
+            values,
             ids,
             self.label_id,
             self.timestamp,

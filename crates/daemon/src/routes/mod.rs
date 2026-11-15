@@ -426,57 +426,6 @@ where
     .await
 }
 
-/// Shared scaffold for the set-layer field-write handlers (`batch_set`,
-/// `batch_add`, `batch_remove`, `batch_unset`): runs on the blocking pool,
-/// gates on repository writability and on the field name being writable,
-/// resolves the query to its match set, then opens **one** logged [`Writer`]
-/// and hands `write` the matches at once — a write to many records (doc "Mass
-/// writes in the store"), the whole batch a single write.
-///
-/// `write` answers which metarecords actually changed: a match it left
-/// alone is neither schema-validated nor counted, which is what makes the
-/// reported `updated` the number of metarecords the call really touched
-/// (doc "No duplicate rows"). Any closure error drops the Writer,
-/// rolling the whole batch back — an all-or-nothing batch, like the
-/// single-record scaffold.
-async fn write_matches<F>(
-    state: &AppState,
-    repo_uuid: Uuid,
-    name: String,
-    force: bool,
-    query: MetaQuery,
-    mut write: F,
-) -> Result<Json<serde_json::Value>, ApiError>
-where
-    F: FnMut(&mut Writer, &[Uuid]) -> Result<Vec<Uuid>, ApiError> + Send + 'static,
-{
-    with_repo(state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        check_writable(&name, force)?;
-        slowlog::note("field", name.as_str());
-        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let cache = repo_state.tree();
-        let uuids = resolve_query_uuids(&conn, &cache, &query)?;
-
-        let mut writer = repo_state.writer(&mut conn, request_context())?;
-        let writing = slowlog::phase("write.fields");
-        let changed = write(&mut writer, &uuids)?;
-        let updated = changed.len();
-        for uuid in &changed {
-            slowlog::timed("validate.schema", || {
-                validate_schema(repo_state, writer.store(), *uuid, std::slice::from_ref(&name))
-            })?;
-        }
-        drop(writing);
-        let effects = writer.effects();
-        slowlog::timed("commit", || writer.commit())?;
-        repo_state.settle(&conn, &effects)?;
-        slowlog::note("updated", updated.to_string());
-        Ok(Json(json!({ "updated": updated })))
-    })
-    .await
-}
-
 /// The records of `changed` that a constraint on `field` could be violated
 /// by: the ones to validate after a write to many records. It is one question
 /// to the indexes ([`crate::schema::field_candidates`]), not a read of each

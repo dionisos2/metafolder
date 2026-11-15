@@ -492,8 +492,8 @@ pub(super) async fn batch_set(
     let field = body.name.clone();
     // A whole-field overwrite always rewrites the rows, so every match counts as
     // updated — unlike the append/remove forms, which report what they changed.
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
-        Ok(writer.mass_set(&field, rows.clone(), uuids)?)
+    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
+        Ok(writer.mass_set_ids(&field, rows.clone(), ids)?)
     })
     .await
 }
@@ -558,8 +558,8 @@ pub(super) async fn batch_unset(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let field = body.name.clone();
-    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuids| {
-        Ok(writer.mass_unset(&field, uuids)?)
+    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
+        Ok(writer.mass_unset_ids(&field, ids)?)
     })
     .await
 }
@@ -614,17 +614,15 @@ pub(super) struct BatchBody {
 }
 
 /// Writes the matches of a batch op at once; answers which of them changed.
-type WriteOne = Box<dyn FnMut(&mut Writer, &[Uuid]) -> Result<Vec<Uuid>, ApiError>>;
-
 /// A batch op made ready to apply: its query already resolved.
 enum Ready {
     Create(Option<Uuid>, Vec<Field>),
-    Set(Vec<Uuid>, String, Vec<Value>),
+    Set(roaring::RoaringBitmap, String, Vec<Value>),
     /// An add or a remove names the records by dense id: nothing is read per
     /// record to write it.
     Add(roaring::RoaringBitmap, String, Value),
     Remove(roaring::RoaringBitmap, String, Value),
-    Unset(Vec<Uuid>, String),
+    Unset(roaring::RoaringBitmap, String),
 }
 
 /// `POST /repos/:repo/query/fields/batch`: several writes — creations and the
@@ -659,7 +657,7 @@ pub(super) async fn batch_writes(
                 BatchOp::Set { query, name, value, values, force } => {
                     check_writable(&name, force)?;
                     let rows = resolved_values(value, values)?;
-                    Ready::Set(resolve_query_uuids(&*conn, &cache, &query)?, name, rows)
+                    Ready::Set(resolve_query_ids(&*conn, &cache, &query)?, name, rows)
                 }
                 BatchOp::Add { query, name, value, force } => {
                     check_writable(&name, force)?;
@@ -671,7 +669,7 @@ pub(super) async fn batch_writes(
                 }
                 BatchOp::Unset { query, name, force } => {
                     check_writable(&name, force)?;
-                    Ready::Unset(resolve_query_uuids(&*conn, &cache, &query)?, name)
+                    Ready::Unset(resolve_query_ids(&*conn, &cache, &query)?, name)
                 }
             });
         }
@@ -700,7 +698,7 @@ pub(super) async fn batch_writes(
         };
         let mut results = Vec::with_capacity(ready.len());
         for op in ready {
-            let (uuids, name, mut write): (Vec<Uuid>, String, WriteOne) = match op {
+            match op {
                 Ready::Create(uuid, fields) => {
                     let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                     let created = match uuid {
@@ -720,43 +718,28 @@ pub(super) async fn batch_writes(
                     results.push(json!({ "uuid": hex(created.uuid) }));
                     continue;
                 }
-                Ready::Set(uuids, name, rows) => {
-                    let field = name.clone();
-                    (
-                        uuids,
-                        name,
-                        Box::new(move |w: &mut Writer, u: &[Uuid]| {
-                            Ok(w.mass_set(&field, rows.clone(), u)?)
-                        }),
-                    )
+                Ready::Set(ids, name, rows) => {
+                    // One write to many records (doc "Mass operations in the log").
+                    let changed = writer.mass_set_ids(&name, rows, &ids)?;
+                    results.push(json!({ "updated": changed.len() }));
+                    touch_ids(&writer, &changed, &name, &mut touch)?;
                 }
                 Ready::Add(ids, name, value) => {
                     let changed = writer.mass_add_ids(&name, value, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
                     touch_ids(&writer, &changed, &name, &mut touch)?;
-                    continue;
                 }
                 Ready::Remove(ids, name, value) => {
                     let changed = writer.mass_remove_ids(&name, &value, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
                     touch_ids(&writer, &changed, &name, &mut touch)?;
-                    continue;
                 }
-                Ready::Unset(uuids, name) => {
-                    let field = name.clone();
-                    (
-                        uuids,
-                        name,
-                        Box::new(move |w: &mut Writer, u: &[Uuid]| Ok(w.mass_unset(&field, u)?)),
-                    )
+                Ready::Unset(ids, name) => {
+                    let changed = writer.mass_unset_ids(&name, &ids)?;
+                    results.push(json!({ "updated": changed.len() }));
+                    touch_ids(&writer, &changed, &name, &mut touch)?;
                 }
-            };
-            // One write to many records (doc "Mass writes in the store").
-            let changed = write(&mut writer, &uuids)?;
-            for uuid in &changed {
-                touch(*uuid, &name);
             }
-            results.push(json!({ "updated": changed.len() }));
         }
         drop(writing);
         for (uuid, names) in &touched {

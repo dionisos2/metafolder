@@ -2,7 +2,7 @@ title: Mass operations in the log
 tags: Storage [[Event log]]
 kind: rationale
 audience: dev
-summary: A write adding a value to, or removing it from, a field of many records is one entry in the log, which reads as one operation per record; nothing is read or written per record.
+summary: A write adding a value to, removing it from, or replacing a field of many records is one entry in the log, which reads as one operation per record; nothing is read or written per record.
 
 A write that adds one value to a field of ten thousand records, or removes it, used
 to read each record to log what it held and to write one operation, its two snapshots
@@ -40,6 +40,22 @@ id, its place among the stub's records: a search over the stubs after the id,
 not over every record's keys. A stub is read once for the operations it holds, which
 `ops_of` and the backward read keep.
 
+!! A replacement
+
+`field set` and `field unset` on a query log one stub too, with the values that
+replaced the rows (none for `unset`). Its operations read as `set_field` (or
+`delete_field` for `unset`, of the records that held the field). A replacement forgets
+what it replaces, so the stub keeps it: for each value the field held on the records,
+the ''places'' — among the stub's records — of those that held it, a `Nothing` row
+included. They are places, not ids, so a reindex has nothing to rewrite in them. The
+write finds them without a record per id: the postings of the field, the rows of the
+values that have none, the events pending ([[Mass writes in the store]]), and one
+record per ''distinct value'' found, to give the value back (a key is not always its
+value: an int and a float of one number share it). The cost is that of the field's
+vocabulary — the number of its distinct values and of its rows outside a posting —
+not of the records written. The types' counts (`field_types`) are kept from the
+counters: the rows that go are the sum of the field's counts over the records.
+
 !! Pruning and retention
 
 A prune that names an id inside a stub cuts it: the older operations go, the stub
@@ -59,10 +75,6 @@ them (the question is not restricted to the changed records).
 
 !! What is not here yet
 
-* a replacement (`field set`, `field unset` on a query) still reads each record,
-  for what it replaces is not known without them, and logs one operation per
-  record: its ''before'' needs the old values, which the fold of the field's events
-  knows ([[Mass writes in the store]]);
 * the history of a metarecord is a search over the stubs after an id: a summary per
   block of operations is the next step if the number of stubs asks for it;
 `tests/kv_mass_log.rs` holds the reads of a stub to those of the operations it stands for.

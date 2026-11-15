@@ -515,6 +515,23 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       le champ ; à faire une fois par opération, via les compteurs), et
       remplacer/unset (étape 9b) ; la lecture du journal d'un stub lit 1
       uuid par op demandée.
+  9b FAIT (15 nov. 2026) : set/unset de masse dans le journal (même
+      stub, op_type set_field / delete_field). Le stub porte le champ, les
+      valeurs et l'AVANT : (valeur, bitmap de POSITIONS parmi les records du
+      stub), donc indépendant de la numérotation (le reindex n'écrit rien).
+      Le chemin masse (add/remove/set/unset, validation schéma comprise) est
+      par bitmap d'ids denses : aucune lecture par id.
+      ÉCARTS AVEC LE PLAN : (1) l'avant d'un remplacement est calculé À
+      L'ÉCRITURE depuis les index du champ (KvTxn::values_held : postings
+      table + cache, lignes parts sans posting, événements en attente,
+      replay) et non repoussé au repli automatique ; coût = vocabulaire du
+      champ (valeurs distinctes + lignes hors posting), pas le nombre de
+      records ; (2) unset ne loggue que les détenteurs du champ.
+      À MESURER (bench.sh --storage, HDD) : values_held sur un champ à
+      valeurs toutes distinctes (noms) ; candidats du schéma non restreints
+      aux changés. Étape 10 pourrait déplacer ce calcul au repli.
+      Suite complète verte (slow_log::..._waited_for_the_database : timing,
+      flaky sous charge, vert 3/3 seul).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

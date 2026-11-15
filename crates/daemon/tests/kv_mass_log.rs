@@ -312,3 +312,159 @@ fn a_reindex_keeps_what_a_stub_names() {
     assert_eq!(before, after, "the same operations, on the same records, after the ids changed");
     assert_eq!(store.entity_ops_after(uuids[7], head).unwrap().len(), 1);
 }
+
+fn tags_of(store: &KvStore, uuid: Uuid) -> Vec<Value> {
+    use metafolder_daemon::store::Rows;
+    let mut v: Vec<Value> =
+        store.rows_named(uuid, "tag").unwrap().into_iter().map(|r| r.value).collect();
+    v.sort_by_key(|v| format!("{v:?}"));
+    v
+}
+
+#[test]
+fn a_mass_replace_is_one_entry_that_reads_with_what_it_replaced() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let head = store.head().unwrap().unwrap();
+    let ids = store.dense_ids(&uuids).unwrap();
+    write(&mut store, |w| w.mass_set_ids("tag", vec![s("x"), s("y")], &ids).unwrap());
+    let written = store.last_write_keys();
+    assert_eq!(written.get("ops"), Some(&1), "{written:?}");
+    assert_eq!(written.get("snaps"), None, "{written:?}");
+    assert_eq!(written.get("records"), None, "{written:?}");
+    let ops = store.ops_after(head).unwrap();
+    assert_eq!(ops.len(), 40);
+    for op in &ops {
+        assert_eq!(op.op_type, "set_field");
+        let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
+        let after = store.snapshots(op.id, true).unwrap();
+        assert_eq!(after.iter().map(|r| r.value.clone()).collect::<Vec<_>>(), [s("x"), s("y")]);
+        let before = store.snapshots(op.id, false).unwrap();
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].value, s(["blue", "green"][i % 2]));
+    }
+    let diff = store.check_derived().unwrap();
+    assert!(diff.is_empty(), "{diff:?}");
+}
+
+#[test]
+fn a_mass_unset_logs_only_the_records_that_held_the_field() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 30);
+    // Ten of them have none.
+    write(&mut store, |w| w.mass_unset("tag", &uuids[..10]).unwrap());
+    let head = store.head().unwrap().unwrap();
+    let ids = store.dense_ids(&uuids).unwrap();
+    let changed = write(&mut store, |w| w.mass_unset_ids("tag", &ids).unwrap());
+    assert_eq!(changed.len(), 20);
+    let ops = store.ops_after(head).unwrap();
+    assert_eq!(ops.len(), 20);
+    for op in &ops {
+        assert_eq!(op.op_type, "delete_field");
+        assert_eq!(store.snapshots(op.id, false).unwrap().len(), 1);
+        assert!(store.snapshots(op.id, true).unwrap().is_empty());
+    }
+    assert!(uuids.iter().all(|&u| tags_of(&store, u).is_empty()));
+    let diff = store.check_derived().unwrap();
+    assert!(diff.is_empty(), "{diff:?}");
+}
+
+#[test]
+fn what_a_replacement_replaced_survives_the_writes_that_came_after() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 30);
+    let ids = store.dense_ids(&uuids).unwrap();
+    let head = store.head().unwrap().unwrap();
+    let start = state(&store, &uuids);
+    let (label, _) = labelled(&mut store, |w| {
+        w.mass_set_ids("tag", vec![s("x")], &ids).unwrap();
+    });
+    // After it: by hand, in bulk, another replacement, a deletion.
+    write(&mut store, |w| w.append_field(uuids[1], "tag", s("hand")).unwrap());
+    write(&mut store, |w| w.mass_add("tag", s("later"), &uuids[..15]).unwrap());
+    write(&mut store, |w| w.mass_set("tag", vec![s("z")], &uuids[..5]).unwrap());
+    write(&mut store, |w| w.delete_metarecord(uuids[2]).unwrap());
+    let ops = store.label_ops(label).unwrap();
+    assert_eq!(ops.len(), 30);
+    for op in &ops {
+        let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
+        let before = store.snapshots(op.id, false).unwrap();
+        assert_eq!(before.len(), 1, "record {i}");
+        assert_eq!(before[0].value, s(["blue", "green"][i % 2]), "record {i}");
+    }
+    // Undoing the replacement alone, on what is there now.
+    let live: Vec<_> = ops.into_iter().filter(|o| o.entity_uuid != uuids[2]).collect();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    metafolder_daemon::revert::apply(&mut w, &live).unwrap();
+    w.commit().unwrap();
+    for (i, &u) in uuids.iter().enumerate().filter(|(i, _)| *i != 2 && *i >= 15) {
+        assert_eq!(tags_of(&store, u), [s(["blue", "green"][i % 2])], "record {i}");
+    }
+    let _ = (head, start);
+    let diff = store.check_derived().unwrap();
+    assert!(diff.is_empty(), "{diff:?}");
+}
+
+#[test]
+fn a_mass_replace_by_id_reads_nothing_per_record() {
+    fn reads_of(n: usize, unset: bool) -> u64 {
+        let (mut store, _dir) = open();
+        let uuids = records(&mut store, n);
+        let ids = store.dense_ids(&uuids).unwrap();
+        let before = store.reads();
+        write(&mut store, |w| {
+            if unset {
+                w.mass_unset_ids("tag", &ids).unwrap()
+            } else {
+                w.mass_set_ids("tag", vec![s("x"), s("y")], &ids).unwrap()
+            }
+        });
+        store.reads() - before
+    }
+    for unset in [false, true] {
+        let (small, big) = (reads_of(100, unset), reads_of(3000, unset));
+        assert!(big <= small + 4, "unset {unset}: {small} reads for 100 records, {big} for 3000");
+    }
+}
+
+#[test]
+fn a_replacement_knows_what_the_same_write_put_before_it() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 200);
+    let ids = store.dense_ids(&uuids[..120]).unwrap();
+    let head = store.head().unwrap().unwrap();
+    let (label, _) = labelled(&mut store, |w| {
+        // A posting made in this write, one record changed by hand, a value
+        // that is nothing, then the replacement.
+        w.mass_add("tag", s("jazz"), &uuids).unwrap();
+        w.append_field(uuids[3], "tag", s("hand")).unwrap();
+        w.mass_set("tag", vec![Value::Nothing], &uuids[100..110]).unwrap();
+        w.mass_set_ids("tag", vec![s("z")], &ids).unwrap();
+    });
+    let _ = head;
+    let ops = store.label_ops(label).unwrap();
+    let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_field").collect();
+    let replacement: Vec<_> = set_ops
+        .iter()
+        .filter(|o| store.snapshots(o.id, true).unwrap()[0].value == s("z"))
+        .collect();
+    assert_eq!(replacement.len(), 120);
+    for op in replacement {
+        let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
+        let mut before: Vec<Value> =
+            store.snapshots(op.id, false).unwrap().into_iter().map(|r| r.value).collect();
+        before.sort_by_key(|v| format!("{v:?}"));
+        let mut want = if (100..110).contains(&i) {
+            vec![Value::Nothing]
+        } else {
+            vec![s(["blue", "green"][i % 2]), s("jazz")]
+        };
+        if i == 3 && !(100..110).contains(&i) {
+            want.push(s("hand"));
+        }
+        want.sort_by_key(|v| format!("{v:?}"));
+        assert_eq!(before, want, "record {i}");
+    }
+    let diff = store.check_derived().unwrap();
+    assert!(diff.is_empty(), "{diff:?}");
+}

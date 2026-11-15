@@ -895,7 +895,7 @@ pub trait WriteTxn: Store {
         &self,
         _kind: MassKind,
         _field: &str,
-        _value: &Value,
+        _values: &[Value],
         _ids: &roaring::RoaringBitmap,
         _label: i64,
         _timestamp: i64,

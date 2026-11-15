@@ -1275,19 +1275,7 @@ macro_rules! kv_reads {
             }
             fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
                 let $me = self;
-                $with(&mut |$read: &Read| {
-                    // One of a stub's operations has no snapshot stored.
-                    if let Some(stub) = $read.stub_at(op_id)? {
-                        return Ok(stub.snapshot(after));
-                    }
-                    let mut out = Vec::new();
-                    let prefix = key(&[&be(op_id), &[after as u8]]);
-                    for e in $read.t.snaps.prefix_iter($read.r, &prefix)? {
-                        out.push(dec_row(e?.1)?);
-                    }
-                    $read.count(out.len() as u64 + 1)?;
-                    Ok(out)
-                })
+                $with(&mut |$read: &Read| $read.snapshot_rows(op_id, after))
             }
             fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;
@@ -1372,17 +1360,7 @@ macro_rules! kv_reads {
             fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    let mut ids = Vec::new();
-                    for e in $read.t.ops_by_entity.prefix_iter($read.r, entity.as_bytes())? {
-                        $read.count(1)?;
-                        let id = from_be(&e?.0[16..]);
-                        if id > after {
-                            ids.push(id);
-                        }
-                    }
-                    // The operations of a write to many records that named it.
-                    ids.extend($read.stub_ops_of(entity, after)?);
-                    ids.sort_unstable();
+                    let ids = $read.entity_op_ids_after(entity, after)?;
                     $read.ops_of(ids.into_iter())
                 })
             }
@@ -2004,7 +1982,12 @@ impl KvTxn<'_> {
         if matches!(value, Value::Nothing) {
             return Ok(());
         }
-        let k = key(&[&name_key(name), rows::encode_value(value).value_type.as_bytes()]);
+        self.count_type_named(name, rows::encode_value(value).value_type.as_bytes(), delta)
+    }
+
+    /// [`Self::count_type`] for a type named.
+    fn count_type_named(&self, name: &str, value_type: &[u8], delta: i64) -> Result<()> {
+        let k = key(&[&name_key(name), value_type]);
         let mut w = self.txn.borrow_mut();
         let n = self.t.field_types.get(&w, &k)?.map_or(0, from_be) + delta;
         if n <= 0 {
@@ -2128,13 +2111,13 @@ impl WriteTxn for KvTxn<'_> {
         &self,
         kind: MassKind,
         field: &str,
-        value: &Value,
+        values: &[Value],
         ids: &roaring::RoaringBitmap,
         label: i64,
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<crate::store::MassApplied>> {
-        self.mass_log(kind, field, value, ids, label, timestamp, origin)
+        self.mass_log(kind, field, values, ids, label, timestamp, origin)
     }
 
     fn dense_ids(

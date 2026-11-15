@@ -222,7 +222,7 @@ pub(super) fn hist_key(field: &str, bucket: &[u8]) -> Vec<u8> {
 
 /// The two tables of chunked bitmaps, as the transaction's chunk cache
 /// tells them apart.
-const SETS: u8 = 0;
+pub(super) const SETS: u8 = 0;
 const GRAMS: u8 = 1;
 
 /// The longest text (lower-cased, in bytes) split in trigrams. A longer one —
@@ -661,7 +661,7 @@ impl KvTxn<'_> {
 
     /// A whole bitmap as the transaction sees it: its stored chunks, the
     /// cached ones in their stead.
-    fn read_chunked(&self, table: u8, prefix: &[u8]) -> Result<RoaringBitmap> {
+    pub(super) fn read_chunked(&self, table: u8, prefix: &[u8]) -> Result<RoaringBitmap> {
         let db = if table == SETS { self.t.sets } else { self.t.grams };
         let whole = [&[table][..], prefix].concat();
         let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
