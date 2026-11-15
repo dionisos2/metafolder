@@ -6,15 +6,55 @@ Les points 1 à 4 sont des lectures du code, non mesurées ; les mesures sont
 dans les sections 0ter (disque) et 0quater (repère de la version actuelle).
 
 
-REPRISE — à lire en premier dans une nouvelle session (14 nov. 2026)
+REPRISE — à lire en premier dans une nouvelle session (15 nov. 2026)
 =====================================================================
 
-État : conception terminée (sections 0 à 0quater ci-dessous, puis points 1
-à 4), mesures du HDD et repère de la version actuelle faits. L'implémentation
-commence. Tout se fait sur la branche git `storage-redesign` (créée depuis
-main ; commits b1cd5f28 = mode `disk` de metafolder-bench, db369318 =
-scénarios `--storage`). Ne pas fusionner dans main avant que l'utilisateur ait
-validé le résultat au benchmark.
+ÉTAT : les dix étapes du plan (sections plus bas) et leurs extensions — 11 et
+11b (suppression de masse, corbeille, check qui replie), 12 (résumés de labels,
+`mf log labels`, panneau log de la GUI) — sont FAITES et commitées sur la
+branche `storage-redesign` (dernier commit de code : 3683b3b3 ; `check.sh`
+vert à chaque commit). Seul fichier modifié non commité :
+benchmarks/history/dionisos_portable.jsonl (les mesures HDD de l'utilisateur) :
+NE PAS LE COMMITER (décision utilisateur, 15 nov. 2026).
+
+PERFORMANCES : validées par l'utilisateur (« le projet d'optimisation est une
+vraie réussite », 15 nov. 2026) : plus de validation au benchmark à attendre.
+Chiffres : sections « MESURE SSD » ci-dessous et benchmarks/history. La fusion
+dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
+
+À FAIRE (par ordre) :
+1. TESTS E2E AVEC LA GUI (demandé par l'utilisateur, à faire dans une nouvelle
+   session ; scripts/dev/gui-e2e.sh --unsandboxed, ~4 min, écran requis).
+   Rien de ce qui suit n'a été essayé dans la vraie GUI :
+   - le panneau log : premier niveau = résumés (GET /log/labels), entrée dans
+     un label (labels imbriqués + 500 dernières opérations sans instantanés),
+     badges HEAD / undo of / undone by, revert d'un label et d'une opération,
+     « Show older », rafraîchissement qui revient dans le label ouvert ;
+   - le signal d'activité de la GUI (touches/clics/molette → POST /activity,
+     une fois toutes les 2 s) : le repli en inactivité ne part qu'après 30 s
+     sans activité (vérifier avec GET /repos/:repo/wear) ;
+   - une suppression de masse puis son annulation (avant et après repli), la
+     corbeille et sa restauration, un undo/redo d'un lot de masse.
+2. `mf repo wear` (promis à l'utilisateur) : afficher GET /repos/:repo/wear ;
+   éventuellement un affichage dans la GUI. Les seuils « repli conseillé » et
+   « reindex conseillé » ne sont PAS fixés (à décider sur des mesures).
+3. Points ouverts connus : coûts non mesurés (l'« avant » d'un remplacement sur
+   un champ à valeurs toutes distinctes ; les candidats de la validation de
+   schéma ; la lecture d'un stub = 1 uuid par opération demandée ; l'annulation
+   d'un lot de 5 000 records : scénario de bench à ajouter) ; sur le HDD de
+   l'utilisateur create_file (447 ms) et tag_add_one (361 ms) dépassent encore
+   300 ms ; dans le panneau log, une opération annulée seule n'est marquée que
+   sur son label (`partly undone`) et les unités sont triées par id de label ;
+   tests instables vus (slow_log « wait:conn » sous charge, un test de
+   cli_e2e non identifié, sync « orphans … in one run »).
+4. LAYOUT 9 (journal vidé à l'ouverture d'un store de disposition <= 8,
+   décision de l'utilisateur) : les dépôts de développement perdent leur
+   historique au premier lancement du nouveau daemon.
+
+Où lire ce qui a été fait : sections 9a, 9b, 10a–10d, 11, 11b, 12a–12c et
+« MESURE SSD » plus bas ; wiki : "Mass operations in the log", "Mass writes in
+the store", "Folding in idle time", "Storage wear", "Label summaries",
+"Deleting a metarecord in the store", "log panel".
 
 Façon de travailler avec l'utilisateur (il l'a demandé) :
 - expliquer un point à la fois, réponses courtes, attendre son accord ;
@@ -28,7 +68,8 @@ Règles du projet à respecter à chaque étape (CLAUDE.md) :
 - TDD : test qui échoue d'abord ;
 - un commit par étape, construit, vert, `cargo fmt --all` ;
 - tout changement de format persisté livre sa conversion (doc "Persisted
-  format changes") : les index dérivés → incrémenter DERIVED_VERSION
+  format changes"), sauf décision contraire de l'utilisateur (la disposition 9
+  vide le journal) : les index dérivés → incrémenter DERIVED_VERSION
   (crates/daemon/src/kvstore/derived.rs), reindex automatique à l'ouverture ;
   les tables primaires → LAYOUT (kvstore/mod.rs) et une conversion ;
 - API_VERSION (core) si un ancien client se comporterait mal (doc "The wire
