@@ -604,6 +604,15 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       27,7->7,4 ; sorted_multi 478->17 | 49->19 ; tag_equal 31->16 | 11->8,8 ;
       tag_missing 7,9->9,2 | 15->4,8 ; tag_text 1070->22 | 965->71 ;
       combined_sorted 107->19 | 154->11,6.
+  MESURE SSD --big après la suppression de masse (15 nov. 2026, f8bc4e88 ;
+      avant = db369318 | 4872be27 | f8bc4e88, une passe) :
+      L supprimer : voisins small 3385 | 103 | 31 ms ; voisins large (5 000)
+      34861 | 2774 | 70 ms ; dispersés small 8823 | 516 | 33 ms ; dispersés
+      large 72143 | 7165 | 114 ms. S supprimer : 1238 | 68 | 36 ; 3123 | 505 |
+      44 ; 2670 | 222 | 40 ; 4642 | 633 | 38 ms. Phase de masse : L 391 s |
+      13,7 | 11,6 ; S 291 | 8,1 | 8,0. Lectures après masse L : tag_text
+      965 | 71 | 56 ms, combined_sorted 154 | 11,6 | 10,1. S : combined_sorted
+      après masse 14,9 | 65,7 | 73,7 ms (listes en attente, voir plus haut).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).
