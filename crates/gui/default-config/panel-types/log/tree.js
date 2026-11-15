@@ -1,37 +1,49 @@
-// log panel tree: the operations of the fetched window, grouped by the labels
-// they were written in (doc "log panel", doc "Labels and contexts").
+// log panel tree: the labels of the log, one level at a time, as the daemon
+// summarises them (doc "log panel", doc "Label summaries", doc "Labels and
+// contexts").
 //
 // A row of the top level is a unit of work: for an operation of yours, its
 // outermost label — a script's run, a command —; for one of the watcher, its
-// flush. Going into a unit lists the labels nested in it, and so on down to the
-// operations, and into an operation for what it changed: the panel shows one
-// level at a time, like the path-ref panel (doc "Opening a row").
-// Consecutive flushes of the watcher fold into one row, or they would drown
-// the rest. Everything is newest first, by the newest operation under it.
+// flush. Going into a unit lists the labels nested in it and its own
+// operations, and so on down to an operation, and into an operation for what it
+// changed: the panel shows one level at a time, like the path-ref panel (doc
+// "Opening a row"). Consecutive flushes of the watcher fold into one row, or
+// they would drown the rest. Everything is newest first.
 //
-// Pure: the panel hands it what `GET /log` answered and renders what it builds.
+// No operation is read to list a label: a unit is its summary (how many
+// operations it holds, who wrote it, what it undid and what undid it), and the
+// operations and the labels nested in a unit are read when it is gone into —
+// `withChildren` puts them in its node. Pure: the panel hands it what the
+// daemon answered and renders what it builds.
 
 /** Operation types the watcher records on the filesystem's behalf: the
  *  fallback when no origin says. */
 const WATCHER_OP_TYPES = ['file_deleted', 'file_moved', 'file_modified'];
 
 /**
- * One operation, as `GET /log` returns it.
+ * One operation, as the daemon lists it.
  * @typedef {{id: number, label_id: number, op_type: string, origin?: string|null,
  *            reverts_op_id?: number|null, timestamp?: number,
  *            field_name?: string|null, entity_uuid?: string|null}} Op
  *
- * One label, as `GET /log` lists it.
+ * One label, as `GET /log/labels` summarises it.
  * @typedef {{id: number, name: string, description?: string|null,
- *            parent: number|null, created: number}} Label
+ *            parent: number|null, created: number, updated?: number|null,
+ *            operations: number, first_op?: number|null, last_op?: number|null,
+ *            watcher?: boolean, children?: number, is_head?: boolean,
+ *            reverts?: {label: number, whole: boolean}[],
+ *            reverted_by?: {label: number, whole: boolean}[],
+ *            undone?: 'fully'|'partly'|null}} Label
  *
- * A node of the tree. A label: the label, every operation under it in the
- * window (`ops`, newest first) and its children (labels and its own
- * operations). An operation. A fold of the watcher's flushes.
- * @typedef {{kind: 'label', id: number, label: Label, ops: Op[], children: Node[],
+ * A node of the tree. A label: its summary and, once it has been gone into,
+ * what it holds (`children`: its labels and its own operations, newest first;
+ * `null` before). An operation (`undone`: that of the label it is in, when
+ * that is undone whole). A fold of the watcher's flushes.
+ * @typedef {{kind: 'label', id: number, label: Label, children: Node[]|null,
  *            newest: number, watcher: boolean}
- *         | {kind: 'op', op: Op, newest: number}
- *         | {kind: 'watcher', id: number, children: Node[], ops: Op[], newest: number}} Node
+ *         | {kind: 'op', op: Op, newest: number, undone: 'fully'|null}
+ *         | {kind: 'watcher', id: number, children: Node[], operations: number,
+ *            newest: number}} Node
  *
  * A row on screen.
  * @typedef {{key: string, node: Node}} Row
@@ -52,83 +64,66 @@ export function keyOf(node) {
   return `${node.kind}:${node.id}`;
 }
 
+/** The node of a labelled summary, not gone into yet.
+ *  @param {Label} label @returns {Extract<Node, {kind: 'label'}>} */
+export function labelNode(label) {
+  return {
+    kind: 'label',
+    id: label.id,
+    label,
+    children: null,
+    newest: label.last_op ?? label.id,
+    watcher: label.watcher === true,
+  };
+}
+
 /**
- * The tree of the window, its top level newest first.
- * @param {Op[]} ops @param {Label[]} labels
+ * The top level: the units of work, newest first as listed, the consecutive
+ * flushes of the watcher folded into one row.
+ * @param {Label[]} units
  * @returns {Node[]}
  */
-export function buildTree(ops, labels) {
-  /** @type {Map<number, Label>} */
-  const byId = new Map(labels.map((l) => [l.id, l]));
-  /** The labels from `id` up, innermost first, as far as the window names them.
-   *  @param {number} id */
-  const chain = (id) => {
-    const out = [id];
-    let next = byId.get(id)?.parent ?? null;
-    while (next !== null && byId.has(next) && !out.includes(next)) {
-      out.push(next);
-      next = byId.get(next)?.parent ?? null;
-    }
-    return out;
-  };
-
-  /** @type {Map<number, Node & {kind: 'label'}>} */
-  const nodes = new Map();
-  /** @param {number} id */
-  const node = (id) => {
-    let n = nodes.get(id);
-    if (!n) {
-      const label = byId.get(id) ?? { id, name: '', description: null, parent: null, created: 0 };
-      n = { kind: 'label', id, label, ops: [], children: [], newest: 0, watcher: true };
-      nodes.set(id, n);
-    }
-    return n;
-  };
-
-  /** @type {Set<number>} the ids of the top-level units */
-  const tops = new Set();
-  for (const op of ops) {
-    // The watcher's flush is its own unit, under a root no one opens.
-    const path = isWatcherOp(op) ? [op.label_id] : chain(op.label_id);
-    const top = path[path.length - 1];
-    tops.add(top);
-    for (let i = 0; i < path.length; i++) {
-      const n = node(path[i]);
-      n.ops.push(op);
-      n.newest = Math.max(n.newest, op.id);
-      n.watcher = n.watcher && isWatcherOp(op);
-      /** @type {Node} */
-      const child = i === 0 ? { kind: 'op', op, newest: op.id } : node(path[i - 1]);
-      if (i === 0 || !n.children.includes(child)) n.children.push(child);
-    }
-  }
-  const newestFirst = (/** @type {Node} */ a, /** @type {Node} */ b) => b.newest - a.newest;
-  for (const n of nodes.values()) {
-    n.children.sort(newestFirst);
-    n.ops.sort((a, b) => b.id - a.id);
-  }
-
-  const units = [...tops].map((id) => node(id)).sort(newestFirst);
+export function buildTree(units) {
+  const nodes = units.map(labelNode);
   /** @type {Node[]} */
   const out = [];
-  for (let i = 0; i < units.length; i++) {
+  for (let i = 0; i < nodes.length; i++) {
     let j = i;
-    while (j + 1 < units.length && units[i].watcher && units[j + 1].watcher) j++;
+    while (j + 1 < nodes.length && nodes[i].watcher && nodes[j + 1].watcher) j++;
     if (j === i) {
-      out.push(units[i]);
+      out.push(nodes[i]);
       continue;
     }
-    const run = units.slice(i, j + 1);
+    const run = nodes.slice(i, j + 1);
     out.push({
       kind: 'watcher',
       id: run[0].id,
       children: run,
-      ops: run.flatMap((u) => u.ops),
+      operations: run.reduce((n, u) => n + (u.kind === 'label' ? u.label.operations : 0), 0),
       newest: run[0].newest,
     });
     i = j;
   }
   return out;
+}
+
+/**
+ * Puts in a label's node what it holds: the labels nested in it and its own
+ * operations (`ops`, the newest of them), newest first.
+ * @param {Node} node a label's @param {Label[]} nested @param {Op[]} ops
+ * @returns {Node}
+ */
+export function withChildren(node, nested, ops) {
+  if (node.kind !== 'label') return node;
+  const under = node.label.undone === 'fully' ? 'fully' : null;
+  /** @type {Node[]} */
+  const children = [
+    ...nested.map(labelNode),
+    ...ops.map((op) => /** @type {Node} */ ({ kind: 'op', op, newest: op.id, undone: under })),
+  ];
+  children.sort((a, b) => b.newest - a.newest);
+  node.children = children;
+  return node;
 }
 
 /**
@@ -146,7 +141,7 @@ export function nodesAlong(tree, path) {
     const next = level.find((n) => keyOf(n) === key);
     if (!next) break;
     out.push(next);
-    if (next.kind === 'op') break;
+    if (next.kind === 'op' || next.children === null) break;
     level = next.children;
   }
   return out;
@@ -163,7 +158,7 @@ export function rowsAt(tree, path, showWatcher) {
   const along = nodesAlong(tree, path);
   const last = along[along.length - 1];
   if (last?.kind === 'op') return [];
-  const level = last ? last.children : tree;
+  const level = last ? (last.children ?? []) : tree;
   return level
     .filter(
       (n) =>
@@ -185,7 +180,7 @@ export function pathTo(tree, key) {
   const find = (nodes, above) => {
     for (const n of nodes) {
       if (keyOf(n) === key) return above;
-      if (n.kind !== 'op') {
+      if (n.kind !== 'op' && n.children !== null) {
         const found = find(n.children, [...above, keyOf(n)]);
         if (found) return found;
       }
@@ -196,47 +191,47 @@ export function pathTo(tree, key) {
 }
 
 /**
- * What each node is, from the operations of the window: the daemon's, an undo
- * (of which labels), undone (fully or partly, by which labels). Liveness is
- * resolved along the chain — a redo stands the change back up — and a revert
- * is always newer than what it reverts, so the window holds every revert of
- * what it holds.
- * @param {Op[]} ops
- * @returns {(node: Node) => {watcher: boolean, undoOf: number[],
- *           undone: 'fully'|'partly'|null, undoneBy: number[]}}
+ * What a node is: the daemon's, an undo (of which labels), undone (fully or
+ * partly, by which labels) — read off the summary of a label, which the daemon
+ * worked out from the labels' marks (a redo stands the change back up), and an
+ * operation takes it from the label it is in when that is undone whole.
+ * @param {Node} node
+ * @returns {{watcher: boolean, undoOf: number[], undone: 'fully'|'partly'|null,
+ *           undoneBy: number[]}}
  */
-export function marksOf(ops) {
-  /** @type {Map<number, Op>} */
-  const byId = new Map(ops.map((o) => [o.id, o]));
-  /** @type {Map<number, Op[]>} */
-  const reverters = new Map();
-  for (const o of ops) {
-    if (o.reverts_op_id != null) {
-      reverters.set(o.reverts_op_id, [...(reverters.get(o.reverts_op_id) ?? []), o]);
-    }
+export function marksOf(node) {
+  if (node.kind === 'op') {
+    return { watcher: isWatcherOp(node.op), undoOf: [], undone: node.undone, undoneBy: [] };
   }
-  /** @type {Set<number>} */
-  const undone = new Set();
-  for (const o of [...ops].sort((a, b) => b.id - a.id)) {
-    if ((reverters.get(o.id) ?? []).some((r) => !undone.has(r.id))) undone.add(o.id);
-  }
-  return (node) => {
-    const mine = node.kind === 'op' ? [node.op] : node.ops;
-    const undoOf = new Set();
-    const undoneBy = new Set();
-    for (const o of mine) {
-      const target = o.reverts_op_id == null ? undefined : byId.get(o.reverts_op_id);
-      if (target) undoOf.add(target.label_id);
-      for (const r of reverters.get(o.id) ?? []) if (!undone.has(r.id)) undoneBy.add(r.label_id);
-    }
-    const count = mine.filter((o) => undone.has(o.id)).length;
-    return {
-      watcher: mine.length > 0 && mine.every(isWatcherOp),
-      undoOf: [...undoOf],
-      undone: count === 0 ? null : count === mine.length ? 'fully' : 'partly',
-      undoneBy: [...undoneBy],
-    };
+  if (node.kind === 'watcher') return { watcher: true, undoOf: [], undone: null, undoneBy: [] };
+  const l = node.label;
+  return {
+    watcher: l.watcher === true,
+    undoOf: (l.reverts ?? []).map((r) => r.label),
+    undone: l.undone ?? null,
+    undoneBy: (l.reverted_by ?? []).map((r) => r.label),
   };
+}
+
+/**
+ * How many operations a row says: a label's own, a fold's flushes'; none for an
+ * operation.
+ * @param {Node} node
+ */
+export function countOf(node) {
+  if (node.kind === 'op') return null;
+  return node.kind === 'watcher' ? node.operations : node.label.operations;
+}
+
+/**
+ * When a row was last written in, in milliseconds (0 when it says nothing).
+ * @param {Node} node
+ * @returns {number}
+ */
+export function timeOf(node) {
+  if (node.kind === 'op') return node.op.timestamp ?? 0;
+  if (node.kind === 'watcher') return Math.max(0, ...node.children.map(timeOf));
+  return node.label.updated ?? node.label.created ?? 0;
 }
 
 /**

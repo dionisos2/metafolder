@@ -2,13 +2,26 @@
 // first (a command, a script's run, a flush of the watcher), each gone into
 // onto the labels nested in it, down to the operations, one level at a time
 // like the path-ref panel, and into an operation for what it changed, field by
-// field; revert and prune (doc "log panel", doc "Labels and contexts").
+// field; revert and prune (doc "log panel", doc "Labels and contexts"). The
+// units are the daemon's summaries of the labels (doc "Label summaries"): no
+// operation is read until a label is gone into.
 
 import { byId, el, formatValue, openButton, pathText, qs } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
 import { underRoot } from '/__file-actions.js';
 import { fieldChanges } from './snapshots.js';
-import { buildTree, keyOf, marksOf, nodesAlong, pathTo, revertTarget, rowsAt } from './tree.js';
+import {
+  buildTree,
+  countOf,
+  keyOf,
+  marksOf,
+  nodesAlong,
+  pathTo,
+  revertTarget,
+  rowsAt,
+  timeOf,
+  withChildren,
+} from './tree.js';
 
 /** Operation types, as a sentence fragment. */
 const OP_LABELS = /** @type {Record<string, string>} */ ({
@@ -47,12 +60,8 @@ export async function mount(root, metafolder) {
 
   /** @type {string|null} */
   let repo = null;
-  /** @type {Op[]} raw ops from GET /log, oldest first */
-  let operations = [];
   /** @type {Node[]} */
   let tree = [];
-  /** What each node is (see tree.js). */
-  let marks = marksOf([]);
   /** The newest operation of the log: the node holding it is marked HEAD. */
   /** @type {number|null} */
   let head = null;
@@ -74,11 +83,21 @@ export async function mount(root, metafolder) {
   let detail = null;
   /** Guards against a slow answer overwriting a newer operation's. */
   let detailGeneration = 0;
-  // The list fetches a bounded window of the most recent operations so a
-  // repository with millions of them (a large initial reconcile) still loads;
-  // "Show more" grows the window.
-  const LOG_PAGE = 1000;
+  // The list fetches a bounded window of the newest units of work, and a label
+  // gone into the newest of its operations, so a repository with millions of
+  // them (a large initial reconcile) still loads; "Show more" grows the window.
+  const LOG_PAGE = 100;
   let limit = LOG_PAGE;
+  // The most operations of one label listed when it is gone into.
+  const LEVEL_OPS = 500;
+  /** The labels the HEAD operation is under — its own and the ones it is nested
+   *  in — whose rows are marked HEAD. @type {Set<number>} */
+  let headLabels = new Set();
+  /** Whether older units of work lie beyond the window. */
+  let moreUnits = false;
+  /** How many operations the label gone into holds, when only the newest are
+   *  listed. @type {{shown: number, of: number}|null} */
+  let truncated = null;
 
   const rowsElement = byId(root, 'rows');
   const table = qs(root, 'table');
@@ -94,30 +113,41 @@ export async function mount(root, metafolder) {
   const breadcrumb = byId(root, 'breadcrumb');
   const upButton = byId(root, 'up', HTMLButtonElement);
   const statusLine = byId(root, 'status-line');
-  /** Repository-wide log size (`GET /log` totals), independent of the window
-   *  actually fetched. @type {{operations: number, labels: number}|null} */
+  /** How many labels the log holds, independent of the window fetched.
+   *  @type {number|null} */
   let totals = null;
 
+  /** Reads the units of work (the newest `limit`), then goes back into the
+   *  labels the panel was in, so a refresh leaves it where it was. */
   async function refresh() {
     if (!repo) {
       placeholderElement.textContent = 'No active repository.';
       return;
     }
     try {
-      const log = /** @type {{operations?: Op[], head?: number, labels?: Label[],
-       *                      total_operations?: number, total_labels?: number}} */ (
-        await daemon.call('GET', `/repos/${repo}/log?limit=${limit}`)
+      const log = /** @type {{head?: number|null, head_label?: number|null,
+       *                      labels?: Label[], next_before?: number|null,
+       *                      total_labels?: number}} */ (
+        await daemon.call('GET', `/repos/${repo}/log/labels?limit=${limit}`)
       );
-      operations = log.operations ?? [];
       head = log.head ?? null;
-      totals =
-        typeof log.total_operations === 'number' && typeof log.total_labels === 'number'
-          ? { operations: log.total_operations, labels: log.total_labels }
-          : null;
-      tree = buildTree(operations, log.labels ?? []);
-      marks = marksOf(operations);
-      // What a refresh or a prune took away is left: back up to what remains.
-      path = nodesAlong(tree, path).map(keyOf);
+      totals = typeof log.total_labels === 'number' ? log.total_labels : null;
+      moreUnits = log.next_before != null;
+      truncated = null;
+      headLabels = await labelsAbove(log.head_label ?? null);
+      const before = path;
+      tree = buildTree(log.labels ?? []);
+      // Back into what was gone into: each level read again.
+      path = [];
+      for (const key of before) {
+        const inside = nodesAlong(tree, path).at(-1);
+        const level = path.length === 0 ? tree : inside && inside.kind !== 'op' ? (inside.children ?? []) : [];
+        const next = level.find((/** @type {Node} */ n) => keyOf(n) === key);
+        if (!next) break;
+        if (next.kind === 'label' && next.children === null) await loadLevel(next);
+        path = [...path, key];
+        if (next.kind === 'op') break;
+      }
       if (selection !== null && !visible().some((r) => r.key === selection)) selection = null;
       render();
       // A revert may have changed what the operation shown is said to be.
@@ -130,6 +160,49 @@ export async function mount(root, metafolder) {
     }
   }
 
+  /** A label and the labels it is nested in. @param {number|null} id
+   *  @returns {Promise<Set<number>>} */
+  async function labelsAbove(id) {
+    /** @type {Set<number>} */
+    const out = new Set();
+    if (id === null || repo === null) return out;
+    out.add(id);
+    try {
+      const body = /** @type {{ancestors?: {id: number}[]}} */ (
+        await daemon.call('GET', `/repos/${repo}/labels/${id}`)
+      );
+      for (const ancestor of body.ancestors ?? []) out.add(ancestor.id);
+    } catch {
+      // The label may have been pruned since: the units are listed all the same.
+    }
+    return out;
+  }
+
+  /** Reads what a label holds — the labels nested in it, and the newest of its
+   *  own operations, without their snapshots — and puts it in its node.
+   *  @param {Node} node */
+  async function loadLevel(node) {
+    if (node.kind !== 'label' || repo === null) return;
+    const [nested, own] = await Promise.all([
+      /** @type {Promise<{labels?: Label[]}>} */ (
+        daemon.call('GET', `/repos/${repo}/log/labels?parent=${node.id}&limit=500`)
+      ),
+      node.label.operations > 0
+        ? /** @type {Promise<{label?: {operation_count?: number}, operations?: Op[]}>} */ (
+          daemon.call(
+            'GET',
+            `/repos/${repo}/log/labels/${node.id}?newest=1&limit=${LEVEL_OPS}&snapshots=0`,
+          )
+        )
+        : Promise.resolve({ label: { operation_count: 0 }, operations: [] }),
+    ]);
+    withChildren(node, nested.labels ?? [], own.operations ?? []);
+    const of = own.label?.operation_count ?? 0;
+    if (of > (own.operations ?? []).length) {
+      truncated = { shown: (own.operations ?? []).length, of };
+    }
+  }
+
   /** Every node of the tree, depth first. @returns {Node[]} */
   function allNodes() {
     /** @type {Node[]} */
@@ -138,7 +211,7 @@ export async function mount(root, metafolder) {
     const walk = (nodes) => {
       for (const n of nodes) {
         out.push(n);
-        if (n.kind !== 'op') walk(n.children);
+        if (n.kind !== 'op') walk(n.children ?? []);
       }
     };
     walk(tree);
@@ -169,19 +242,20 @@ export async function mount(root, metafolder) {
   }
 
   /** How much log there is: what is on screen, and — when the fetched window is
-   *  only part of it — the repository-wide totals it was cut from. */
+   *  only part of it — the labels the repository holds. */
   function renderStatusLine() {
     if (!repo) {
       statusLine.textContent = '';
       return;
     }
-    const units = tree.length;
-    const shownOps = operations.length;
-    let line = `${units} unit${units === 1 ? '' : 's'} of work · ${shownOps} operation${
-      shownOps === 1 ? '' : 's'
-    }`;
-    if (totals && totals.operations > shownOps) {
-      line += ` — of ${totals.operations} operations, ${totals.labels} labels in the repository`;
+    const units = path.length === 0 ? tree.length : visible().length;
+    const what = path.length === 0 ? 'unit' : 'row';
+    let line = `${units} ${what}${units === 1 ? '' : 's'}${path.length === 0 ? ' of work' : ''}`;
+    if (path.length === 0 && moreUnits && totals !== null) {
+      line += ` — of ${totals} labels in the repository`;
+    }
+    if (truncated !== null && path.length > 0) {
+      line += ` — the newest ${truncated.shown} of ${truncated.of} operations`;
     }
     const hidden = showWatcher ? 0 : tree.length - rowsAt(tree, [], false).length;
     if (hidden > 0) line += ` · ${hidden} of the watcher's hidden`;
@@ -219,6 +293,19 @@ export async function mount(root, metafolder) {
     selection = visible()[0]?.key ?? null;
     render();
     if (node.kind === 'op') void loadDetail();
+    // A label is read when it is gone into: its rows come when they are here.
+    if (node.kind === 'label' && node.children === null) {
+      const at = path;
+      truncated = null;
+      void loadLevel(node)
+        .then(() => {
+          if (path !== at) return;
+          selection = visible()[0]?.key ?? null;
+          render();
+          cursor.reveal();
+        })
+        .catch((error) => statusBar.error(error));
+    }
     return true;
   }
 
@@ -243,10 +330,15 @@ export async function mount(root, metafolder) {
    *  was, whether it is an undo, and whether it has been undone.
    *  @param {Node} node */
   function statusBadges(node) {
-    const mark = marks(node);
-    const ops = node.kind === 'op' ? [node.op] : node.ops;
+    const mark = marksOf(node);
     const badges = [];
-    if (head !== null && ops.some((o) => o.id === head)) {
+    const isHead =
+      node.kind === 'op'
+        ? node.op.id === head
+        : node.kind === 'label'
+          ? headLabels.has(node.id)
+          : node.children.some((c) => c.kind === 'label' && headLabels.has(c.id));
+    if (isHead) {
       badges.push(el('span', { class: 'badge head-marker' }, 'HEAD'));
     }
     if (mark.watcher) {
@@ -299,9 +391,9 @@ export async function mount(root, metafolder) {
   /** @param {Row} row */
   function rowElement(row) {
     const { node } = row;
-    const mark = marks(node);
-    const ops = node.kind === 'op' ? [node.op] : node.ops;
-    const newest = ops.reduce((t, o) => Math.max(t, o.timestamp ?? 0), 0);
+    const mark = marksOf(node);
+    const newest = timeOf(node);
+    const count = countOf(node);
     return el(
       'tr',
       {
@@ -326,7 +418,7 @@ export async function mount(root, metafolder) {
       ),
       nameCell(row),
       el('td', {}, newest > 0 ? new Date(newest).toLocaleString() : ''),
-      el('td', {}, node.kind === 'op' ? '' : String(ops.length)),
+      el('td', {}, count === null ? '' : String(count)),
       el('td', {}, statusBadges(node)),
     );
   }
@@ -493,7 +585,7 @@ export async function mount(root, metafolder) {
     if (inOp) renderDetail();
     // Offer "Show older" while the list fills the requested window: older
     // operations may lie beyond it.
-    moreBox.hidden = inOp || operations.length < limit;
+    moreBox.hidden = inOp || path.length > 0 || !moreUnits;
     renderActions();
     watcherCheckbox.checked = showWatcher;
     renderBreadcrumb();
@@ -604,17 +696,17 @@ export async function mount(root, metafolder) {
     const node = key === null ? null : findNode(key);
     if (node === null) return;
     if (node.kind === 'op') return revert(mf);
-    if (node.ops.length === 1) {
-      openTo(node.ops[0]);
-      return revert(mf);
-    }
-    if (node.ops.length > 0) {
-      openTo(node.ops[0]);
-      void statusBar.message(
-        `${node.ops.length} operations: pick one and press revert again.`,
-        statusMessageMs,
-      );
-    }
+    if (node.kind !== 'label' || node.label.operations === 0) return;
+    // Its operations are read now, to name the one to revert.
+    if (node.children === null) await loadLevel(node);
+    const own = (node.children ?? []).flatMap((c) => (c.kind === 'op' ? [c.op] : []));
+    if (own.length === 0) return;
+    openTo(own[0]);
+    if (own.length === 1) return revert(mf);
+    void statusBar.message(
+      `${node.label.operations} operations: pick one and press revert again.`,
+      statusMessageMs,
+    );
   }
 
   /** Goes to where `op` is listed, and selects it. @param {Op} op */
@@ -654,7 +746,7 @@ export async function mount(root, metafolder) {
     // what is meant, so it is said out loud rather than silently done.
     const key = focusKey();
     const node = key === null ? null : findNode(key);
-    const mark = node === null ? null : marks(node);
+    const mark = node === null ? null : marksOf(node);
     const undone =
       mark !== null && mark.undone !== null
         ? `\n\nNote: it was already ${mark.undone === 'partly' ? 'partly ' : ''}undone.`

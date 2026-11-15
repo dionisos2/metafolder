@@ -633,8 +633,13 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       sans refabriquer les opérations. LAYOUT 9 : le journal d'un store de
       disposition <= 8 est VIDÉ à l'ouverture (décision utilisateur, comme les
       dispositions 3 à 6), metarecords gardés. 12b FAIT : `mf log labels [--in LABEL]
-      [--limit N|--all]` (résumés, champ `updated` ajouté). RESTE : panneau log
-      de la GUI (12c).
+      [--limit N|--all]` (résumés, champ `updated` ajouté). 12c FAIT : panneau log de la GUI sur les résumés (premier niveau =
+      GET /log/labels?limit=100 sans lire d'opération ; à l'entrée dans un
+      label : labels imbriqués + 500 dernières opérations propres sans
+      instantanés, `newest=1&snapshots=0` sur GET /log/labels/:id) ; scénario
+      bench log.label_summaries. Différences : ordre des unités par id de
+      label, marques d'opération héritées du label, colonne = opérations
+      propres. À valider dans la vraie GUI (non essayé ici).
   8c. store : cellules sans id de ligne, `row_owner` et `by_field` retirés,
       valeur de `forest` sans id de ligne ; LAYOUT + conversion.
   Ensuite seulement : les listes de masse par partie (le reste de l'étape 8).

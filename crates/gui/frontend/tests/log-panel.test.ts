@@ -63,22 +63,47 @@ const DETAIL = (id: number, label: number) => ({
     },
   ],
 });
-const label = (id: number, name: string, parent: number | null = null) => ({
+/** A label as `GET /log/labels` summarises it (doc "Label summaries"). */
+const label = (id: number, name: string, extra: Record<string, unknown> = {}) => ({
   id,
   name,
   description: null,
-  parent,
+  parent: null,
   created: 0,
+  updated: id * 1000,
+  operations: 0,
+  children: 0,
+  first_op: null,
+  last_op: null,
+  watcher: false,
+  reverts: [],
+  reverted_by: [],
+  undone: null,
+  is_head: false,
+  ...extra,
 });
 // A script's run (#1) holding one answer (#2) holding one command (#3), and a
 // command of its own (#9).
-const LOG = {
-  operations: [op(10, 3), op(11, 3), op(12, 9)],
-  labels: [label(1, 'run'), label(2, 'answer', 1), label(3, 'mf tag add', 2), label(9, 'edit')],
+const UNITS = {
   head: 12,
+  head_label: 9,
+  labels: [
+    label(9, 'edit', { operations: 1, last_op: 12, is_head: true }),
+    label(1, 'run', { children: 1 }),
+  ],
+  next_before: null,
+  total_labels: 4,
 };
+/** What a label holds: the labels nested in it, and its own operations. */
+const NESTED: Record<number, ReturnType<typeof label>[]> = {
+  1: [label(2, 'answer', { parent: 1, children: 1 })],
+  2: [label(3, 'mf tag add', { parent: 2, operations: 2, last_op: 11 })],
+  3: [],
+  9: [],
+};
+const OPS: Record<number, ReturnType<typeof op>[]> = { 3: [op(11, 3), op(10, 3)], 9: [op(12, 9)] };
 
-async function mountPanel() {
+async function mountPanel(units: typeof UNITS = UNITS, above: number[] = []) {
   const shadow = shadowFor();
   const handlers = new Map<string, Handler>();
   const noop = () => {};
@@ -89,7 +114,17 @@ async function mountPanel() {
       call: vi.fn(async (_method: string, url: string) => {
         const detail = /\/log\/labels\/(\d+)\?op=(\d+)$/.exec(url);
         if (detail) return DETAIL(Number(detail[2]), Number(detail[1]));
-        return structuredClone(LOG);
+        const own = /\/log\/labels\/(\d+)\?newest=1/.exec(url);
+        if (own) {
+          const ops = OPS[Number(own[1])] ?? [];
+          return { label: { id: Number(own[1]), operation_count: ops.length }, operations: ops };
+        }
+        const nested = /\/log\/labels\?parent=(\d+)/.exec(url);
+        if (nested) return { labels: NESTED[Number(nested[1])] ?? [], next_before: null };
+        if (/\/labels\/\d+$/.test(url)) {
+          return { id: 9, ancestors: above.map((id) => ({ id })), children: [] };
+        }
+        return structuredClone(units);
       }),
       resolvePath: vi.fn(async () => '/photos/a.jpg'),
       resolveTreeRef: vi.fn(async () => ''),
@@ -265,5 +300,62 @@ describe('log panel: going into a label', () => {
     expect(p.rows()).toEqual(['op 12: set_field tag']);
     expect(p.selected()).toBe('op 12: set_field tag');
     expect(p.crumbs()).toContain('#9 edit');
+  });
+});
+
+describe('log panel: no operation is read until a label is gone into', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = () => {};
+    document.body.replaceChildren();
+  });
+
+  test('the top level asks for label summaries only', async () => {
+    const p = await mountPanel();
+    const urls = p.api.daemon.call.mock.calls.map((c) => c[1]);
+    expect(urls).toContain('/repos/r/log/labels?limit=100');
+    expect(urls.some((u) => /\/log\?|\/log\/labels\/\d/.test(u))).toBe(false);
+  });
+
+  test('going into a label reads what it holds: its labels and the newest of its operations', async () => {
+    const p = await mountPanel();
+    p.rowWith('edit').querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
+    await settle();
+    const urls = p.api.daemon.call.mock.calls.map((c) => c[1]);
+    expect(urls).toContain('/repos/r/log/labels?parent=9&limit=500');
+    expect(urls).toContain('/repos/r/log/labels/9?newest=1&limit=500&snapshots=0');
+    expect(p.rows()).toEqual(['op 12: set_field tag']);
+  });
+
+  test('a unit says what the daemon says of it: HEAD, undone, what it undid', async () => {
+    const p = await mountPanel({
+      ...UNITS,
+      labels: [
+        label(12, 'undo 9', {
+          operations: 1,
+          reverts: [{ label: 9, whole: true }],
+          is_head: true,
+        }),
+        label(9, 'edit', {
+          operations: 1,
+          undone: 'fully',
+          reverted_by: [{ label: 12, whole: true }],
+        }),
+      ],
+      head_label: 12,
+    });
+    const badges = (name: string) =>
+      [...p.rowWith(name).querySelectorAll('.badge')].map((b) => b.textContent);
+    expect(badges('undo 9')).toEqual(['HEAD', 'undo of #9']);
+    expect(badges('edit')).toEqual(['undone by #12']);
+    expect(p.rowWith('edit').classList.contains('undone-row')).toBe(true);
+  });
+
+  test('a unit holding the HEAD operation in a nested label is marked HEAD', async () => {
+    // The HEAD operation is in label #3, nested in #2, nested in #1.
+    const p = await mountPanel({ ...UNITS, head_label: 3 }, [2, 1]);
+    const badges = (name: string) =>
+      [...p.rowWith(name).querySelectorAll('.badge')].map((b) => b.textContent);
+    expect(badges('run')).toContain('HEAD');
+    expect(badges('edit')).not.toContain('HEAD');
   });
 });

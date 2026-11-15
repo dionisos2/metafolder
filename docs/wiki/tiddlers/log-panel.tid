@@ -5,7 +5,7 @@ aliases: log-detail snapshot before after diff
 summary: The repository's history as a tree of labels — a unit of work per row (a command, a script's run, the watcher's flushes folded), opening down to single operations, with badges saying what each is.
 
 Open it with `panel:open here log` (<<key "panel:open here log" "t o">>). One row per
-''unit of work'', newest first by its newest operation: for what you wrote, the outermost
+''unit of work'', newest first: for what you wrote, the outermost
 label it was written in — a command, a script's run, a context you opened ([[Labels and contexts]]) —; for the watcher, one flush. Consecutive flushes of the watcher fold into a
 single row (`N flushes of the watcher`), or they would drown the rest. Going into a row
 lists the labels nested in it and its own operations, newest first, down to single
@@ -13,14 +13,21 @@ operations: a run onto its answers, an answer onto its commands, a command onto 
 wrote — and an operation onto what it changed. The list shows one level at a time, as the [[path-ref panel]] does; the
 breadcrumb above it says where it is, each step a way back.
 
-A label row shows its number, name and description, the time of its newest operation,
-how many operations of the window are under it, and ''status'' badges — what decides
-whether undoing it makes sense, computed over everything under it:
+The rows of the top level are the daemon's ''summaries'' of the labels ([[Label summaries]]):
+the panel reads no operation to list them, so a write to ten thousand records is one row
+read as cheaply as one to a single record. A label's contents — the labels nested in it and
+the newest five hundred of its own operations, without their snapshots — are read when it
+is gone into, and again by a refresh that finds the panel inside it.
 
-* `HEAD` — the newest operation is under it;
+A label row shows its number, name and description, the time of its newest operation,
+how many operations it holds of its own, and ''status'' badges — what decides whether
+undoing it makes sense, from the label's marks alone (what it reverts and what reverts it
+is kept on the labels, not found by reading operations):
+
+* `HEAD` — the newest operation is under it, in its own operations or in a label nested in it;
 * `watcher` — the daemon wrote it for the filesystem ([[Operations and their origin]]); the row is dimmed, and `log:undo` skips it;
 * `undo of #N` — it reverts what label `#N` wrote;
-* `undone by #N` (or `partly undone`) — a later revert still standing took it back; a row fully undone is struck through, and reverting it again says so first.
+* `undone by #N` (or `partly undone`) — a later revert still standing took it back; a row fully undone is struck through, and reverting it again says so first. The operations of a label undone whole are struck through with it; one undone alone shows it only on its own label, `partly undone`.
 
 !! Moving around
 
@@ -28,8 +35,8 @@ whether undoing it makes sense, computed over everything under it:
 * <<key "cursor:descend self" "Enter or →">>, or the row's `↘` button ([[Opening a row]]) — go into the row under the cursor: the list shows what it holds, the cursor on its first row; an operation shows what it changed. A revert aims at what is under the cursor — a label whole, what is nested in it included, or one operation —, or at the operation gone into.
 * <<key "cursor:parent self" "Backspace or ←">>, or ''↑ up'', or a step of the breadcrumb — back out, the cursor on the row it came out of.
 * <<key "log:toggle watcher" "v w">> — hide or show the watcher's work (shown by default). A display filter over what was fetched; the status line says how many units are hidden, and a selection inside one is dropped.
-* ''Show older operations'' — the list fetches the newest thousand operations, so a repository with millions of them still opens; the button widens the window by as much again.
-* <<key "view:refresh self" "Ctrl+r">> — read the log again. The status line gives how many units of work and operations are listed, and the repository's totals when the window is only part of the log.
+* ''Show older'' — the top level lists the newest hundred units of work, so a repository with millions of operations still opens; the button widens the window by as much again. Inside a label with more than five hundred operations of its own, the newest are listed and the status line says how many.
+* <<key "view:refresh self" "Ctrl+r">> — read the log again. The status line gives how many units of work are listed, and how many labels the repository holds when the window is only part of the log.
 
 !! What an operation changed
 

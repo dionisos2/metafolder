@@ -205,6 +205,14 @@ pub(super) struct LabelParams {
     limit: Option<usize>,
     #[serde(default)]
     op: Option<i64>,
+    /// `1`: the window is counted from the newest operation, and the
+    /// operations come newest first.
+    #[serde(default)]
+    newest: Option<u8>,
+    /// `0`: the operations come without their snapshots, which a list does
+    /// not show.
+    #[serde(default)]
+    snapshots: Option<u8>,
 }
 
 /// `GET /log/labels/:id` (or `head`, the label of the newest operation): a
@@ -243,6 +251,13 @@ pub(super) async fn get_label_detail(
                 }
                 vec![op_id]
             }
+            None if params.newest == Some(1) => all
+                .iter()
+                .rev()
+                .copied()
+                .skip(params.offset.unwrap_or(0))
+                .take(params.limit.unwrap_or(usize::MAX))
+                .collect(),
             None => all
                 .iter()
                 .copied()
@@ -250,11 +265,12 @@ pub(super) async fn get_label_detail(
                 .take(params.limit.unwrap_or(usize::MAX))
                 .collect(),
         };
+        let snapshots = params.snapshots != Some(0);
         let mut ops = Vec::with_capacity(selected.len());
         for op_id in selected {
             let op = crate::store::Log::op(&*conn, op_id)?
                 .ok_or_else(|| ApiError::internal(format!("operation {op_id} vanished")))?;
-            ops.push(op_json(&conn, &op, true)?);
+            ops.push(op_json(&conn, &op, snapshots)?);
         }
         Ok(Json(json!({"label": label, "operations": ops})))
     })

@@ -95,6 +95,7 @@ const SCENARIOS: &[&str] = &[
     // the graph needs (the one honest O(n) in the list).
     "log.window_ops",
     "log.window_revisions",
+    "log.label_summaries",
     "log.undo_window",
     "log.change_feed",
     "log.whole",
@@ -169,6 +170,11 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
             // What `mf log list` asks for: twenty labels, at most 500
             // operations (a reconcile's label holds tens of thousands).
             get(&format!("{url}/repos/{repo}/log?labels=20&limit=500")).await?;
+        }
+        "log.label_summaries" => {
+            // What the log panel's top level and `mf log labels` ask for: the
+            // newest labels, summarised without an operation being read.
+            get(&format!("{url}/repos/{repo}/log/labels?limit=100")).await?;
         }
         "log.undo_window" => {
             get(&format!("{url}/repos/{repo}/log?limit=500")).await?;

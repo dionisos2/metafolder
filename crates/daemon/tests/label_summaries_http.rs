@@ -189,3 +189,36 @@ async fn the_label_detail_counts_without_making_up_the_operations() {
     assert_eq!(detail["label"]["is_head"], json!(true));
     assert_eq!(detail["operations"].as_array().unwrap().len(), 3);
 }
+
+#[tokio::test]
+async fn the_label_detail_can_give_the_newest_operations_without_their_snapshots() {
+    let r = setup("newest").await;
+    let uuids = make_records(&r, 12).await;
+    r.call(
+        "POST",
+        "/query/fields/add",
+        Some(json!({"query": {"type": "uuid_in", "uuids": uuids}, "name": "tag",
+                    "value": {"type": "string", "value": "jazz"}})),
+    )
+    .await;
+    let label = r.labels("?limit=1").await["labels"][0]["id"].as_i64().unwrap();
+    let all = r.call("GET", &format!("/log/labels/{label}"), None).await;
+    let ids: Vec<i64> =
+        all["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids.len(), 12);
+    assert!(all["operations"][0].get("snapshots_after").is_some(), "snapshots by default");
+
+    let window = r
+        .call("GET", &format!("/log/labels/{label}?newest=1&offset=2&limit=3&snapshots=0"), None)
+        .await;
+    assert_eq!(window["label"]["operation_count"], json!(12));
+    let got: Vec<i64> = window["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["id"].as_i64().unwrap())
+        .collect();
+    // Newest first, the two newest skipped.
+    assert_eq!(got, vec![ids[9], ids[8], ids[7]]);
+    assert!(window["operations"][0].get("snapshots_after").is_none(), "{window}");
+}
