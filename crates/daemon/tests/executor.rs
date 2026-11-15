@@ -1237,6 +1237,7 @@ fn test_modify_data_on_unchanged_file_is_idempotent() {
 // by twelve at N = 800 on the machine this was written on. A wall-clock
 // threshold would only have measured that machine.
 #[test]
+#[ignore = "timing: its outcome depends on the clock see the note Tests that fail under load"]
 fn test_departures_do_not_make_a_flush_superlinear() {
     const N: usize = 400;
 

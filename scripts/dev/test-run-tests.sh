@@ -145,6 +145,43 @@ out=$(CARGO="$tmp/fake-cargo-green" "$script" 2>&1); rc=$?
 assert_eq "a real green run exits 0" 0 "$rc"
 assert_contains "a real green run totals the passes" "$out" "296 passed"
 
+# ── 4b. timing tests run in a pass of their own ─────────────────────────────
+# Tests that depend on the clock are #[ignore]d and run second, alone and in
+# series, so the rest of the suite cannot load the machine under them.
+cat >"$tmp/fake-cargo-args" <<FAKE
+#!/usr/bin/env bash
+echo "ARGS: \$*" >>"$tmp/calls"
+cat "$tmp/green"
+exit 0
+FAKE
+chmod +x "$tmp/fake-cargo-args"
+: >"$tmp/calls"
+out=$(CARGO="$tmp/fake-cargo-args" "$script" 2>&1); rc=$?
+assert_eq "two passes exit 0 when both are green" 0 "$rc"
+assert_eq "cargo is run twice" 2 "$(wc -l <"$tmp/calls")"
+assert_contains "the second pass runs the ignored tests" "$(sed -n 2p "$tmp/calls")" "--ignored"
+assert_contains "the second pass is serial" "$(sed -n 2p "$tmp/calls")" "--test-threads=1"
+assert_not "the first pass leaves them out" grep -q -e --ignored <<<"$(sed -n 1p "$tmp/calls")"
+assert_contains "the timing pass is announced" "$out" "timing tests"
+
+: >"$tmp/calls"
+CARGO="$tmp/fake-cargo-args" "$script" --no-timing >/dev/null 2>&1
+assert_eq "--no-timing runs cargo once" 1 "$(wc -l <"$tmp/calls")"
+
+# A failure of the timing pass fails the run, and says it was the timing pass.
+cat >"$tmp/fake-cargo-timing-red" <<FAKE
+#!/usr/bin/env bash
+case "\$*" in
+    *--ignored*) cat "$tmp/red" ;;
+    *) cat "$tmp/green" ;;
+esac
+exit 0
+FAKE
+chmod +x "$tmp/fake-cargo-timing-red"
+out=$(CARGO="$tmp/fake-cargo-timing-red" "$script" 2>&1); rc=$?
+assert_eq "a red timing pass fails the run" 1 "$rc"
+assert_contains "the failing pass is the timing one" "$out" "timing tests"
+
 # ── 5. --help works ─────────────────────────────────────────────────────────
 help=$("$script" --help 2>&1); rc=$?
 assert_eq "--help exits 0" 0 "$rc"

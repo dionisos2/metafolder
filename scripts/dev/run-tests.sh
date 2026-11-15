@@ -5,6 +5,12 @@
 #   scripts/dev/run-tests.sh                 # cargo test --workspace, then a total
 #   scripts/dev/run-tests.sh -p metafolder-cli   # extra args go to cargo test
 #   cargo test --workspace 2>&1 | scripts/dev/run-tests.sh --stdin
+#   scripts/dev/run-tests.sh --no-timing     # leave the timing pass out
+#
+# Two passes. Tests that depend on the clock (a threshold crossed on purpose, a
+# ratio of two durations) are marked `#[ignore = "timing: ..."]`: the first pass
+# skips them, and the second runs only them, one at a time, once nothing else
+# is loading the machine (doc "Tests that fail under load").
 #
 # cargo prints one "test result:" line per test binary (per crate's unit tests,
 # per integration test file, per doc-test target) and no total, so a run of
@@ -23,9 +29,11 @@ repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$repo" || exit 1
 
 stdin=false
+timing=true
 case "${1:-}" in
     --stdin) stdin=true; shift ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    --no-timing) timing=false; shift ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \?//'; exit 0 ;;
 esac
 
 # Terminal colours, but only when writing to one.
@@ -111,12 +119,26 @@ fi
 # cargo writes its progress to stderr and the harness to stdout: both are the
 # report, so merge them before aggregating. cargo's own status (a compile
 # error) wins over the aggregate's.
-"${CARGO:-cargo}" test --workspace "$@" 2>&1 | aggregate
+#
 # Both statuses come out of PIPESTATUS, and both are read *before* anything
 # else runs: `$?` after `cargo_rc=${PIPESTATUS[0]}` is the status of that
 # assignment — always 0 — so reading the aggregator's status that way silently
 # turned every "no suite reported" into a pass, which is exactly the failure
 # this script promises to catch.
-rcs=("${PIPESTATUS[@]}")
-[ "${rcs[0]}" -ne 0 ] && exit "${rcs[0]}"
-exit "${rcs[1]}"
+run_pass() { # <cargo test arguments after the user's...>
+    "${CARGO:-cargo}" test --workspace "$@" 2>&1 | aggregate
+    rcs=("${PIPESTATUS[@]}")
+    [ "${rcs[0]}" -ne 0 ] && return "${rcs[0]}"
+    return "${rcs[1]}"
+}
+
+args=("$@")
+run_pass "${args[@]}"
+status=$?
+$timing || exit "$status"
+
+printf '\n%s── timing tests (alone, one at a time) ──%s\n' "$bold" "$off"
+run_pass "${args[@]}" -- --ignored --test-threads=1
+timing_status=$?
+[ "$status" -ne 0 ] && exit "$status"
+exit "$timing_status"

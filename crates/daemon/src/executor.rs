@@ -1731,6 +1731,7 @@ mod tests {
     // A ratio again, not a duration: four times the events must cost about four
     // times as much, not sixteen.
     #[test]
+    #[ignore = "timing: its outcome depends on the clock see the note Tests that fail under load"]
     fn correlate_is_linear_when_nothing_pairs() {
         fn timed(n: usize) -> std::time::Duration {
             let events: Vec<(FsEvent, Option<i64>)> =

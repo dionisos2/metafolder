@@ -12,6 +12,15 @@ A handful of tests depend on real time, and fail now and then in a full
 * the tests that drive the real watcher — their waits are budgets (`early_journey.rs`, `watcher_e2e.rs`, the `sync` tests of `cli_e2e/`, where the target's watcher may ingest the file just written after the sync counted);
 * the `bash_complete` tests of the `gui` crate ran `bash` under the 3-second guard a person waiting on Tab gets, and a dozen of them loading bash-completion at once, beside the rest of the suite, missed it at every `check.sh` (October 2026); they now take a minute, the guard staying in `complete`.
 
+!! The timing pass
+
+These tests are marked `#[ignore = "timing: ..."]`. `scripts/dev/run-tests.sh` (so
+`check.sh`) runs the suite without them, then runs only them, one at a time
+(`-- --ignored --test-threads=1`), once nothing else loads the machine; its summary
+prints a total for each pass. `--no-timing` leaves the second pass out. A new test
+that asserts on, or sets a threshold against, the clock gets the attribute; a
+counted assertion does not ([[Performance testing]]).
+
 !! Telling it from a regression
 
 ''It is a different test at each run.'' A real regression fails the same test every
