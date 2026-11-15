@@ -2280,7 +2280,7 @@ impl WriteTxn for KvTxn<'_> {
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<crate::store::MassApplied>> {
-        self.mass_log(kind, field, values, ids, label, timestamp, origin)
+        self.mass_log(kind, field, values, ids, label, timestamp, origin, None)
     }
 
     fn mass_delete(
@@ -2291,6 +2291,17 @@ impl WriteTxn for KvTxn<'_> {
         origin: Option<&str>,
     ) -> Result<Option<crate::store::MassApplied>> {
         self.mass_delete_log(ids, label, timestamp, origin)
+    }
+
+    fn mass_revert(
+        &self,
+        first_op: i64,
+        last_op: i64,
+        label: i64,
+        timestamp: i64,
+        origin: Option<&str>,
+    ) -> Result<Option<crate::store::MassApplied>> {
+        self.mass_revert_log(first_op, last_op, label, timestamp, origin)
     }
 
     fn mass_undelete(

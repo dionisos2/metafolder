@@ -968,6 +968,20 @@ pub trait WriteTxn: Store {
     ) -> Result<Option<MassApplied>> {
         Ok(None)
     }
+    /// Reverts the operations `first_op..=last_op` of one mass add or remove
+    /// as one entry of the log whose operations each name the one they revert
+    /// (doc "Mass operations in the log"); `None` — nothing written — when the
+    /// store cannot, or the records are no longer as the operations left them.
+    fn mass_revert(
+        &self,
+        _first_op: i64,
+        _last_op: i64,
+        _label: i64,
+        _timestamp: i64,
+        _origin: Option<&str>,
+    ) -> Result<Option<MassApplied>> {
+        Ok(None)
+    }
     /// Gives back the records of the pending deletion whose operations are
     /// `first_op..=last_op`: their ids return to the universe and nothing else
     /// is written (doc "Mass operations in the log"). The ids given back;

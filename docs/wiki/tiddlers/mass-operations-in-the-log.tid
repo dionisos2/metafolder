@@ -82,6 +82,10 @@ left under a node that is gone, which the commit refuses for a `tree_ref`, and t
 subtree would leave its ancestors' descendants, which no universe sifts — so the records
 are deleted one by one, as before.
 
+!!! Reverting a mass add or remove
+
+A revert of at least sixteen consecutive operations of one mass add or remove of a field is one stub too (`Writer::revert_mass_run`, `mass_revert_log`): a remove of the value from the same records for an add, an add for a remove, whose operation `first + k` names the operation `reverts + k` it reverts. A stub keeps that number where an ordinary operation keeps the operation it reverts (the `reverts_op_id` slot of its header, absent in the stubs written before), so the history, the marks of a label, `log:redo` and the `reverted_by` index read a stub's operations as any others; the index gets one key per operation, in order of both numbers. It is done when every record changed is one the revert changes — each still holds the value an add put, or lacks the one a remove took; if not, the revert goes one record at a time, as before. Reverting such a stub is the same operation the other way.
+
 !!! Giving a pending deletion back
 
 An undo of a deletion still pending does not recreate the records one by one: they never left the store, so `Writer::undelete_pending` gives their ids back to the universe (`mass_undelete_log`) — with the type counts and the parents the deletion took off — and cuts them out of the deletion's mark (the mark keeps the operations it still names, each at its own number). The records keep their dense ids and no row, index entry or snapshot is written; the log gets one `create_metarecord` operation per record, reverting the one it takes back, as any revert writes. It is done when:

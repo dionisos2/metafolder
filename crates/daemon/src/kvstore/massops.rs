@@ -93,6 +93,10 @@ pub(super) struct Stub {
     pub(super) delete: bool,
     /// A deletion whose records the fold wrote into the snapshots.
     pub(super) in_snaps: bool,
+    /// A stub that reverts operations of another: operation `first + k`
+    /// reverts operation `reverts + k` (kept where an ordinary operation keeps
+    /// the operation it reverts; an older stub has none).
+    pub(super) reverts: Option<i64>,
 }
 
 impl Stub {
@@ -114,7 +118,7 @@ impl Stub {
             .opt_int(None)
             .opt_int(None)
             .opt_bytes(Some(self.field.as_bytes()))
-            .opt_int(None)
+            .opt_int(self.reverts)
             .int(self.values.len() as i64);
         for row in self.rows() {
             out.bytes(&enc_row(&row));
@@ -210,6 +214,7 @@ impl Stub {
             who,
             delete,
             in_snaps: tag & 2 != 0,
+            reverts: head.reverts_op_id,
         }))
     }
 
@@ -239,7 +244,7 @@ impl Stub {
             .into(),
             entity_uuid: self.entity(read, (id - self.first) as usize)?,
             field_name: (!self.delete).then(|| self.field.clone()),
-            reverts_op_id: None,
+            reverts_op_id: self.reverts.map(|r| r + (id - self.first)),
             origin: self.origin.clone(),
         })
     }
@@ -510,6 +515,7 @@ impl KvTxn<'_> {
         label: i64,
         timestamp: i64,
         origin: Option<&str>,
+        reverts: Option<i64>,
     ) -> Result<Option<MassApplied>> {
         if !self.mass_eligible(field, kind, values)? {
             return Ok(None);
@@ -521,6 +527,11 @@ impl KvTxn<'_> {
                 let key = super::derived::value_key(value).context("a value with no key")?;
                 let have = self.effective(field, value, &key)?;
                 let changed = if kind == Kind::Add { ids - &have } else { ids & &have };
+                // A revert names the operation each of its own reverts, in the
+                // order of the records: it must change exactly those.
+                if reverts.is_some() && changed != *ids {
+                    return Ok(None);
+                }
                 let n = changed.len() as i64;
                 self.count_type(field, value, if kind == Kind::Add { n } else { -n })?;
                 changed
@@ -555,6 +566,7 @@ impl KvTxn<'_> {
             who: Who::Ids(changed.clone()),
             delete: false,
             in_snaps: false,
+            reverts,
         };
         let last = stub.last();
         self.put_stub(&stub)?;
@@ -692,6 +704,7 @@ impl KvTxn<'_> {
             who: Who::Ids(changed.clone()),
             delete: true,
             in_snaps: false,
+            reverts: None,
         };
         let last = stub.last();
         self.put_stub(&stub)?;
@@ -726,6 +739,48 @@ impl KvTxn<'_> {
             }
         }
         Ok(out)
+    }
+
+    /// Reverts a run of operations of one mass add or remove at once: the
+    /// operations `first_op..=last_op`, which are the stub's, are taken back
+    /// by a stub of the opposite kind over the same records, each of whose
+    /// operations names the one it reverts. `None` — nothing written — when
+    /// they are not so (not a stub's, a replacement, several values) or when a
+    /// record no longer holds what the revert would change.
+    pub(super) fn mass_revert_log(
+        &self,
+        first_op: i64,
+        last_op: i64,
+        label: i64,
+        timestamp: i64,
+        origin: Option<&str>,
+    ) -> Result<Option<MassApplied>> {
+        let stub = {
+            let txn = self.txn.borrow();
+            self.read_in(&txn, &mut |read: &Read| read.stub_at(first_op))?
+        };
+        let Some(stub) = stub.filter(|s| {
+            !s.delete && s.kind != Kind::Replace && s.values.len() == 1 && s.covers(last_op)
+        }) else {
+            return Ok(None);
+        };
+        let Who::Ids(all) = &stub.who else { return Ok(None) };
+        let (a, n) = ((first_op - stub.first) as usize, (last_op - first_op + 1) as usize);
+        let ids: RoaringBitmap = all.iter().skip(a).take(n).collect();
+        if ids.len() != n as u64 {
+            return Ok(None);
+        }
+        let opposite = if stub.kind == Kind::Add { Kind::Remove } else { Kind::Add };
+        self.mass_log(
+            opposite,
+            &stub.field,
+            &stub.values,
+            &ids,
+            label,
+            timestamp,
+            origin,
+            Some(first_op),
+        )
     }
 
     /// Gives back a deletion still pending (doc "Mass operations in the log"):
@@ -1017,6 +1072,11 @@ impl KvTxn<'_> {
         t.meta.put(&mut w, b"next_op", &be(stub.last() + 1))?;
         let extra = t.meta.get(&w, b"mass_extra")?.map_or(0, from_be);
         t.meta.put(&mut w, b"mass_extra", &be(extra + stub.who.len() as i64 - 1))?;
+        if let Some(target) = stub.reverts {
+            for k in 0..stub.who.len() as i64 {
+                t.reverted_by.put(&mut w, &key(&[&be(target + k), &be(stub.first + k)]), &[])?;
+            }
+        }
         Ok(())
     }
 
@@ -1035,6 +1095,11 @@ impl KvTxn<'_> {
                 for key in doomed {
                     t.snaps.delete(&mut w, &key)?;
                 }
+            }
+        }
+        if let Some(target) = stub.reverts {
+            for j in 0..k as i64 {
+                t.reverted_by.delete(&mut w, &key(&[&be(target + j), &be(stub.first + j)]))?;
             }
         }
         let first = be(stub.first);
@@ -1075,6 +1140,7 @@ impl KvTxn<'_> {
             },
             delete: stub.delete,
             in_snaps: stub.in_snaps,
+            reverts: stub.reverts.map(|r| r + k as i64),
         };
         let mut w = self.txn.borrow_mut();
         let first = be(rest.first);

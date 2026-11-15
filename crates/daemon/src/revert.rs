@@ -313,7 +313,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         // once (doc "Mass operations in the log"), when the state is the one
         // the deletion left: every operation written since is reverted here,
         // and ahead of it.
-        let run = deletion_run(&ops[..at]);
+        let run = run_of(&ops[..at], |o| o.op_type == "delete_metarecord", false);
         if run.len() >= MASS_UNDO_MIN {
             let last = run[run.len() - 1].id;
             let newer = ops.iter().filter(|o| o.id > last).count() as i64;
@@ -323,6 +323,19 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                 at -= run.len();
                 continue;
             }
+        }
+        // The same for the operations of one mass add or remove of a field,
+        // taken back by one entry of the log.
+        let run = run_of(
+            &ops[..at],
+            |o| o.op_type == "append_field" || o.op_type == "delete_field",
+            true,
+        );
+        if run.len() >= MASS_UNDO_MIN && writer.revert_mass_run(run)? {
+            done += run.len();
+            touched.extend(run.iter().map(|o| o.label_id));
+            at -= run.len();
+            continue;
         }
         at -= 1;
         let op = &ops[at];
@@ -418,15 +431,18 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
 /// How many deletions in a row are given back at once rather than one by one.
 const MASS_UNDO_MIN: usize = 16;
 
-/// The deletions that end `ops`: the longest suffix of consecutive operation
-/// ids that are all `delete_metarecord`s (one mass deletion's, when the store
-/// agrees).
-fn deletion_run(ops: &[OpRow]) -> &[OpRow] {
+/// The operations that end `ops` and `wanted` accepts: the longest suffix of
+/// consecutive operation ids — of one type, and of one field when `one_field`
+/// — (one mass write's, when the store agrees).
+fn run_of(ops: &[OpRow], wanted: impl Fn(&OpRow) -> bool, one_field: bool) -> &[OpRow] {
     let mut start = ops.len();
     while start > 0 {
         let op = &ops[start - 1];
-        let contiguous = start == ops.len() || ops[start].id == op.id + 1;
-        if op.op_type != "delete_metarecord" || !contiguous {
+        let same = start == ops.len()
+            || (ops[start].id == op.id + 1
+                && ops[start].op_type == op.op_type
+                && (!one_field || ops[start].field_name == op.field_name));
+        if !wanted(op) || !same {
             break;
         }
         start -= 1;

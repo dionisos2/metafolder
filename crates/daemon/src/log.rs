@@ -1383,6 +1383,45 @@ impl<'c> Writer<'c> {
         Ok(deleted)
     }
 
+    /// Reverts the operations `ops` — consecutive `append_field` or
+    /// `delete_field` operations of one mass add or remove, oldest first —
+    /// as one entry of the log, with no record read or written. `false`,
+    /// nothing written, when the store cannot (the caller then reverts them
+    /// one by one).
+    pub fn revert_mass_run(&mut self, ops: &[OpRow]) -> Result<bool> {
+        let (Some(first), Some(last)) = (ops.first(), ops.last()) else { return Ok(false) };
+        let Some(name) = first.field_name.clone() else { return Ok(false) };
+        // Putting a value back is a write like any other: its type is checked.
+        if first.op_type == "delete_field" {
+            for row in self.tx.snapshots(first.id, false)? {
+                self.validate_value_type(&name, &row.value)?;
+            }
+        }
+        // The ids of this write's operations come first.
+        self.flush_pending()?;
+        let origin = self.origin.clone();
+        let Some(done) = self.tx.mass_revert(
+            first.id,
+            last.id,
+            self.label_id,
+            self.timestamp,
+            origin.as_deref(),
+        )?
+        else {
+            return Ok(false);
+        };
+        if let Some(n) = i64::try_from(done.changed.len()).ok().filter(|&n| n > 0) {
+            self.first_op.get_or_insert(done.last_op - n + 1);
+            self.flushed += n;
+            self.chain_head = Some(done.last_op);
+            if DECIDES_WATCHES.contains(&name.as_str()) {
+                self.effects.watch = true;
+            }
+        }
+        self.field_types.remove(&name);
+        Ok(true)
+    }
+
     /// Gives back the records a deletion still pending took, which are the
     /// subjects of `ops` (consecutive `delete_metarecord` operations of one
     /// mass deletion, oldest first): their ids return to the universe, and

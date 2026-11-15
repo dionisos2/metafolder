@@ -620,3 +620,102 @@ fn undoing_the_deletion_of_a_folder_with_its_children_puts_the_tree_back() {
         sound(&store);
     }
 }
+
+/// Taking back a mass add is one entry of the log, whose operations each name
+/// the one they revert; taking that back puts the value on again the same way.
+#[test]
+fn reverting_a_mass_add_is_one_entry_naming_what_it_reverts() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 60);
+    let mut w = Writer::begin(&mut store, Some("tag".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids[..40]).unwrap();
+    w.mass_add_ids("mark", s("m"), &ids).unwrap();
+    w.commit().unwrap();
+    let holders = |store: &KvStore| {
+        uuids
+            .iter()
+            .filter(|&&u| Rows::rows(store, u).unwrap().iter().any(|r| r.name == "mark"))
+            .count()
+    };
+    assert_eq!(holders(&store), 40);
+
+    let ops = revert::label_ops(&store, label).unwrap();
+    assert_eq!(ops.len(), 40);
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let back = w.label_id();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    let written = store.last_write_keys();
+    assert_eq!(written.get("ops"), Some(&1), "one entry: {written:?}");
+    assert_eq!(written.get("records"), None, "{written:?}");
+    assert_eq!(holders(&store), 0);
+    let undone = store.ops_after(ops.last().unwrap().id).unwrap();
+    assert_eq!(undone.len(), 40);
+    for (op, reverted) in undone.iter().zip(&ops) {
+        assert_eq!(op.op_type, "delete_field");
+        assert_eq!(op.reverts_op_id, Some(reverted.id));
+        assert_eq!(op.entity_uuid, reverted.entity_uuid);
+    }
+    sound(&store);
+
+    // And back: the value is on the same records again.
+    let ops = revert::label_ops(&store, back).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(store.last_write_keys().get("ops"), Some(&1));
+    assert_eq!(holders(&store), 40);
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// A record that lost the value since is no longer as the add left it: the
+/// revert goes record by record, and leaves it alone.
+#[test]
+fn reverting_a_mass_add_a_record_lost_the_value_of_goes_one_by_one() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let mut w = Writer::begin(&mut store, Some("tag".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_add_ids("mark", s("m"), &ids).unwrap();
+    w.commit().unwrap();
+    write(&mut store, |w| {
+        w.delete_fields_valued(uuids[3], "mark", &s("m")).unwrap();
+    });
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    for &u in &uuids {
+        assert!(!Rows::rows(&store, u).unwrap().iter().any(|r| r.name == "mark"));
+    }
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// What a prune cuts of a stub that reverts another leaves no mark behind.
+#[test]
+fn pruning_into_a_stub_that_reverts_another_keeps_the_log_consistent() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let mut w = Writer::begin(&mut store, Some("tag".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_add_ids("mark", s("m"), &ids).unwrap();
+    w.commit().unwrap();
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    let undone = store.ops_after(ops.last().unwrap().id).unwrap();
+    metafolder_daemon::log::prune(&mut store, undone[9].id).unwrap();
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+    let left = store.ops_after(0).unwrap();
+    assert!(left.iter().all(|o| o.reverts_op_id.is_none_or(|r| r >= ops[0].id)));
+}

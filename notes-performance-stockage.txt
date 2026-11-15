@@ -65,10 +65,12 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    create_metarecord (reverts_op_id) par record. Mesure L-storage, 5 000 records :
    2 139 ms -> 67 ms (32x) ; lot de 100 : 68 -> 7 ms. Repli lent conservé pour :
    suppression déjà repliée, écriture entre-temps, suite < 16, champ sans type
-   compté. RESTE : annuler une suppression REPLIÉE ; annuler un ajout/retrait
-   (425 ms) ; règle « valeur avant inconnue » du panneau log (décision user :
+   compté. FAIT AUSSI : annuler un ajout/retrait de masse (>= 16 ops d'un stub) =
+   un stub inverse dont l'op k annule l'op reverts+k (créneau reverts_op_id de
+   l'en-tête du stub, sans changement de disposition ; index reverted_by écrit
+   par op) : 5 000 records 425 ms -> 11 ms. RESTE : annuler une suppression REPLIÉE ; règle « valeur avant inconnue » du panneau log (décision user :
    une opération postérieure sur le record, autre que l'annulation, rend l'« avant »
-   de la suppression inconnu) — PAS encore faite ; les « après » des snapshots
+   de la suppression inconnu) — FAITE (before_known, 1b51bb64) ; les « après » des snapshots
    (décision user du début de refonte : supprimés) ne le sont PAS dans le code
    ni dans le wiki (Log storage, Log endpoints) : à trancher/faire.
 4. LAYOUT 9 (journal vidé à l'ouverture d'un store de disposition <= 8,
