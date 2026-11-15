@@ -63,3 +63,41 @@ async fn activity_is_noted_for_a_loaded_repository() {
     let (status, _) = request(&app, "POST", &format!("/repos/{unknown}/activity"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// A GET with the header that says it is not activity, or without.
+async fn get_wear(app: &Router, repo: &str, header: Option<&str>) {
+    let mut builder = Request::builder().method("GET").uri(format!("/repos/{repo}/wear"));
+    if let Some(value) = header {
+        builder = builder.header(metafolder_core::context::ACTIVITY_HEADER, value);
+    }
+    let response = app.clone().oneshot(builder.body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_operation_is_activity_unless_it_says_it_is_not() {
+    let state = std::sync::Arc::new(AppState::new(common::settings()));
+    let app = routes::build(state.clone());
+    let root = TempDir::new("activity_http_ops");
+    common::seed_config(&root);
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let repo_state = state.repo(uuid::Uuid::parse_str(&repo).unwrap()).unwrap();
+    let hour = std::time::Duration::from_secs(3600);
+    let long_ago = std::time::Instant::now() - hour;
+
+    repo_state.activity.note_at(long_ago);
+    get_wear(&app, &repo, Some("off")).await;
+    assert!(repo_state.activity.idle_for() >= hour, "said it was not activity");
+
+    get_wear(&app, &repo, None).await;
+    assert!(repo_state.activity.idle_for() < hour, "an operation counts by default");
+
+    // Another repository's route, or none, touches nothing.
+    repo_state.activity.note_at(long_ago);
+    let (status, _) = request(&app, "GET", "/repos", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(repo_state.activity.idle_for() >= hour);
+}

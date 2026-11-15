@@ -1441,8 +1441,13 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let client = metafolder_cli::client::Client::new(&format!("http://127.0.0.1:{port}"))
+    let mut client = metafolder_cli::client::Client::new(&format!("http://127.0.0.1:{port}"))
         .in_command(command);
+    if std::env::var(metafolder_core::context::ACTIVITY_ENV)
+        .is_ok_and(|v| v.trim().eq_ignore_ascii_case("off"))
+    {
+        client = client.not_activity();
+    }
     let ctx = Ctx::with_client(client, repo_name, repo_uuid, &config);
     let result = dispatch(&ctx, cli.command);
     match result {

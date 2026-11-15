@@ -20,6 +20,15 @@ pub const COMMAND_NAME_HEADER: &str = "x-metafolder-command-name";
 /// Its description, [`encode`]d: what it acted on (a query), when it says.
 pub const COMMAND_DESCRIPTION_HEADER: &str = "x-metafolder-command-description";
 
+/// Whether a request counts as the user's activity, which holds the daemon's
+/// folding of pending lists back (doc "Folding in idle time"): every request
+/// to a repository does, unless it says `off`. A client that polls says it.
+pub const ACTIVITY_HEADER: &str = "x-metafolder-activity";
+
+/// The environment variable that makes an `mf` say its requests are not
+/// activity (`METAFOLDER_ACTIVITY=off`): a script that polls sets it.
+pub const ACTIVITY_ENV: &str = "METAFOLDER_ACTIVITY";
+
 /// The environment variable a context is passed on in ([`Context`]): the
 /// label every `mf` started meanwhile writes in. Leaving the context is not
 /// passing it on.

@@ -18,24 +18,64 @@ pub const IDLE: Duration = Duration::from_secs(30);
 /// How long after a fold before the next list is, if nothing happened since.
 pub const NEXT: Duration = Duration::from_secs(1);
 
-/// When a repository last had activity: a user action the GUI reported
-/// (`POST /repos/:repo/activity`), or the load.
+/// What the repository has been doing: the operations in flight, and when it
+/// last had activity — a user action the GUI reported, the end of an operation,
+/// or the load. The quiet a fold waits for is counted from the last of these,
+/// and never begins while an operation is under way: one that lasts a minute
+/// does not end inside a quiet period.
 #[derive(Debug)]
-pub struct Activity(std::sync::Mutex<Instant>);
+pub struct Activity(std::sync::Mutex<State>);
+
+#[derive(Debug)]
+struct State {
+    in_flight: usize,
+    last: Instant,
+}
 
 impl Default for Activity {
     fn default() -> Self {
-        Self(std::sync::Mutex::new(Instant::now()))
+        Self(std::sync::Mutex::new(State { in_flight: 0, last: Instant::now() }))
     }
 }
 
 impl Activity {
     pub fn note(&self) {
-        *self.0.lock_recover() = Instant::now();
+        self.note_at(Instant::now());
     }
 
+    /// Activity that happened at `when` (tests set it back).
+    pub fn note_at(&self, when: Instant) {
+        self.0.lock_recover().last = when;
+    }
+
+    /// Zero while an operation is in flight, else the time since the last
+    /// activity.
     pub fn idle_for(&self) -> Duration {
-        self.0.lock_recover().elapsed()
+        let state = self.0.lock_recover();
+        if state.in_flight > 0 {
+            Duration::ZERO
+        } else {
+            state.last.elapsed()
+        }
+    }
+}
+
+/// An operation under way on a repository: held for its whole duration; the
+/// quiet starts when it is dropped. It holds the repository's activity and not
+/// the repository, which an unload waits to be the last reference to.
+pub struct Operation(std::sync::Arc<Activity>);
+
+/// Starts counting an operation of `repo` as activity.
+pub fn begin_operation(repo: &RepoState) -> Operation {
+    repo.activity.0.lock_recover().in_flight += 1;
+    Operation(std::sync::Arc::clone(&repo.activity))
+}
+
+impl Drop for Operation {
+    fn drop(&mut self) {
+        let mut state = self.0 .0.lock_recover();
+        state.in_flight -= 1;
+        state.last = Instant::now();
     }
 }
 

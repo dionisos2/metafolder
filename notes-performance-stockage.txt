@@ -549,6 +549,13 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       retirés, décision utilisateur) ; KvStore::wear + GET /repos/:repo/wear
       (doc "Storage wear") : listes en attente (repli) et ids morts
       (reindex), sans seuil de conseil fixé.
+  10d FAIT : toute requête sur un dépôt compte comme activité tant qu'elle
+      dure, le calme de 30 s repart à sa FIN (Activity : opérations en cours +
+      dernière activité ; middleware count_activity). En-tête
+      X-Metafolder-Activity: off (mf : METAFOLDER_ACTIVITY=off ; GUI :
+      activity:false sur daemon_request, posé sur le poll du flux de
+      changements). Le watcher et les workers ne comptent pas (décision
+      utilisateur).
   MESURE SSD (15 nov. 2026, --quick --storage --cold, taille S, une passe,
       avant = db369318, après = 0a0261aa ; machine 0ec86a28c252) :
       phase de masse (200 écritures) 278 s -> 17,8 s. Masse ajouter/retirer

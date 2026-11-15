@@ -13,12 +13,20 @@ asking for anything.
 !! When
 
 Each loaded repository has a thread (`folding.rs`, started with the hash worker). It
-folds when the repository has had no ''activity'' for 30 seconds (`IDLE`): the GUI
-tells the daemon of the user's actions ([[POST /repos/:repo/activity]]), and a load counts as activity.
-The GUI (`lib/userActivity.ts`) reports each key, click and scroll, at most once every
-two seconds, to the repositories of the workspaces on screen. The watcher's writes and
-requests do not: a GUI that polls, or a watcher flushing every few seconds, must not
-keep the repository busy for ever.
+folds when the repository has been quiet for 30 seconds (`IDLE`). ''Activity'' is:
+
+* ''every request to the repository'' — for as long as it lasts: a request that takes
+  a minute does not end inside a quiet period, the 30 seconds count from its end. A
+  client that polls, or a script that watches, says its requests are not activity with
+  the header `X-Metafolder-Activity: off` (for `mf`, `METAFOLDER_ACTIVITY=off`); the
+  GUI sets it on its change-feed poll;
+* ''the user's actions the GUI reports'' ([[POST /repos/:repo/activity]]): the GUI
+  (`lib/userActivity.ts`) reports each key, click and scroll, at most once every two
+  seconds, to the repositories of the workspaces on screen;
+* the load.
+
+The watcher's writes and the daemon's own workers are not requests and do not count:
+a file touched every few seconds must not keep the repository busy for ever.
 
 !! How
 

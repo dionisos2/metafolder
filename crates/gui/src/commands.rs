@@ -754,11 +754,19 @@ pub async fn daemon_request(
     context: Option<String>,
     // `abortId`: makes the call abortable by `daemon_abort` while in flight.
     abort_id: Option<String>,
+    // `activity`: false for a poll, which is not the user's activity (doc
+    // "Folding in idle time"); absent or true, the call counts.
+    activity: Option<bool>,
 ) -> Result<ProxyResponse, String> {
-    let result = app
-        .daemon
-        .request_with_context(&method, &path, body, context.as_deref(), abort_id.as_deref())
-        .await;
+    let call = app.daemon.request_with_context(
+        &method,
+        &path,
+        body,
+        context.as_deref(),
+        abort_id.as_deref(),
+    );
+    let result =
+        if activity == Some(false) { app.daemon.not_activity(call).await } else { call.await };
     if result.as_ref().is_err_and(|e| e != "aborted") {
         // Likely a daemon outage: refresh the health state right away.
         let daemon = app.daemon.clone();

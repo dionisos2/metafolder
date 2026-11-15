@@ -80,6 +80,11 @@ pub struct DaemonProxy {
     aborts: Mutex<Aborts>,
 }
 
+tokio::task_local! {
+    /// Set around a request that is not the user's activity.
+    static NOT_ACTIVITY: bool;
+}
+
 /// The command the shell is running, told to the daemon with every request —
 /// this proxy's and the blocking client's — so what it writes is one label
 /// (doc "Labels and contexts"). The process's: one GUI, one shell.
@@ -206,6 +211,23 @@ impl DaemonProxy {
         body: Option<Value>,
     ) -> Result<ProxyResponse, String> {
         self.request_with_context(method, path, body, None, None).await
+    }
+
+    /// [`Self::request`] for a poll, which says it is not the user's activity
+    /// (doc "Folding in idle time"): the daemon folds its pending lists only
+    /// after a quiet while, and a poll every few seconds is not the user.
+    pub async fn request_polling(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<ProxyResponse, String> {
+        self.not_activity(self.request(method, path, body)).await
+    }
+
+    /// Runs `call` so that the requests it makes say they are not activity.
+    pub async fn not_activity<F: std::future::Future>(&self, call: F) -> F::Output {
+        NOT_ACTIVITY.scope(true, call).await
     }
 
     /// Aborts the call in flight registered as `id`; `false` when there is
@@ -343,6 +365,9 @@ impl DaemonProxy {
         }
         if let Some(label) = crate::work_context::label_for(path) {
             request = request.header(metafolder_core::context::LABEL_HEADER, label.to_string());
+        }
+        if NOT_ACTIVITY.try_with(|v| *v).unwrap_or(false) {
+            request = request.header(metafolder_core::context::ACTIVITY_HEADER, "off");
         }
         if let Some((key, name)) = current_command() {
             use metafolder_core::context;

@@ -61,3 +61,23 @@ fn a_step_folds_one_list_once_the_repository_has_been_idle() {
     assert_eq!(pending(&repo), 0);
     assert_eq!(folding::step(&repo, Duration::ZERO).unwrap(), Some(false));
 }
+
+#[test]
+fn an_operation_in_flight_is_activity_and_the_quiet_starts_when_it_ends() {
+    let (repo, _root) = setup();
+    let hour = Duration::from_secs(3600);
+    let long_ago = std::time::Instant::now() - hour;
+    repo.activity.note_at(long_ago);
+    assert!(repo.activity.idle_for() >= hour);
+    assert_eq!(folding::step(&repo, Duration::from_secs(30)).unwrap(), Some(false));
+
+    let operation = folding::begin_operation(&repo);
+    // However long it lasts, it is not idle…
+    repo.activity.note_at(long_ago);
+    assert_eq!(repo.activity.idle_for(), Duration::ZERO);
+    assert_eq!(folding::step(&repo, Duration::from_secs(30)).unwrap(), None);
+    // …and the quiet starts when it ends, not when it began.
+    drop(operation);
+    assert!(repo.activity.idle_for() < Duration::from_secs(30));
+    assert_eq!(folding::step(&repo, Duration::from_secs(30)).unwrap(), None);
+}

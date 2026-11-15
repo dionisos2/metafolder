@@ -47,6 +47,9 @@ pub struct Client {
     /// The command this process runs, told to the daemon with every request
     /// (doc "Labels and contexts"); `None` for a client that is no command.
     command: Option<CommandHeaders>,
+    /// Whether the requests say they are not the user's activity (doc
+    /// "Folding in idle time").
+    not_activity: bool,
 }
 
 /// What a command tells the daemon about itself: the key its label is found
@@ -87,7 +90,16 @@ impl Client {
             agent: agent(),
             token: metafolder_core::auth::read_token(&service).ok(),
             command: None,
+            not_activity: false,
         }
+    }
+
+    /// The same client, saying its requests are not the user's activity: the
+    /// daemon does not hold its folding back for them (doc "Folding in idle
+    /// time").
+    pub fn not_activity(mut self) -> Self {
+        self.not_activity = true;
+        self
     }
 
     /// The same client, telling the daemon its requests are steps of
@@ -148,6 +160,9 @@ impl Client {
         };
         if let Some(token) = &self.token {
             req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        if self.not_activity {
+            req = req.header(metafolder_core::context::ACTIVITY_HEADER, "off");
         }
         if let Some(command) = &self.command {
             use metafolder_core::context;
@@ -248,6 +263,38 @@ pub(crate) mod tests {
         let url = serve_once("409 Conflict", r#"{"error":"busy"}"#.into());
         let err = Client::new(&url).request_daemon("GET", "/x", None).unwrap_err();
         assert_eq!((err.status, err.message.as_str()), (Some(409), "busy"));
+    }
+
+    /// Answers one request and sends what it said back, for a test to look at.
+    fn serve_once_capturing() -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let _ = tx.send(String::from_utf8_lossy(&request[..n]).to_ascii_lowercase());
+            let body = "{}";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+        });
+        (url, rx)
+    }
+
+    /// A client that says its requests are not activity sends the header; the
+    /// others say nothing, and so count.
+    #[test]
+    fn test_a_client_can_say_its_requests_are_not_activity() {
+        let (url, seen) = serve_once_capturing();
+        Client::new(&url).not_activity().get("/x", &[]).unwrap();
+        assert!(seen.recv().unwrap().contains("x-metafolder-activity: off"));
+        let (url, seen) = serve_once_capturing();
+        Client::new(&url).get("/x", &[]).unwrap();
+        assert!(!seen.recv().unwrap().contains("x-metafolder-activity"));
     }
 
     fn json_of(v: &str) -> Json {

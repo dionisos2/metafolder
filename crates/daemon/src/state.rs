@@ -121,7 +121,7 @@ pub struct RepoState {
     pub hash_queue: crate::hashing::HashQueue,
     /// When the repository last had activity, which the folding worker waits
     /// out (doc "Folding in idle time").
-    pub activity: crate::folding::Activity,
+    pub activity: Arc<crate::folding::Activity>,
     /// The rule index (doc "The watch rule index") and how far the
     /// ingest filter may trust it. Behind its own lock, held for a pointer copy:
     /// the ingest thread reads it without ever waiting for the connection.
@@ -256,7 +256,7 @@ impl RepoState {
                 crate::watch_activity::DEFAULT_CAP,
             )),
             hash_queue: crate::hashing::HashQueue::default(),
-            activity: crate::folding::Activity::default(),
+            activity: Arc::default(),
             watch_rules: Mutex::new(RulesSlot::default()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,

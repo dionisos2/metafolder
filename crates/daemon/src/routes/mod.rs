@@ -151,7 +151,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/sync/{a}/{b}/links/{link}", get(sync_get_link).delete(sync_delete_link))
         .route("/sync/{a}/{b}/links/commit", post(sync_commit))
         .route("/sync/{a}/{b}/status", get(sync_status))
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(state, count_activity))
         .layer(axum::middleware::from_fn(name_operation))
 }
 
@@ -160,6 +161,43 @@ pub fn build(state: Arc<AppState>) -> Router {
 /// binary; tests drive [`build`] directly (no network, no token).
 pub fn build_authenticated(state: Arc<AppState>, token: Arc<str>) -> Router {
     build(state).layer(axum::middleware::from_fn_with_state(token, require_token))
+}
+
+/// Counts a request as activity of the repositories its path names, for as long
+/// as it lasts (doc "Folding in idle time"), unless it says it is not
+/// (`X-Metafolder-Activity: off`). The watcher and the daemon's workers are not
+/// requests, so they never count.
+async fn count_activity(
+    State(state): State<Arc<AppState>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let counts = request
+        .headers()
+        .get(metafolder_core::context::ACTIVITY_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_none_or(|v| !v.trim().eq_ignore_ascii_case("off"));
+    let _operations: Vec<crate::folding::Operation> = if counts {
+        repos_named(request.uri().path())
+            .into_iter()
+            .filter_map(|uuid| state.repo(uuid).ok())
+            .map(|repo| crate::folding::begin_operation(&repo))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    next.run(request).await
+}
+
+/// The repositories a path names: the uuid after `repos`, the two after `sync`.
+fn repos_named(path: &str) -> Vec<Uuid> {
+    let segments: Vec<&str> = path.split('/').skip(1).collect();
+    let take = match segments.first() {
+        Some(&"repos") => 1,
+        Some(&"sync") => 2,
+        _ => return Vec::new(),
+    };
+    segments[1..].iter().take(take).filter_map(|s| Uuid::try_parse(s).ok()).collect()
 }
 
 /// What the request layer knows about the operation being served, carried to

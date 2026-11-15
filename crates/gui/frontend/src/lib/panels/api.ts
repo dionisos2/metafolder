@@ -36,7 +36,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 export function startChangePolling(intervalMs = 7000) {
   if (pollTimer) return;
   const raw: RawFetcher = (method, path, body) =>
-    ipcInvoke('daemon_request', { method, path, body });
+    ipcInvoke('daemon_request', { method, path, body, activity: false });
   pollTimer = setInterval(() => {
     for (const repo of changeFeed.trackedRepos()) void changeFeed.sync(repo, raw);
   }, intervalMs);
