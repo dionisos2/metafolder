@@ -23,18 +23,16 @@ Chiffres : sections « MESURE SSD » ci-dessous et benchmarks/history. La fusion
 dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
 
 À FAIRE (par ordre) :
-1. TESTS E2E AVEC LA GUI (demandé par l'utilisateur, à faire dans une nouvelle
-   session ; scripts/dev/gui-e2e.sh --unsandboxed, ~4 min, écran requis).
-   Rien de ce qui suit n'a été essayé dans la vraie GUI :
-   - le panneau log : premier niveau = résumés (GET /log/labels), entrée dans
-     un label (labels imbriqués + 500 dernières opérations sans instantanés),
-     badges HEAD / undo of / undone by, revert d'un label et d'une opération,
-     « Show older », rafraîchissement qui revient dans le label ouvert ;
-   - le signal d'activité de la GUI (touches/clics/molette → POST /activity,
-     une fois toutes les 2 s) : le repli en inactivité ne part qu'après 30 s
-     sans activité (vérifier avec GET /repos/:repo/wear) ;
-   - une suppression de masse puis son annulation (avant et après repli), la
-     corbeille et sa restauration, un undo/redo d'un lot de masse.
+1. TESTS E2E AVEC LA GUI — FAITS (15 nov. 2026, scripts/dev/gui-e2e.sh, 446 verts) :
+   scénarios `log-panel` (résumés, entrée dans un label, refresh, badges,
+   revert, Show older), `activity` (touches → le repli attend, puis part 30 s
+   après la dernière), `mass-delete` (suppression de masse, undo/redo avant et
+   après repli). Bug trouvé et corrigé : log:revert invoquait la « commande »
+   metarecords:dirty (variable de workspace). Scénario `paste` remis d'aplomb
+   (périmé depuis le 7 nov.). NON couverts : revert d'une opération seule,
+   bascule « watcher », corbeille en lot avec fichiers, clics/molette pour
+   l'activité. Piège : `mf metarecord -q … delete` demande une confirmation
+   sur stdin (--force </dev/null) ; toujours borner par `timeout`.
 2. `mf repo wear` (promis à l'utilisateur) : afficher GET /repos/:repo/wear ;
    éventuellement un affichage dans la GUI. Les seuils « repli conseillé » et
    « reindex conseillé » ne sont PAS fixés (à décider sur des mesures).
