@@ -6,7 +6,7 @@ summary: How worn the store is — what writes left pending, and the ids no meta
 
 Two things make a store slower than a freshly built one, and they are cured by
 different means. `KvStore::wear` measures both, in one read of the pending lists and
-two counters, and `GET /repos/:repo/wear` ([[GET /repos/:repo/wear]]) serves it.
+two counters, and `GET /repos/:repo/wear` ([[GET /repos/:repo/wear]]) serves it, and `mf repo wear` prints it (`--json` for the answer as it is). That command is not the user's activity: reading the wear is how one waits for the idle fold ([[Folding in idle time]]), so it must not hold the fold back. No threshold says when a fold or a reindex is ''advised''; none has been measured.
 
 !! What is pending: a fold cures it
 

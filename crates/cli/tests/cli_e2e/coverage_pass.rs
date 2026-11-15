@@ -371,3 +371,35 @@ fn script_lists_the_scripts_and_copies_a_template() {
     let out = mf_full(&["script", "new", "sort-folder"], None, &env, false);
     assert_eq!(out.code, 1, "a second copy must not overwrite the first");
 }
+
+/// `mf repo wear` says what a fold would write in and what a reindex would win
+/// back (doc "Storage wear"); `--json` prints the daemon's answer as it is.
+#[test]
+fn test_repo_wear_says_what_is_pending_and_what_is_dead() {
+    let (repo, _root) = init_repo("wear");
+    for _ in 0..3 {
+        create_metarecord(&repo, &["note:string=x"]);
+    }
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "note = \"x\"",
+        "field",
+        "set",
+        "tag:string=t",
+    ]));
+
+    let out = mf(&["-u", &repo, "repo", "wear"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("pending a fold:"), "{}", out.stdout);
+    assert!(out.stdout.contains("dead ids:"), "{}", out.stdout);
+    assert!(!out.stdout.contains("pending a fold: 0B"), "{}", out.stdout);
+
+    let out = mf(&["-u", &repo, "repo", "wear", "--json"]);
+    assert_ok(&out);
+    let value: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
+    assert!(value["pending_bytes"].as_u64().unwrap() > 0, "{}", out.stdout);
+    assert!(value["dead_fraction"].is_number(), "{}", out.stdout);
+}

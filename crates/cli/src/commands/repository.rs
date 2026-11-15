@@ -300,6 +300,36 @@ pub fn compact_repo(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf repo wear`: what a fold would write in and what a reindex would win back
+/// (`GET …/wear`, doc "Storage wear"); `--json` prints the answer as it is.
+pub fn repo_wear(ctx: &Ctx, json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let wear = ctx.client.request("GET", &format!("{base}/wear"), &[], None)?;
+    if json {
+        println!("{wear}");
+        return Ok(0);
+    }
+    let n = |key: &str| wear[key].as_u64().unwrap_or(0);
+    let size = |key: &str| metafolder_core::progress::human_size(n(key));
+    println!("pending a fold: {}", size("pending_bytes"));
+    println!(
+        "  mass writes:   {} entries in {} parts, {}",
+        n("mass_entries"),
+        n("mass_parts"),
+        size("mass_bytes")
+    );
+    println!(
+        "  field events:  {} in {} fields, {}",
+        n("events"),
+        n("event_fields"),
+        size("event_bytes")
+    );
+    println!("  trigrams:      {} ids", n("trigrams_pending"));
+    let percent = wear["dead_fraction"].as_f64().unwrap_or(0.0) * 100.0;
+    println!("dead ids: {} of {} ({percent:.1}%)", n("dead_ids"), n("ids_allocated"));
+    Ok(0)
+}
+
 /// `mf repo unload`: unloads the repository from the daemon (`POST …/unload`),
 /// printing its UUID. A repository not loaded (404) or in a coordinated revert
 /// (409) is reported as an error.

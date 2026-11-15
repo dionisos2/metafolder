@@ -424,6 +424,16 @@ enum RepoCommand {
     /// after. The repository waits for it to finish; refused while it is
     /// held in memory.
     Compact,
+    /// Say how worn the selected repository's store is
+    ///
+    /// What writes to many records left pending a fold, and the ids no
+    /// metarecord holds (a reindex gathers them again). Changes nothing, and
+    /// is not the user's activity: it does not hold the idle fold back.
+    Wear {
+        /// Print the daemon's answer as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Take a backup of the selected repository and print where it went
     ///
     /// A consistent copy of its store (taken while the daemon runs) with its
@@ -1460,6 +1470,11 @@ fn main() {
     {
         client = client.not_activity();
     }
+    // Reading the wear is how one waits for the idle fold: it must not be the
+    // activity that holds it back.
+    if matches!(&cli.command, Command::Repo { command: Some(RepoCommand::Wear { .. }) }) {
+        client = client.not_activity();
+    }
     let ctx = Ctx::with_client(client, repo_name, repo_uuid, &config);
     let result = dispatch(&ctx, cli.command);
     match result {
@@ -1540,6 +1555,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),
             RepoCommand::Compact => commands::compact_repo(ctx),
+            RepoCommand::Wear { json } => commands::repo_wear(ctx, json),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),
             RepoCommand::Borrow { root, to, metafolder, name, force } => commands::borrow_repo(
                 ctx,

@@ -23,6 +23,7 @@ Commands:
   check          Check that the selected repository's indexes agree with its data
   reindex        Rebuild the selected repository's indexes from its data
   compact        Rewrite the selected repository's store without its free pages
+  wear           Say how worn the selected repository's store is
   backup         Take a backup of the selected repository and print where it went
   restore        Put a backup of a repository back (the most recent one by default)
   borrow         Borrow a repository of another machine, through a mount of its files

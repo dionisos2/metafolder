@@ -1,0 +1,21 @@
+title: $:/mf/gen/CLI command/mf repo wear
+catalog: CLI command
+target: mf repo wear
+summary: Say how worn the selected repository's store is
+
+!! Reference
+
+```
+Say how worn the selected repository's store is
+
+What writes to many records left pending a fold, and the ids no metarecord holds (a reindex gathers them again). Changes nothing, and is not the user's activity: it does not hold the idle fold back.
+
+Usage: mf repo wear [OPTIONS]
+
+Options:
+      --json
+          Print the daemon's answer as JSON
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
