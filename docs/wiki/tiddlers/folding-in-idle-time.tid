@@ -37,6 +37,10 @@ waits for one list, not for all of them. After a fold the next step is one secon
 later (`NEXT`) if the repository is still quiet; with nothing left, the thread looks
 again when it could be idle. No chunk size to tune: a list is the unit.
 
+A deletion of many records waiting for its fold ([[Mass operations in the log]]) comes
+before every other list, whatever the sizes: its records are read with the entries of
+their parts still applied.
+
 A step is not made while a coordinated revert holds the repository or the root is
 absent. `mf repo reindex` still folds everything at once. A list has ''no limit'': a
 write never folds one, so that a fold cannot start while someone works; how long the

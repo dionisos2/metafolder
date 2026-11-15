@@ -50,3 +50,9 @@ leave its ancestors' descendants ([[The forest in the store]]).
 The tests are `tests/kv_delete.rs`: which tables a deletion writes
 (`KvStore::last_write_keys`), and every kind of answer held to the oracle after
 deletions, reverts and a reindex.
+
+!! Deleting many records
+
+A deletion of many records at once does less still: the records stay in their keys and
+the key of each uuid in `metarecords`, until an idle fold, and only the universe, the type
+counts and the parents change ([[Mass operations in the log]]).

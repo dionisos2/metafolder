@@ -821,18 +821,18 @@ pub(super) async fn delete_by_query(
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let cache = repo_state.tree();
-        let uuids = resolve_query_uuids(&conn, &cache, &body.query)?;
+        // The answer as dense ids: a deletion of many records reads none of
+        // them (doc "Mass operations in the log").
+        let ids = resolve_query_ids(&conn, &cache, &body.query)?;
 
         let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.fields");
-        for uuid in &uuids {
-            writer.delete_metarecord(*uuid)?;
-        }
+        let deleted = writer.mass_delete_ids(&ids)?;
         drop(writing);
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
-        Ok(Json(json!({"deleted": uuids.len()})))
+        Ok(Json(json!({"deleted": deleted.len()})))
     })
     .await
 }

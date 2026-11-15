@@ -845,6 +845,9 @@ pub struct MassApplied {
     pub changed: roaring::RoaringBitmap,
     /// The last of their operations; they hold the ids before it.
     pub last_op: i64,
+    /// Whether what changed decides which directories are watched: a deletion
+    /// names no row, so the store says it.
+    pub touches_watch: bool,
 }
 
 /// One operation a write transaction appends to the log.
@@ -896,6 +899,19 @@ pub trait WriteTxn: Store {
         _kind: MassKind,
         _field: &str,
         _values: &[Value],
+        _ids: &roaring::RoaringBitmap,
+        _label: i64,
+        _timestamp: i64,
+        _origin: Option<&str>,
+    ) -> Result<Option<MassApplied>> {
+        Ok(None)
+    }
+    /// Deletes the records `ids` (those that exist) as one entry of the log,
+    /// reading and writing none of them (doc "Mass operations in the log"):
+    /// `None` — nothing written — when the store does not do it so, or when a
+    /// record has children, which are unpicked one by one.
+    fn mass_delete(
+        &self,
         _ids: &roaring::RoaringBitmap,
         _label: i64,
         _timestamp: i64,

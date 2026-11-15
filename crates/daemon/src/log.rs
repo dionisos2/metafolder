@@ -1325,6 +1325,53 @@ impl<'c> Writer<'c> {
         Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
     }
 
+    /// Deletes the metarecords `ids` (those that exist): one entry in the log
+    /// and no record read or written when the store can (doc "Mass operations
+    /// in the log"), else one by one, as [`Self::delete_metarecord`] does. The
+    /// ids of those it deleted.
+    pub fn mass_delete_ids(&mut self, ids: &RoaringBitmap) -> Result<RoaringBitmap> {
+        // A revert writes what it undoes one operation at a time.
+        if self.reverting.is_none() {
+            // The ids of this write's operations come first.
+            self.flush_pending()?;
+            let origin = self.origin.clone();
+            if let Some(done) =
+                self.tx.mass_delete(ids, self.label_id, self.timestamp, origin.as_deref())?
+            {
+                if let Some(n) = i64::try_from(done.changed.len()).ok().filter(|&n| n > 0) {
+                    self.first_op.get_or_insert(done.last_op - n + 1);
+                    self.flushed += n;
+                    self.chain_head = Some(done.last_op);
+                    // Rows are gone: a field's type may have unlocked.
+                    self.field_types.clear();
+                }
+                if done.touches_watch {
+                    self.effects.watch = true;
+                }
+                return Ok(done.changed);
+            }
+        }
+        let mut deleted = RoaringBitmap::new();
+        let uuids = self.tx.uuids_of(ids)?;
+        for (id, uuid) in ids.iter().zip(uuids) {
+            // An id whose metarecord is gone, or was created again under a new
+            // one, names nothing to delete.
+            if self.tx.dense_ids(&[uuid], false)?.unwrap_or_default().contains(id) {
+                self.delete_metarecord(uuid)?;
+                deleted.insert(id);
+            }
+        }
+        Ok(deleted)
+    }
+
+    /// [`Self::mass_delete_ids`] for a caller that holds uuids. The uuids it
+    /// deleted, in the order asked.
+    pub fn mass_delete(&mut self, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        let ids = self.tx.dense_ids(uuids, false)?.unwrap_or_default();
+        let done = self.mass_delete_ids(&ids)?;
+        self.in_request_order(uuids, &done)
+    }
+
     /// The records of `asked`, in the order asked, that `changed` holds.
     fn in_request_order(&self, asked: &[Uuid], changed: &RoaringBitmap) -> Result<Vec<Uuid>> {
         let done: HashSet<Uuid> = self.tx.uuids_of(changed)?.into_iter().collect();

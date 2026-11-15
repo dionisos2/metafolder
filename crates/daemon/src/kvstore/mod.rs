@@ -236,6 +236,9 @@ pub struct KvStore {
     /// Whether any part has entries pending (doc "Mass writes in the store"):
     /// when none does, no read looks for them.
     mass: std::sync::atomic::AtomicBool,
+    /// Whether a deletion of many records is pending, whose records are still
+    /// stored: when none is, no read sifts what it finds through the universe.
+    deletes: std::sync::atomic::AtomicBool,
     /// The keys the last committed write transaction wrote, per table — what
     /// the write cost assertions count ([`KvStore::last_write_keys`]).
     written: std::sync::Mutex<[u64; table::TABLES]>,
@@ -670,6 +673,7 @@ impl KvStore {
             dir: dir.to_path_buf(),
             reads: Default::default(),
             mass: Default::default(),
+            deletes: Default::default(),
             written: Default::default(),
             memory: None,
             resident: Default::default(),
@@ -679,6 +683,9 @@ impl KvStore {
             let r = store.env.read_txn()?;
             let pending = store.t.mass.len(&r)? > 0;
             store.mass.store(pending, std::sync::atomic::Ordering::Relaxed);
+            let deleting =
+                store.t.mass.prefix_iter(&r, &mass::DELETES_PART.to_be_bytes())?.next().is_some();
+            store.deletes.store(deleting, std::sync::atomic::Ordering::Relaxed);
         }
         let mut derived = derived;
         if layout != Some(LAYOUT) {
@@ -738,6 +745,9 @@ struct Read<'a> {
     /// Whether any part has entries pending, which a record is read with
     /// applied ([`mass`]).
     mass: bool,
+    /// Whether a deletion of many records is pending: the records it deleted
+    /// are still stored, and a read of one sifts it through the universe.
+    deletes: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
 }
@@ -749,7 +759,24 @@ impl Read<'_> {
 
     fn exists(&self, uuid: Uuid) -> Result<bool> {
         self.count(1)?;
-        Ok(self.t.metarecords.get(self.r, uuid.as_bytes())?.is_some())
+        if self.t.metarecords.get(self.r, uuid.as_bytes())?.is_none() {
+            return Ok(false);
+        }
+        self.holds(uuid)
+    }
+
+    /// Whether a metarecord whose key is stored still exists: with a deletion
+    /// pending, a deleted one's key stays until the fold, and its id is out of
+    /// the universe.
+    fn holds(&self, uuid: Uuid) -> Result<bool> {
+        if !self.deletes {
+            return Ok(true);
+        }
+        self.count(1)?;
+        match derived::id_of(self.t, self.r, uuid.as_bytes())? {
+            Some(id) => self.live(id),
+            None => Ok(false),
+        }
     }
 
     /// Whether the metarecord of a dense id exists: whether the id is in the
@@ -778,8 +805,18 @@ impl Read<'_> {
         self.live(derived::dense(&v[FOREST_ID..]))
     }
 
-    /// The rows of the record of dense id `id`: its one key.
+    /// The rows of the record of dense id `id`: its one key. None for a
+    /// metarecord a pending deletion took out of the universe.
     fn record(&self, id: u32) -> Result<Vec<FieldRow>> {
+        if self.deletes && !self.live(id)? {
+            return Ok(Vec::new());
+        }
+        self.record_raw(id)
+    }
+
+    /// The rows of the record of dense id `id` whether or not it still exists:
+    /// what a deletion's operation says its record held.
+    pub(super) fn record_raw(&self, id: u32) -> Result<Vec<FieldRow>> {
         mass::read_record(self.t, self.r, id, self.mass, &mut |n| self.count(n))
     }
 
@@ -1089,7 +1126,15 @@ macro_rules! kv_reads {
             }
             fn metarecord_count(&self) -> Result<usize> {
                 let $me = self;
-                $with(&mut |$read: &Read| Ok($read.t.metarecords.len($read.r)? as usize))
+                $with(&mut |$read: &Read| {
+                    if $read.deletes {
+                        // The keys of the metarecords a deletion took out stay.
+                        let universe =
+                            derived::read_set($read.t, $read.r, derived::UNIVERSE, None)?;
+                        return Ok(universe.len() as usize);
+                    }
+                    Ok($read.t.metarecords.len($read.r)? as usize)
+                })
             }
             fn metarecords(&self) -> Result<Vec<Uuid>> {
                 let $me = self;
@@ -1097,7 +1142,10 @@ macro_rules! kv_reads {
                     let mut out = Vec::new();
                     for e in $read.t.metarecords.iter($read.r)? {
                         $read.count(1)?;
-                        out.push(uuid_of(e?.0));
+                        let uuid = uuid_of(e?.0);
+                        if $read.holds(uuid)? {
+                            out.push(uuid);
+                        }
                     }
                     Ok(out)
                 })
@@ -1399,6 +1447,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         live: None,
         holders: None,
         mass: me.mass_pending(),
+        deletes: me.deletes_pending(),
         universe: Default::default(),
     })
 });
@@ -1441,6 +1490,22 @@ impl KvStore {
         Ok(out)
     }
 
+    /// Whether a deletion of many records is pending.
+    pub(super) fn deletes_pending(&self) -> bool {
+        self.deletes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The uuids of dense ids, in the order of the ids (a tool for tests).
+    pub fn uuids_of(&self, ids: &roaring::RoaringBitmap) -> Result<Vec<Uuid>> {
+        let r = self.env.read_txn()?;
+        let mut out = Vec::new();
+        for id in ids {
+            let uuid = self.t.uuids.get(&r, &id.to_be_bytes())?.context("a dense id of no uuid")?;
+            out.push(uuid_of(uuid));
+        }
+        Ok(out)
+    }
+
     /// How many keys the store's reads and query sources have read.
     pub fn reads(&self) -> u64 {
         self.reads.load(std::sync::atomic::Ordering::Relaxed)
@@ -1478,6 +1543,7 @@ impl KvTxn<'_> {
             live: Some(&live),
             holders: Some(&holders),
             mass: self.mass_pending(),
+            deletes: self.deletes_pending(),
             universe: Default::default(),
         })
     }
@@ -1517,6 +1583,8 @@ pub struct KvTxn<'e> {
     /// The store's flag that some part has entries pending: a write to many
     /// records raises it.
     mass_lists: &'e std::sync::atomic::AtomicBool,
+    /// The store's flag that a deletion of many records is pending.
+    deletes: &'e std::sync::atomic::AtomicBool,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
@@ -1934,6 +2002,7 @@ impl<'e> KvTxn<'e> {
             cached_chunks: RefCell::new(HashMap::new()),
             reads: &store.reads,
             mass_lists: &store.mass,
+            deletes: &store.deletes,
             written: &store.written,
             universe: RefCell::new(HashMap::new()),
             grams: RefCell::new(HashMap::new()),
@@ -2055,6 +2124,7 @@ impl KvTxn<'_> {
                     live: None,
                     holders: None,
                     mass: false,
+                    deletes: false,
                     universe: Default::default(),
                 };
                 let Some(meta) = self.t.labels.get(&txn, &be(label))? else { break };
@@ -2121,6 +2191,16 @@ impl WriteTxn for KvTxn<'_> {
         self.mass_log(kind, field, values, ids, label, timestamp, origin)
     }
 
+    fn mass_delete(
+        &self,
+        ids: &roaring::RoaringBitmap,
+        label: i64,
+        timestamp: i64,
+        origin: Option<&str>,
+    ) -> Result<Option<crate::store::MassApplied>> {
+        self.mass_delete_log(ids, label, timestamp, origin)
+    }
+
     fn dense_ids(
         &self,
         uuids: &[Uuid],
@@ -2154,7 +2234,13 @@ impl WriteTxn for KvTxn<'_> {
     fn create_metarecord(&self, uuid: Uuid) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         if self.t.metarecords.get(&w, uuid.as_bytes())?.is_some() {
-            bail!("metarecord {uuid} already exists");
+            drop(w);
+            // A deleted one's key stays until the fold, which leaves it be if
+            // the metarecord is back by then.
+            if Rows::exists(self, uuid)? {
+                bail!("metarecord {uuid} already exists");
+            }
+            w = self.txn.borrow_mut();
         }
         // Its existence, and nothing else: the version is computed from the
         // rows when read (doc "Metarecord version").

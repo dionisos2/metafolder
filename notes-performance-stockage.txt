@@ -556,6 +556,22 @@ DÉCOUPAGE de la suppression des ids (un commit chacun, TDD) :
       activity:false sur daemon_request, posé sur le poll du flux de
       changements). Le watcher et les workers ne comptent pas (décision
       utilisateur).
+  11 FAIT : suppression de masse dans le journal (doc "Mass operations in the
+      log", section « A deletion »). Stub mass_delete lu comme un
+      delete_metarecord par record ; les records RESTENT dans `records` et
+      les clés `metarecords` jusqu'au repli (entrée sous la partie
+      DELETES_PART de la table mass) ; seuls l'univers, field_types
+      (somme des compteurs) et `parents` (un passage séquentiel sur les
+      referrers) changent. Lectures filtrées par l'univers seulement tant
+      qu'une suppression est en attente (drapeau `deletes`) : exists,
+      metarecord_count, metarecords, Read::record. Le repli traite les
+      suppressions D'ABORD : écrit les lignes dans snaps (le journal les lit
+      là ensuite), rend les lignes aux histogrammes, supprime record et clé
+      metarecords (sauf si l'uuid est revenu : undo avant repli).
+      Hors chemin rapide (repli par record) : un record qui a des enfants,
+      ou des ensembles modifiés dans la même transaction. Histogrammes non
+      vérifiés par check pendant l'attente. Route query/delete par ids ;
+      la corbeille (trash) garde le chemin par record.
   MESURE SSD (15 nov. 2026, --quick --storage --cold, taille S, une passe,
       avant = db369318, après = 0a0261aa ; machine 0ec86a28c252) :
       phase de masse (200 écritures) 278 s -> 17,8 s. Masse ajouter/retirer

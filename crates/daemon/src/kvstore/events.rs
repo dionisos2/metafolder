@@ -575,6 +575,11 @@ impl KvTxn<'_> {
     /// bytes of a part's entries or of a field's events, the ids pending of a
     /// field's trigrams. Returns whether any list was.
     pub(in super::super) fn fold_biggest(&self) -> Result<bool> {
+        // A deletion first, whatever the size of the others: its records are
+        // read with the entries of their parts still applied.
+        if self.fold_one_delete()? {
+            return Ok(true);
+        }
         enum List {
             Part(u32),
             Events(String),

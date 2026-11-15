@@ -45,6 +45,11 @@ pub(crate) fn part_of(id: u32) -> u32 {
     id >> PART_BITS
 }
 
+/// The part under which the deletions of many records wait for the fold: no id
+/// has it, and the entries of the parts, which an id's high bits name, are
+/// never this far.
+pub(crate) const DELETES_PART: u32 = u32::MAX;
+
 /// A record as stored.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Record {
@@ -143,7 +148,7 @@ pub(crate) struct Listed {
 }
 
 impl Listed {
-    fn encode(&self) -> Vec<u8> {
+    pub(super) fn encode(&self) -> Vec<u8> {
         let mut out = Out::default();
         out.int(match self.kind {
             Kind::Add => 0,
@@ -163,7 +168,7 @@ impl Listed {
         out.0
     }
 
-    fn decode(op: u64, bytes: &[u8]) -> Result<Listed> {
+    pub(super) fn decode(op: u64, bytes: &[u8]) -> Result<Listed> {
         let mut r = In(bytes);
         let kind = match r.int()? {
             0 => Kind::Add,
@@ -181,7 +186,7 @@ impl Listed {
     }
 }
 
-fn entry_key(part: u32, op: u64) -> Vec<u8> {
+pub(super) fn entry_key(part: u32, op: u64) -> Vec<u8> {
     [&part.to_be_bytes()[..], &op.to_be_bytes()[..]].concat()
 }
 
@@ -344,6 +349,10 @@ impl KvTxn<'_> {
         self.mass_lists.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    pub(super) fn deletes_pending(&self) -> bool {
+        self.deletes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Whether a write to many records of `field` is open: its rows are not
     /// written into the records.
     pub(super) fn in_mass(&self, field: &str) -> bool {
@@ -463,6 +472,9 @@ impl KvTxn<'_> {
     /// Writes a part's entries into its records, and empties the list. A
     /// metarecord that is gone is not written back.
     pub(super) fn fold_part(&self, part: u32) -> Result<()> {
+        if part == DELETES_PART {
+            return Ok(());
+        }
         let entries = self.part_entries(part)?;
         if entries.is_empty() {
             return Ok(());
@@ -497,6 +509,10 @@ impl KvTxn<'_> {
 
     /// [`Self::fold_part`] for every part with entries.
     pub(super) fn fold_all_mass(&self) -> Result<()> {
+        // The deletions first: they read the records of the metarecords they
+        // took out with the entries still applied, which a part's fold would
+        // leave behind for a record that is gone.
+        while self.fold_one_delete()? {}
         let mut parts = BTreeSet::new();
         for entry in self.t.mass.iter(&self.txn.borrow())? {
             let (k, _) = entry?;

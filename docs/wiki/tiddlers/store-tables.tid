@@ -24,7 +24,7 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 |`meta` |name |the id counters, HEAD, the layout and derived-format versions, the watcher's label | |
 |`metarecords` |uuid |empty |existence (the version is computed from the rows, [[Metarecord version]]) |
 |`records` |dense id |the rows: field name · value, each; then, if any, their numbers, tombs and cleared fields |a record's rows, in one read |
-|`mass` |part · operation number |field · kind · values · the ids of the part |the writes to many records not yet written into the records ([[Mass writes in the store]]) |
+|`mass` |part · operation number |field · kind · values · the ids of the part |the writes to many records not yet written into the records ([[Mass writes in the store]]); under a part of its own, the deletions of many records not yet folded ([[Mass operations in the log]]) |
 |`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
 |`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
 |`ops` |op id |the operation — or, at its first id, a stub: one entry for the operations of a write to many records ([[Mass operations in the log]]) |the log, in order ([[The operation log]]) |

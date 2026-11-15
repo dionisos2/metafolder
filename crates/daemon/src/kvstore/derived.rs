@@ -619,7 +619,13 @@ impl KvTxn<'_> {
     /// Adds `id` to (or removes it from) a set, in the transaction's chunk
     /// cache: a bulk write touches each chunk many times and writes it once,
     /// at [`Self::flush_sets`].
-    fn set_member(&self, kind: u8, field: Option<&str>, id: u32, member: bool) -> Result<()> {
+    pub(super) fn set_member(
+        &self,
+        kind: u8,
+        field: Option<&str>,
+        id: u32,
+        member: bool,
+    ) -> Result<()> {
         self.chunk_member(SETS, &set_prefix(kind, field), id, member)
     }
 
@@ -686,7 +692,13 @@ impl KvTxn<'_> {
     }
 
     /// Adds `ids` to a bitmap, or removes them — a chunk at a time.
-    fn chunk_apply(&self, table: u8, prefix: &[u8], ids: &RoaringBitmap, add: bool) -> Result<()> {
+    pub(super) fn chunk_apply(
+        &self,
+        table: u8,
+        prefix: &[u8],
+        ids: &RoaringBitmap,
+        add: bool,
+    ) -> Result<()> {
         let (Some(lo), Some(hi)) = (ids.min(), ids.max()) else { return Ok(()) };
         for chunk in (lo >> 16)..=(hi >> 16) {
             let mut part = RoaringBitmap::new();
@@ -911,6 +923,16 @@ impl KvTxn<'_> {
     pub(super) fn derive_removed(&self, uuid: Uuid) -> Result<()> {
         let Some(id) = self.id(uuid.as_bytes())? else { return Ok(()) };
         self.set_member(UNIVERSE, None, id, false)
+    }
+
+    /// The histogram forgets a row of a metarecord that was deleted: what the
+    /// fold of a deletion of many records gives back, the histograms counting
+    /// rows that no universe sifts.
+    pub(super) fn drop_hist(&self, field: &str, value: &Value) -> Result<()> {
+        if let Some(bucket) = value_key(value).as_deref().and_then(hist_bucket) {
+            self.bump(self.t.hist, &hist_key(field, &bucket), -1)?;
+        }
+        Ok(())
     }
 
     /// A row of `uuid` goes with its metarecord, which is being removed whole
@@ -1609,6 +1631,7 @@ impl KvStore {
         txn.meta_put("derived", DERIVED_VERSION)?;
         txn.finish()?;
         self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -1625,6 +1648,14 @@ impl KvStore {
         txn.finish()?;
         if folded {
             self.mass.store(self.pending_mass()? > 0, std::sync::atomic::Ordering::Relaxed);
+            let r = self.env.read_txn()?;
+            let deleting = self
+                .t
+                .mass
+                .prefix_iter(&r, &super::mass::DELETES_PART.to_be_bytes())?
+                .next()
+                .is_some();
+            self.deletes.store(deleting, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(folded)
     }
@@ -1668,6 +1699,7 @@ impl KvStore {
         txn.fold_grams()?;
         txn.finish()?;
         self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -1708,7 +1740,11 @@ impl KvStore {
             detail.report(&mut diff);
         }
         self.check_postings(&r, &mut diff)?;
-        self.check_histograms(&r, hist, &mut diff)?;
+        // A deletion pending leaves the rows it deleted counted: the fold gives
+        // them back.
+        if !self.deletes_pending() {
+            self.check_histograms(&r, hist, &mut diff)?;
+        }
         Ok(diff.lines)
     }
 
@@ -1739,8 +1775,16 @@ impl KvStore {
         // held to the rows *on those ids*.
         let mut metarecords = 0u64;
         let mut live = RoaringBitmap::new();
+        // A deletion of many records leaves their keys until the fold: those
+        // whose id is out of the universe are not metarecords any more.
+        let deleting = self.deletes_pending();
+        let stored = if deleting { read_set(t, r, UNIVERSE, None)? } else { RoaringBitmap::new() };
         for entry in t.metarecords.iter(r)? {
             let (k, _) = entry?;
+            match id_of(t, r, &k[..16])? {
+                Some(id) if deleting && !stored.contains(id) => continue,
+                _ => {}
+            }
             metarecords += 1;
             match id_of(t, r, &k[..16])? {
                 Some(id) => {
@@ -1790,7 +1834,7 @@ impl KvStore {
                 continue;
             };
             // An id only an entry names may be a metarecord's that is gone.
-            if t.metarecords.get(r, named)?.is_none() {
+            if t.metarecords.get(r, named)?.is_none() || (deleting && !live.contains(record_id)) {
                 continue;
             }
             let uuid: [u8; 16] = named.try_into().expect("a 16-byte uuid");
