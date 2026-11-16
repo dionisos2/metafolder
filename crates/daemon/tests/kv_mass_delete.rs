@@ -482,8 +482,12 @@ fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pend
 /// revert: a record given back and written to since has lost the rows the
 /// deletion took, and the log says it does not know them rather than read the
 /// rows of today.
+/// The rows a deletion took are still the log's after its records were given
+/// back and one was written to: the write keeps them first — in the snapshots
+/// of the deletion's operation — and only for the record it writes, the rest
+/// staying where they are.
 #[test]
-fn the_rows_a_deletion_took_are_unknown_once_the_record_was_written_to() {
+fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
     use metafolder_daemon::revert;
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
@@ -498,22 +502,144 @@ fn the_rows_a_deletion_took_are_unknown_once_the_record_was_written_to() {
     let mut w = Writer::begin(&mut store, None).unwrap();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
-    assert!(ops.iter().all(|o| store.before_known(o.id).unwrap()), "known after its own revert");
+    assert_eq!(store.last_write_keys().get("snaps"), None, "giving back copies nothing");
 
     let touched = uuids[7];
     write(&mut store, |w| {
         w.set_field(touched, "tag", s("purple")).unwrap();
     });
+    // The write's own snapshot, and the two rows of that one record: no more.
+    assert_eq!(store.last_write_keys().get("snaps"), Some(&3), "{:?}", store.last_write_keys());
+    let rows_of = |store: &KvStore, op_id: i64| {
+        let mut rows: Vec<_> = store
+            .snapshots(op_id)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.name, format!("{:?}", r.value)))
+            .collect();
+        rows.sort();
+        rows
+    };
     for op in &ops {
-        let known = store.before_known(op.id).unwrap();
-        assert_eq!(known, op.entity_uuid != touched, "{op:?}");
+        assert!(store.before_known(op.id).unwrap(), "{op:?}");
     }
-    // Reverting a deletion whose rows are unknown is refused, not guessed.
+    let op = ops.iter().find(|o| o.entity_uuid == touched).unwrap();
+    assert_eq!(
+        rows_of(&store, op.id),
+        vec![
+            ("rank".to_string(), format!("{:?}", Value::Int(0))),
+            ("tag".to_string(), format!("{:?}", s("green"))),
+        ],
+        "the rows the deletion took, not today's"
+    );
+    // Reverting that deletion is no longer refused: it puts back what it took.
     write(&mut store, |w| w.delete_metarecord(touched).unwrap());
-    let unknown: Vec<_> = ops.iter().filter(|o| o.entity_uuid == touched).cloned().collect();
+    let one = vec![op.clone()];
     let mut w = Writer::begin(&mut store, None).unwrap();
-    let err = revert::apply(&mut w, &unknown).unwrap_err().to_string();
-    assert!(err.contains("no longer known"), "{err}");
+    revert::apply(&mut w, &one).unwrap();
+    w.commit().unwrap();
+    let mut rows: Vec<_> =
+        Rows::rows(&store, touched).unwrap().into_iter().map(|r| (r.name, r.value)).collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(rows, vec![("rank".to_string(), Value::Int(0)), ("tag".to_string(), s("green"))]);
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// The rows a deletion took, in the records it gave back, are not today's once a
+/// write to many records names them: the entry copies them first, for the
+/// records it names, and the others keep waiting.
+#[test]
+fn a_write_to_many_records_keeps_the_rows_a_deletion_took() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+
+    let some = store.dense_ids(&uuids[..10]).unwrap();
+    write(&mut store, |w| w.mass_add_ids("tag", s("jazz"), &some).unwrap());
+    assert_eq!(store.last_write_keys().get("snaps"), Some(&20), "{:?}", store.last_write_keys());
+    for op in &ops {
+        assert!(store.before_known(op.id).unwrap(), "{op:?}");
+        let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
+        let rows = store.snapshots(op.id).unwrap();
+        let tags: Vec<_> = rows.iter().filter(|r| r.name == "tag").map(|r| &r.value).collect();
+        assert_eq!(tags, vec![&s(["blue", "green"][i % 2])], "the rows it took, record {i}");
+    }
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// Deleting again records a deletion has given back, then a fold: the first
+/// deletion keeps its rows too, the records having left the store.
+#[test]
+fn a_deletion_given_back_and_made_again_keeps_the_rows_of_the_first() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let mut w = Writer::begin(&mut store, Some("first".into())).unwrap();
+    let first = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let ops = revert::label_ops(&store, first).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    let mut w = Writer::begin(&mut store, Some("second".into())).unwrap();
+    let second = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let again = revert::label_ops(&store, second).unwrap();
+    while store.fold_step().unwrap() {}
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 0);
+    for op in ops.iter().chain(&again) {
+        assert!(store.before_known(op.id).unwrap(), "{op:?}");
+        let rows = store.snapshots(op.id).unwrap();
+        assert_eq!(rows.len(), 2, "{op:?}");
+    }
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// A reindex numbers the ids again, which a deletion given back still names its
+/// records by: it keeps the rows of the records it took first, all of them.
+#[test]
+fn a_reindex_keeps_the_rows_of_the_records_a_deletion_gave_back() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    write(&mut store, |w| {
+        w.set_field(uuids[3], "tag", s("purple")).unwrap();
+    });
+    store.reindex().unwrap();
+    for op in &ops {
+        assert!(store.before_known(op.id).unwrap(), "{op:?}");
+        let rows = store.snapshots(op.id).unwrap();
+        assert_eq!(rows.len(), 2, "{op:?}");
+        let tag = rows.iter().find(|r| r.name == "tag").unwrap();
+        let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
+        assert_eq!(tag.value, s(["blue", "green"][i % 2]), "{op:?}");
+    }
+    sound(&store);
 }
 
 /// A field whose every holder is deleted has no type left to count: giving

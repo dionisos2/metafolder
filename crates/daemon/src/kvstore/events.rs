@@ -582,7 +582,10 @@ impl KvTxn<'_> {
         for entry in self.t.mass.iter(&self.txn.borrow())? {
             let (k, v) = entry?;
             let part = u32::from_be_bytes(k[..4].try_into().expect("a part"));
-            *parts.entry(part).or_default() += (k.len() + v.len()) as u64;
+            // Records given back wait for a write, not for a fold.
+            if part != crate::kvstore::mass::THAWED_PART {
+                *parts.entry(part).or_default() += (k.len() + v.len()) as u64;
+            }
         }
         for (part, size) in parts {
             consider(size, List::Part(part));

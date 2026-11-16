@@ -35,7 +35,7 @@ use super::derived::{
     count_prefix, decode_set, dense, referrers_prefix, set_prefix, COUNT_BITS, NO_TARGET, PARENTS,
     REFERRERS, SETS, UNIVERSE,
 };
-use super::mass::{entry_key, Listed, DELETES_PART};
+use super::mass::{entry_key, read_part, Listed, DELETES_PART, THAWED_PART};
 use super::{
     be, dec_op, dec_row, enc_row, from_be, key, name_key, uuid_of, In, KvTxn, Out, Read, ROOT,
 };
@@ -993,6 +993,17 @@ impl KvTxn<'_> {
         };
         // The mark keeps the operations it still names, each at its own number.
         let mut w = self.txn.borrow_mut();
+        // The records are back with the rows the deletion took, which the log
+        // goes on reading in them until the first write that changes them.
+        let given_back = Listed {
+            op: first_op as u64,
+            kind: Kind::Remove,
+            field: String::new(),
+            values: Vec::new(),
+            ids: ids.clone(),
+        };
+        self.t.mass.put(&mut w, &entry_key(THAWED_PART, given_back.op), &given_back.encode())?;
+        self.thawed.store(true, std::sync::atomic::Ordering::Relaxed);
         self.t.mass.delete(&mut w, &entry_key(DELETES_PART, mark.op))?;
         let ranks: Vec<u32> = mark.ids.iter().collect();
         let (lo, hi) = ((first_op - mark.op as i64) as usize, (last_op - mark.op as i64) as usize);
@@ -1128,6 +1139,9 @@ impl KvTxn<'_> {
             self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
             return Ok(false);
         };
+        // A record about to leave the store may be one an earlier deletion
+        // gave back: that deletion's rows go to the snapshots first.
+        self.freeze_given_back(&listed.ids)?;
         let first = listed.op as i64;
         // The stubs holding its operations: the one it wrote, or what a prune
         // left of it (the first operations of a stub go first).
@@ -1168,6 +1182,93 @@ impl KvTxn<'_> {
         }
         self.t.mass.delete(&mut self.txn.borrow_mut(), &entry_key_bytes)?;
         Ok(true)
+    }
+
+    /// Copies into the snapshots the rows the records of `ids` held that a
+    /// deletion took and gave back, which the log reads in the records until
+    /// now: the entry, the write, the deletion about to change them. Nothing
+    /// is read when no record is waiting.
+    pub(super) fn freeze_given_back(&self, ids: &RoaringBitmap) -> Result<()> {
+        if ids.is_empty() || !self.thawed_pending() {
+            return Ok(());
+        }
+        let marks = {
+            let txn = self.txn.borrow();
+            read_part(&self.t, &txn, THAWED_PART)?
+        };
+        let mut waiting = false;
+        for mark in marks {
+            let hit = &mark.ids & ids;
+            if hit.is_empty() {
+                waiting = true;
+                continue;
+            }
+            for id in hit.iter() {
+                let op = mark.op as i64 + (mark.ids.rank(id) - 1) as i64;
+                // An operation a prune took has nothing to keep.
+                let kept = {
+                    let txn = self.txn.borrow();
+                    self.read_in(&txn, &mut |read: &Read| read.stub_at(op))?
+                        .is_some_and(|s| s.delete)
+                };
+                if !kept {
+                    continue;
+                }
+                let rows = self.load_record(id)?.plain_rows();
+                let mut w = self.txn.borrow_mut();
+                for (n, row) in rows.iter().enumerate() {
+                    let k = key(&[&be(op), &[0u8], &(n as u32).to_be_bytes()]);
+                    self.t.snaps.put(&mut w, &k, &enc_row(row))?;
+                }
+            }
+            // The mark keeps the operations still waiting, each at its number.
+            let mut w = self.txn.borrow_mut();
+            self.t.mass.delete(&mut w, &entry_key(THAWED_PART, mark.op))?;
+            let mut run: Vec<u32> = Vec::new();
+            let mut start = 0usize;
+            let flush = |run: &mut Vec<u32>, start: usize, w: &mut _| -> Result<bool> {
+                if run.is_empty() {
+                    return Ok(false);
+                }
+                let rest = Listed {
+                    op: mark.op + start as u64,
+                    kind: Kind::Remove,
+                    field: String::new(),
+                    values: Vec::new(),
+                    ids: run.drain(..).collect(),
+                };
+                self.t.mass.put(w, &entry_key(THAWED_PART, rest.op), &rest.encode())?;
+                Ok(true)
+            };
+            for (rank, id) in mark.ids.iter().enumerate() {
+                if hit.contains(id) {
+                    waiting |= flush(&mut run, start, &mut w)?;
+                } else {
+                    if run.is_empty() {
+                        start = rank;
+                    }
+                    run.push(id);
+                }
+            }
+            waiting |= flush(&mut run, start, &mut w)?;
+        }
+        if !waiting {
+            self.thawed.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    /// [`Self::freeze_given_back`] for every record waiting: a reindex is
+    /// about to number the ids again, which the marks name them by.
+    pub(super) fn freeze_all_given_back(&self) -> Result<()> {
+        if !self.thawed_pending() {
+            return Ok(());
+        }
+        let mut all = RoaringBitmap::new();
+        for mark in read_part(&self.t, &self.txn.borrow(), THAWED_PART)? {
+            all |= &mark.ids;
+        }
+        self.freeze_given_back(&all)
     }
 
     /// The stubs that hold ids become stubs that hold uuids: a reindex is

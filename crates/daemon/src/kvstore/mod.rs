@@ -244,6 +244,10 @@ pub struct KvStore {
     /// Whether a deletion of many records is pending, whose records are still
     /// stored: when none is, no read sifts what it finds through the universe.
     deletes: std::sync::atomic::AtomicBool,
+    /// Whether records given back by the undo of a deletion still hold the
+    /// rows the log reads as its before: when none does, no write looks for
+    /// them (doc "Mass operations in the log").
+    thawed: std::sync::atomic::AtomicBool,
     /// The keys the last committed write transaction wrote, per table — what
     /// the write cost assertions count ([`KvStore::last_write_keys`]).
     written: std::sync::Mutex<[u64; table::TABLES]>,
@@ -691,6 +695,7 @@ impl KvStore {
             reads: Default::default(),
             mass: Default::default(),
             deletes: Default::default(),
+            thawed: Default::default(),
             written: Default::default(),
             memory: None,
             resident: Default::default(),
@@ -698,7 +703,10 @@ impl KvStore {
         };
         {
             let r = store.env.read_txn()?;
-            let pending = store.t.mass.len(&r)? > 0;
+            let given_back =
+                store.t.mass.prefix_iter(&r, &mass::THAWED_PART.to_be_bytes())?.count();
+            store.thawed.store(given_back > 0, std::sync::atomic::Ordering::Relaxed);
+            let pending = store.t.mass.len(&r)? as usize > given_back;
             store.mass.store(pending, std::sync::atomic::Ordering::Relaxed);
             let deleting =
                 store.t.mass.prefix_iter(&r, &mass::DELETES_PART.to_be_bytes())?.next().is_some();
@@ -1694,6 +1702,8 @@ pub struct KvTxn<'e> {
     mass_lists: &'e std::sync::atomic::AtomicBool,
     /// The store's flag that a deletion of many records is pending.
     deletes: &'e std::sync::atomic::AtomicBool,
+    /// The store's flag that records given back hold the log's before.
+    thawed: &'e std::sync::atomic::AtomicBool,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
@@ -2120,6 +2130,7 @@ impl<'e> KvTxn<'e> {
             reads: &store.reads,
             mass_lists: &store.mass,
             deletes: &store.deletes,
+            thawed: &store.thawed,
             written: &store.written,
             universe: RefCell::new(HashMap::new()),
             grams: RefCell::new(HashMap::new()),
@@ -2405,6 +2416,7 @@ impl WriteTxn for KvTxn<'_> {
             let id = self.dense_id(uuid.as_bytes())?;
             let mut rows = Vec::new();
             if let Some(id) = id {
+                self.freeze_given_back(&roaring::RoaringBitmap::from_iter([id]))?;
                 rows = self.load_record(id)?.plain_rows();
                 self.put_record(id, &[])?;
             }

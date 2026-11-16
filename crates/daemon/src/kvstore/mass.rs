@@ -50,6 +50,12 @@ pub(crate) fn part_of(id: u32) -> u32 {
 /// never this far.
 pub(crate) const DELETES_PART: u32 = u32::MAX;
 
+/// The part under which the records a deletion gave back wait for their rows to
+/// be copied: while one is not written, the log reads the deletion's rows in the
+/// record itself, and the mark says where — an entry of the same form as a
+/// deletion's, the `k`-th id being the record of the operation `op + k`.
+pub(crate) const THAWED_PART: u32 = u32::MAX - 1;
+
 /// A record as stored.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Record {
@@ -319,7 +325,10 @@ impl KvStore {
     /// How many entries are pending, in every part.
     pub fn pending_mass(&self) -> Result<usize> {
         let r = self.env.read_txn()?;
-        Ok(self.t.mass.len(&r)? as usize)
+        // What a fold would write: the marks of records given back wait for a
+        // write, not for a fold.
+        let given_back = self.t.mass.prefix_iter(&r, &THAWED_PART.to_be_bytes())?.count();
+        Ok((self.t.mass.len(&r)? as usize).saturating_sub(given_back))
     }
 
     /// Whether any part has entries: a read looks for them only if so.
@@ -347,6 +356,11 @@ impl Loaded {
 impl KvTxn<'_> {
     pub(super) fn mass_pending(&self) -> bool {
         self.mass_lists.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether records given back wait for their rows to be copied.
+    pub(super) fn thawed_pending(&self) -> bool {
+        self.thawed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub(super) fn deletes_pending(&self) -> bool {
@@ -406,6 +420,9 @@ impl KvTxn<'_> {
         tombs: Vec<(String, Value, u64)>,
         cleared: Vec<(String, u64)>,
     ) -> Result<()> {
+        // A record a deletion gave back keeps the rows it took, in the log,
+        // before the first write that changes them.
+        self.freeze_given_back(&RoaringBitmap::from_iter([loaded.id]))?;
         let record = if loaded.entries.is_empty() {
             Record::plain(rows.into_iter().map(|(r, _)| r).collect())
         } else {
@@ -445,6 +462,9 @@ impl KvTxn<'_> {
         values: &[Value],
         ids: &RoaringBitmap,
     ) -> Result<()> {
+        // An entry changes the rows of the records it names: what the log
+        // reads of a deletion in a record given back is copied first.
+        self.freeze_given_back(ids)?;
         let op = self.next("mass_op")? as u64;
         let mut parts = BTreeSet::new();
         for id in ids {
@@ -472,7 +492,7 @@ impl KvTxn<'_> {
     /// Writes a part's entries into its records, and empties the list. A
     /// metarecord that is gone is not written back.
     pub(super) fn fold_part(&self, part: u32) -> Result<()> {
-        if part == DELETES_PART {
+        if part == DELETES_PART || part == THAWED_PART {
             return Ok(());
         }
         let entries = self.part_entries(part)?;

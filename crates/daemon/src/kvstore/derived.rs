@@ -1599,6 +1599,9 @@ impl KvStore {
         // What the lists hold is written into the records first: the records
         // are filed again below, and the rows are derived from them.
         txn.fold_all_mass()?;
+        // The records a deletion gave back are named by id: copy what the log
+        // reads in them before the ids change.
+        txn.freeze_all_given_back()?;
         // Before the ids are numbered again.
         txn.stubs_to_uuids()?;
         txn.drop_left_behind()?;

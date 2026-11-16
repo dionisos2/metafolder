@@ -96,7 +96,13 @@ A deletion the fold has already written out of the store is given back in one pa
 
 Anything else — a few records, a write in between, a taken position, a reindex since — goes one by one as before. Undoing the undo is then an ordinary deletion of each record.
 
-The records are alive again and may be written to, while the log reads the rows of a pending deletion in the record itself. So once an operation that is not the deletion's own revert comes after the deletion on that record (operation numbers say so), the rows the deletion took are ''unknown'': `before_known` is `false` ([[Log endpoints]]), the log panel and `mf log show` say so instead of showing today's rows, and reverting that deletion is refused.
+The records are alive again and may be written to, while the log reads the rows of a pending deletion in the record itself. It goes on doing so for as long as nothing changes the rows: giving the records back leaves a ''mark'' — an entry in the `mass` table under a part of its own (`THAWED_PART`), of the form of a deletion's: the ids, and the number of the operation of the first, each id being at its own rank — and writes nothing else. What would change the rows copies them first, for the records it touches only, into the snapshots of the deletion's operations (`freeze_given_back`), and takes them off the mark:
+
+* a write to a record (`save_record`, its deletion);
+* an entry of a write to many records that names it (`append_entries`);
+* the fold of a deletion that takes it out of the store again (`fold_one_delete`), and the reindex, which numbers the ids the marks name (all of them).
+
+So the rows a deletion took are never unknown for a deletion given back since November 2026: `before_known` ([[Log endpoints]]) is `false` only for one given back and written to by an older daemon, and reverting a deletion puts back what it took, not what the record holds now. The idle fold leaves the marks alone — undoing a deletion at once is the common case, and a copy of every record at idle time would be paid for nothing — and `pending_mass` does not count them: they wait for a write, not for a fold.
 
 The trash first asks, once, which of its records hold a link to a duplicate group (the
 holders of the field, among its ids), and only those leave their group one by one
