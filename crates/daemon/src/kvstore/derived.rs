@@ -891,23 +891,6 @@ impl KvTxn<'_> {
         if self.live_in(&self.txn.borrow(), id)? || self.reserved(id)? {
             return Ok(None);
         }
-        // A record of a deletion of many records still pending is given back
-        // as that deletion's own undo does it, for this one operation: the
-        // mark names the id, and the operation is its rank.
-        if self.deletes_pending() {
-            let marks = {
-                let txn = self.txn.borrow();
-                super::mass::read_part(&self.t, &txn, super::mass::DELETES_PART)?
-            };
-            if let Some(mark) = marks.iter().find(|m| m.ids.contains(id)) {
-                let op = mark.op as i64 + (mark.ids.rank(id) - 1) as i64;
-                if self.mass_undelete_log(op, op)?.is_some() {
-                    return Ok(Some(self.load_record(id)?.plain_rows()));
-                }
-                // The mark is gone before the record is given back.
-                while self.fold_one_delete()? {}
-            }
-        }
         let rows = self.load_record(id)?.plain_rows();
         let rows = rows.as_slice();
         // A position a metarecord that exists took since is not given back.
@@ -923,6 +906,23 @@ impl KvTxn<'_> {
                     ))
                     .into());
                 }
+            }
+        }
+        // A record of a deletion of many records still pending is given back
+        // as that deletion's own undo does it, for this one operation: the
+        // mark names the id, and the operation is its rank.
+        if self.deletes_pending() {
+            let marks = {
+                let txn = self.txn.borrow();
+                super::mass::read_part(&self.t, &txn, super::mass::DELETES_PART)?
+            };
+            if let Some(mark) = marks.iter().find(|m| m.ids.contains(id)) {
+                let op = mark.op as i64 + (mark.ids.rank(id) - 1) as i64;
+                if self.mass_undelete_log(op, op)?.is_some() {
+                    return Ok(Some(self.load_record(id)?.plain_rows()));
+                }
+                // The mark is gone before the record is given back.
+                while self.fold_one_delete()? {}
             }
         }
         // The entries still naming the id are older than this write: they
@@ -1171,10 +1171,10 @@ impl KvTxn<'_> {
         }
         let Some((part, key)) = text_part_key(value) else { return Ok(None) };
         let text = if part == VALUE { &key[1..] } else { &key[..] };
-        if long_prefix(text).is_none() {
-            if self.chunked_exists(SETS, &part_posting_prefix(field, part, &key))? {
-                return Ok(None);
-            }
+        if long_prefix(text).is_none()
+            && self.chunked_exists(SETS, &part_posting_prefix(field, part, &key))?
+        {
+            return Ok(None);
         }
         Ok(Some(key))
     }

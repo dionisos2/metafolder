@@ -214,7 +214,8 @@ fn marks_cut_by_a_restoration_are_given_back_in_the_end() {
     let first = fx.mass_delete(&fx.files.clone());
     fx.revert_label(first, &[fx.files[10]]);
     fx.check();
-    let second = fx.mass_delete(&fx.files[10..12].to_vec());
+    let pair = fx.files[10..12].to_vec();
+    let second = fx.mass_delete(&pair);
     fx.check();
     fx.fold();
     fx.check();
@@ -325,7 +326,8 @@ fn a_revert_after_a_reindex_gives_the_record_back() {
     let before = fx.all_rows();
     let head = fx.store.head().unwrap();
     fx.delete(fx.files[1]);
-    let label = fx.mass_delete(&fx.files[10..30].to_vec());
+    let batch = fx.files[10..30].to_vec();
+    let label = fx.mass_delete(&batch);
     fx.store.reindex().unwrap();
     fx.check();
     let _ = label;
@@ -409,4 +411,87 @@ fn a_store_of_the_version_before_is_derived_again_when_it_opens() {
         .collect();
     rows.sort();
     assert_eq!(rows, before[2 + 4]);
+}
+
+/// What the trash does: the deleted record is created again under its uuid,
+/// with its fields, while another record holds its position: refused.
+#[test]
+fn a_creation_under_a_known_uuid_is_refused_when_its_position_is_taken() {
+    let mut fx = fixture(3);
+    let (folder, file) = (fx.folder, fx.files[0]);
+    let own = fields(folder, 0);
+    fx.delete(file);
+    let taken = fx.write(|w| {
+        w.create_metarecord(vec![Field::new("loc", tree(folder, "f0.txt"))]).unwrap().uuid
+    });
+    {
+        let mut w = Writer::begin(&mut fx.store, None).unwrap();
+        let made = w.create_metarecord_with_uuid(file, own);
+        assert!(made.is_err() || w.commit().is_err(), "the position is taken");
+    }
+    assert!(Rows::exists(&fx.store, taken).unwrap());
+    assert!(!Rows::exists(&fx.store, file).unwrap());
+    assert!(Rows::rows(&fx.store, file).unwrap().is_empty());
+    fx.check();
+}
+
+/// Given back in bulk while a live record took a position of one of them: the
+/// revert is refused, and the positions stay unique.
+#[test]
+fn a_bulk_restoration_does_not_take_a_position_back_from_a_live_record() {
+    for folded in [false, true] {
+        let mut fx = fixture(40);
+        let (folder, file) = (fx.folder, fx.files[3]);
+        let label = fx.mass_delete(&fx.files.clone());
+        if folded {
+            fx.fold();
+        }
+        let taken = fx.write(|w| {
+            w.create_metarecord(vec![Field::new("loc", tree(folder, "f3.txt"))]).unwrap().uuid
+        });
+        {
+            let ops = revert::label_ops(&fx.store, label).unwrap();
+            let mut w = Writer::begin(&mut fx.store, None).unwrap();
+            let done = revert::apply(&mut w, &ops);
+            assert!(done.is_err() || w.commit().is_err(), "folded: {folded}");
+        }
+        assert!(Rows::exists(&fx.store, taken).unwrap());
+        assert!(!Rows::exists(&fx.store, file).unwrap(), "folded: {folded}");
+        fx.check();
+    }
+}
+
+/// What the trash does after a bulk deletion: a record is created again under
+/// its uuid while another holds its position, which the deletion left in the
+/// forest. Refused — two live records never share a position.
+#[test]
+fn a_creation_under_a_uuid_deleted_in_bulk_is_refused_when_its_position_is_taken() {
+    let (mut store, _dir) = common::kv::store();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let root = w
+        .create_metarecord(vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: None, name: TreeName::from("") },
+        )])
+        .unwrap()
+        .uuid;
+    let m1 = w.create_metarecord(vec![Field::new("mfr_path", tree(root, "A.txt"))]).unwrap().uuid;
+    let m2 = w.create_metarecord(vec![Field::new("label", s("other"))]).unwrap().uuid;
+    w.commit().unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let ids = w.dense_ids(&[m1]).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.set_field(m2, "mfr_path", tree(root, "A.txt")).unwrap();
+    w.commit().unwrap();
+    {
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        let made =
+            w.create_metarecord_with_uuid(m1, vec![Field::new("mfr_path", tree(root, "A.txt"))]);
+        assert!(made.is_err() || w.commit().is_err(), "the position is taken");
+    }
+    assert!(Rows::rows(&store, m1).unwrap().is_empty());
+    assert_eq!(Rows::rows(&store, m2).unwrap().len(), 2);
+    assert!(store.check_derived().unwrap().is_empty());
 }
