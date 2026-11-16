@@ -267,7 +267,7 @@ describe('log panel: going into a label', () => {
           snapshots_before: [],
         };
       }
-      return answer;
+      return answer as never;
     });
     for (const name of ['run', 'answer', 'mf tag add', 'op 10']) {
       p.rowWith(name).querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
@@ -332,7 +332,7 @@ describe('log panel: after a revert', () => {
     vi.stubGlobal('confirm', () => true);
     await p.run('cursor:first');
     p.api.daemon.call.mockResolvedValueOnce({ operations: [{ id: 12 }] } as never); // the plan
-    p.api.log.revert.mockResolvedValueOnce({ label: 20, reverted_operations: [12], notes: [] } as never);
+    p.api.log.revert.mockResolvedValueOnce({ label: 20, reverted_operations: [12], notes: [] });
     await p.run('log:revert', 'label');
     expect(p.api.log.revert).toHaveBeenCalled();
     expect(p.api.workspace.set).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));

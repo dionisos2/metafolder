@@ -1,0 +1,11 @@
+title: mf repo wear
+tags: [[CLI command]]
+kind: reference
+summary: Say how worn the selected repository's store is
+
+
+Prints how worn the store is: what writes left pending for the idle fold, and how
+many dense ids no metarecord holds any more (`--json` for the answer as it is). It
+is how a client waits for the fold, so it does not count as the user's activity
+([[Storage wear]]); a reindex frees the ids and the records of the deleted
+metarecords ([[Checking and reindexing a repository]]).
