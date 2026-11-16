@@ -127,7 +127,7 @@ and ranges and sorts are range scans over the keys. A value had its holders in a
 ''partition'' (`parts`, one key per holder) until they were promoted to a posting at 64
 of them; November 2026 dropped the value partition and the promotion — a value held by
 one record is a posting of one id — rather than keep two ways to hold the same thing
-(user decision). A position's ''name'' (a `tree_ref`'s name, whatever its folder) is a posting too, of its own kind. A partition by the uuid a value points at was dropped before, a key per
+(user decision). A position's ''name'' (a `tree_ref`'s name, whatever its folder) is a posting too, of its own kind, and its ''value'' is none: the `forest` holds it exactly (one metarecord for a field, a parent and a name), its parent's children are the referrers, and its name's holders the name's posting — so a file writes one key less, and not the longest (November 2026). A partition by the uuid a value points at was dropped before, a key per
 reference and per position written for one reader, which the referrers answer.
 
 !! Filed under the target's dense id

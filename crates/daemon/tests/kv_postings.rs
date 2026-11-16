@@ -296,3 +296,42 @@ fn a_store_with_a_value_partition_is_derived_again_when_it_opens() {
     check(&store);
     assert_eq!(holders(&store, "v0").0, 1);
 }
+
+/// A position's value is no posting — the forest holds it exactly, one
+/// metarecord for a parent and a name — yet it answers as the oracle does: an
+/// equality, its negation, and what shares it.
+#[test]
+fn a_position_is_answered_from_the_forest() {
+    use metafolder_core::metarecord::TreeName;
+    let (mut store, _dir) = open();
+    let tree =
+        |parent: Option<Uuid>, name: &str| Value::TreeRef { parent, name: TreeName::from(name) };
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let root = w.create_metarecord(vec![Field::new("loc", tree(None, ""))]).unwrap().uuid;
+    let dir = w.create_metarecord(vec![Field::new("loc", tree(Some(root), "dir"))]).unwrap().uuid;
+    let mut files = Vec::new();
+    for i in 0..5 {
+        files.push(
+            w.create_metarecord(vec![Field::new("loc", tree(Some(dir), &format!("f{i}")))])
+                .unwrap()
+                .uuid,
+        );
+    }
+    w.commit().unwrap();
+    check(&store);
+    for (parent, name) in [(Some(dir), "f3"), (Some(dir), "nope"), (Some(root), "dir"), (None, "")]
+    {
+        let value = tree(parent, name);
+        let found = common::engines::both(&store, &eq("loc", value.clone()), &[]);
+        assert_eq!(found.len(), usize::from(name != "nope"), "{name}");
+        common::engines::both(&store, &neq("loc", value), &[]);
+    }
+    common::engines::both(
+        &store,
+        &Query::SameAs {
+            field: "loc".into(),
+            target: Box::new(Query::UuidIn { uuids: vec![files[2]] }),
+        },
+        &[],
+    );
+}

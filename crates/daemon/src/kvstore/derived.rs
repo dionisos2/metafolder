@@ -55,8 +55,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`.
-pub(super) const DERIVED_VERSION: i64 = 12;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it).
+pub(super) const DERIVED_VERSION: i64 = 13;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -965,7 +965,10 @@ impl KvTxn<'_> {
         };
         // The metarecord's rows of the field, as the primary write left them.
         let rows = Rows::rows_named(self, uuid, field)?;
-        if let Some(k) = value_key(value) {
+        // A position's value is not a posting: the forest holds it exactly
+        // (one metarecord for a parent and a name), and its parent and name
+        // are what the referrers and the name postings hold.
+        if let Some(k) = value_key(value).filter(|_| value.position().is_none()) {
             if eventful {
                 self.single_event(field, value, id, delta > 0)?;
             } else {
@@ -1845,7 +1848,9 @@ impl KvStore {
                     if let (Some(hist), Some(bucket)) = (hist.as_deref_mut(), hist_bucket(&key)) {
                         *hist.entry(hist_key(&row.name, &bucket)).or_default() += 1;
                     }
-                    *group.parts.entry((VALUE, key)).or_default() += 1;
+                    if row.value.position().is_none() {
+                        *group.parts.entry((VALUE, key)).or_default() += 1;
+                    }
                 }
                 if let Some(key) = name_part_key(&row.value) {
                     *group.parts.entry((NAME, key)).or_default() += 1;

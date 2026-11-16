@@ -926,10 +926,12 @@ impl KvSource<'_> {
             }
             let Some(tag) = type_tag(&ty) else { continue };
             let (from, to) = ([tag], [tag + 1]);
-            let run =
-                self.part_ids(field, VALUE, Bound::Included(&from), Bound::Excluded(&to), &|_| {
-                    true
-                });
+            // A position is no posting: every id with one is under some parent.
+            let run = if matches!(ty.as_str(), "tree_ref" | "hierarchy_ref") {
+                self.any_referrers(field)
+            } else {
+                self.part_ids(field, VALUE, Bound::Included(&from), Bound::Excluded(&to), &|_| true)
+            };
             out |= if type_tag(allowed) == Some(tag) {
                 self.having(run, field, &|v| crate::rows::encode_value(v).value_type == ty)
             } else {
@@ -980,12 +982,47 @@ impl KvSource<'_> {
     /// The ids holding exactly `value` in the value partition: its bucket,
     /// read back when its key is cut and hashed.
     fn equal(&self, field: &str, key: &[u8], value: &Value) -> RoaringBitmap {
+        if value.position().is_some() {
+            return self.position_holders(field, value);
+        }
         let ids = self.bucket(field, VALUE, key);
         if is_hashed(key) {
             self.having(ids, field, &|v| v == value)
         } else {
             ids
         }
+    }
+
+    /// The metarecord holding the position `value` in `field`: the forest has
+    /// one for a parent and a name, and a position is no posting of its own.
+    fn position_holders(&self, field: &str, value: &Value) -> RoaringBitmap {
+        let read = || -> Result<RoaringBitmap> {
+            let Some(k) = super::KvTxn::forest_key(field, value) else {
+                return Ok(RoaringBitmap::new());
+            };
+            self.read_keys(1)?;
+            Ok(match self.t.forest.get(&self.r, &k)? {
+                Some(v) => RoaringBitmap::from_iter([dense(&v[16..])]),
+                None => RoaringBitmap::new(),
+            })
+        };
+        self.ok(read(), RoaringBitmap::new())
+    }
+
+    /// The ids pointing at anything in `field`: a key per chunk of each
+    /// target's referrers.
+    fn any_referrers(&self, field: &str) -> RoaringBitmap {
+        let read = || -> Result<RoaringBitmap> {
+            let prefix = [&[derived::REFERRERS][..], &name_key(field)].concat();
+            let mut out = RoaringBitmap::new();
+            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+                let (_, v) = entry?;
+                self.read_keys(1)?;
+                out |= derived::decode_set(v)?;
+            }
+            Ok(out)
+        };
+        self.ok(read(), RoaringBitmap::new())
     }
 
     /// A metarecord's rows of `field`.
@@ -1367,6 +1404,17 @@ impl Source for KvSource<'_> {
                     };
                     Ok(self.having(probe.expect("a probe").clone(), field, &differs))
                 }
+                CmpOp::Neq if value.position().is_some() => {
+                    // Whoever holds a position holds another unless this is
+                    // its only one.
+                    let mut out = self.valued(field);
+                    for id in self.position_holders(field, value) {
+                        if self.values(id, field).iter().all(|v| v == value) {
+                            out.remove(id);
+                        }
+                    }
+                    Ok(out)
+                }
                 CmpOp::Neq => {
                     let mut out = self.all_but(field, VALUE, key.as_deref());
                     if let Some(k) = key.as_deref().filter(|k| is_hashed(k)) {
@@ -1454,6 +1502,9 @@ impl Source for KvSource<'_> {
         let sharing = wanted
             .iter()
             .map(|(k, values)| {
+                if values.iter().any(|v| v.position().is_some()) {
+                    return values.iter().map(|v| self.position_holders(field, v)).union();
+                }
                 let ids = self.bucket(field, VALUE, k);
                 if is_hashed(k) {
                     self.having(ids, field, &|v| values.contains(v))
