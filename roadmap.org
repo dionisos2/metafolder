@@ -28,10 +28,8 @@ folder deleted with live children is gone (=check_forest_integrity= refuses it a
 the commit). =derive_created= still hands out a new id, with =move_target=, when the
 log no longer says what the last deletion took (a prune).
 
-5. Every write to many records filters its ids by the universe, so that nothing can
-   name a deleted record: =Kind::Replace= does not today (=changed = ids.clone()=
-   in =mass_log=), nor does the write from a list of uuids (=dense_ids= with
-   =must_exist= false); the revert by ids already does.
+Step 5 done too: =mass_log= filters its ids by the universe, so that no write by ids
+names a deleted record (a write by uuids already did, through =dense_ids_of=).
 
 Already true and relied on: a reindex begins with a full fold (=fold_all_mass=),
 freezes the marks of records given back (=freeze_all_given_back=) and turns every

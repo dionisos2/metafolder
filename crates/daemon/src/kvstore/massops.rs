@@ -585,6 +585,11 @@ impl KvTxn<'_> {
         if !self.mass_eligible(field, kind, values)? {
             return Ok(None);
         }
+        // Nothing may name a deleted record: what it left in the indexes
+        // would come back to life with it (doc "Deleting a metarecord in the
+        // store").
+        let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
+        let ids = &(ids & &universe);
         let mut before = Vec::new();
         let changed = match kind {
             Kind::Add | Kind::Remove => {

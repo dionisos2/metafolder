@@ -330,3 +330,24 @@ fn a_mass_add_over_a_record_given_back_is_undone_in_one_pass() {
     w.commit().unwrap();
     assert!(store.check_derived().unwrap().is_empty());
 }
+
+#[test]
+fn a_write_to_many_records_by_ids_never_names_a_deleted_one() {
+    let mut r = repo();
+    let all: Vec<Uuid> = [vec![r.root, r.folder, r.file], r.others.clone()].concat();
+    let ids = r.store.dense_ids(&all).unwrap();
+    let gone = r.store.dense_ids(&[r.file]).unwrap();
+    delete(&mut r.store, r.file);
+    for replace in [false, true] {
+        let mut w = Writer::begin(&mut r.store, None).unwrap();
+        let changed = if replace {
+            w.mass_set_ids("mark", vec![Value::String("x".into())], &ids).unwrap()
+        } else {
+            w.mass_add_ids("mark2", Value::String("x".into()), &ids).unwrap()
+        };
+        w.commit().unwrap();
+        assert!(changed.is_disjoint(&gone), "replace: {replace}: {changed:?}");
+        assert_eq!(changed.len(), ids.len() - 1, "replace: {replace}");
+    }
+    check(&r.store);
+}
