@@ -27,8 +27,8 @@ use uuid::Uuid;
 
 use super::derived::events::{self, Event};
 use super::derived::{
-    self, dense, hist_bucket, hist_key, id_of, long_prefix, part_prefix, read_set, text_key,
-    type_tag, value_key, NAME, VALUE,
+    self, dense, hist_bucket, hist_key, id_of, long_prefix, read_set, text_key, type_tag,
+    value_key, NAME, VALUE,
 };
 use super::{from_be, mass, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
@@ -671,9 +671,8 @@ impl KvSource<'_> {
         out
     }
 
-    /// [`Self::scan_part`] over what is stored. A value's postings are taken
-    /// whole, a key per chunk of its holders; a name's entries, in the
-    /// partition, are an id each.
+    /// [`Self::scan_part`] over what is stored: the postings of the keys
+    /// `keep` accepts, in range, each taken whole — a key per chunk.
     fn scan_stored(
         &self,
         field: &str,
@@ -682,14 +681,7 @@ impl KvSource<'_> {
         to: Bound<&[u8]>,
         keep: &dyn Fn(&[u8]) -> bool,
     ) -> RoaringBitmap {
-        let postings = part == VALUE;
-        let prefix = if postings {
-            [&[derived::POSTINGS][..], &name_key(field)].concat()
-        } else {
-            part_prefix(field, part)
-        };
-        // A key of the partition ends with an id, a posting's with a chunk.
-        let tail = if postings { 2 } else { 4 };
+        let prefix = [&[derived::postings_kind(part)][..], &name_key(field)].concat();
         let with = |k: &[u8]| [&prefix[..], k].concat();
         let lo = match from {
             Bound::Included(k) => Bound::Included(with(k)),
@@ -702,36 +694,27 @@ impl KvSource<'_> {
             Bound::Unbounded => Bound::Unbounded,
         };
         let read = || -> Result<RoaringBitmap> {
-            let mut ids = Vec::new();
             let mut out = RoaringBitmap::new();
             let range = (lo.as_ref().map(|k| k.as_slice()), hi.as_ref().map(|k| k.as_slice()));
-            let table = if postings { self.t.sets } else { self.t.parts };
-            for entry in table.range(&self.r, &range)? {
+            for entry in self.t.sets.range(&self.r, &range)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
-                if !k.starts_with(&prefix) || k.len() < prefix.len() + tail {
+                if !k.starts_with(&prefix) || k.len() < prefix.len() + 2 {
                     break;
                 }
-                if !keep(&k[prefix.len()..k.len() - tail]) {
-                    continue;
-                }
-                if postings {
+                if keep(&k[prefix.len()..k.len() - 2]) {
                     out |= derived::decode_set(v)?;
-                } else {
-                    ids.push(dense(&k[k.len() - 4..]));
                 }
             }
-            ids.sort_unstable();
-            out |= RoaringBitmap::from_sorted_iter(ids.into_iter().dedup()).expect("sorted ids");
             Ok(out)
         };
         self.ok(read(), RoaringBitmap::new())
     }
 
     /// The posting of a value key in `field`; `None` for a value without one.
-    fn posting(&self, field: &str, key: &[u8]) -> Option<RoaringBitmap> {
+    fn posting(&self, field: &str, part: u8, key: &[u8]) -> Option<RoaringBitmap> {
         let read = || -> Result<Option<RoaringBitmap>> {
-            let prefix = derived::posting_prefix(field, key);
+            let prefix = derived::part_posting_prefix(field, part, key);
             let mut out = None;
             for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
@@ -756,15 +739,9 @@ impl KvSource<'_> {
         events::replay(&pending, key, stored)
     }
 
-    /// The ids stored under exactly `key` in a partition — a value's posting.
+    /// The ids stored under exactly `key` in a partition — its posting.
     fn bucket_stored(&self, field: &str, part: u8, key: &[u8]) -> RoaringBitmap {
-        if part == VALUE {
-            return self.posting(field, key).unwrap_or_default();
-        }
-        // A name's run, read holder by holder.
-        let hi = [key, &ID_MAX[..]].concat();
-        let (from, to) = (Bound::Included(key), Bound::Excluded(hi.as_slice()));
-        self.scan_stored(field, part, from, to, &|k| k == key)
+        self.posting(field, part, key).unwrap_or_default()
     }
 
     /// The ids holding a key other than `key` in a partition.
@@ -1233,20 +1210,6 @@ fn rep_value(rep: &SortRep) -> Option<Value> {
 fn name_of(v: &Value) -> Option<String> {
     v.position().map(|(_, name)| name.display().into_owned())
 }
-
-/// Removes consecutive duplicates from a sorted iterator.
-trait Dedup: Iterator<Item = u32> + Sized {
-    fn dedup(self) -> impl Iterator<Item = u32> {
-        let mut last = None;
-        self.filter(move |&x| {
-            let new = last != Some(x);
-            last = Some(x);
-            new
-        })
-    }
-}
-
-impl<I: Iterator<Item = u32>> Dedup for I {}
 
 impl Source for KvSource<'_> {
     fn universe(&self) -> Cow<'_, RoaringBitmap> {

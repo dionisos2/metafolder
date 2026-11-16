@@ -225,8 +225,8 @@ fn a_posting_follows_writes_and_reverts() {
 }
 
 /// Every value is a posting, whatever its holders: a record with values of its
-/// own writes no key in the value partition (`parts` is left to a position's
-/// name), and what it writes of its values goes to `sets`.
+/// own, and a position, writes no key in `parts` — the table is no longer
+/// written —, and what it writes of its values and names goes to `sets`.
 #[test]
 fn a_value_held_once_is_a_posting() {
     let (mut store, _dir) = open();
@@ -236,12 +236,19 @@ fn a_value_held_once_is_a_posting() {
             Field::new("kind", string("unique")),
             Field::new("rating", Value::Int(41)),
             Field::new("label", Value::String(long_text())),
+            Field::new(
+                "loc",
+                Value::TreeRef {
+                    parent: None,
+                    name: metafolder_core::metarecord::TreeName::from("n"),
+                },
+            ),
         ])
         .unwrap()
         .uuid;
     w.commit().unwrap();
     let written = store.last_write_keys();
-    assert_eq!(written.get("parts"), None, "no key in the value partition: {written:?}");
+    assert_eq!(written.get("parts"), None, "no key in `parts`: {written:?}");
     assert!(written.get("sets").copied().unwrap_or(0) > 0, "{written:?}");
     check(&store);
     assert_eq!(holders(&store, "unique").0, 1);

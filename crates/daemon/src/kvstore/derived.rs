@@ -55,8 +55,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition.
-pub(super) const DERIVED_VERSION: i64 = 11;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`.
+pub(super) const DERIVED_VERSION: i64 = 12;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -83,6 +83,20 @@ pub(super) const DESCENDANTS: u8 = 6;
 /// The value partition is gone: a posting is a value's run, in the order of
 /// the keys, and goes with its last holder.
 pub(super) const POSTINGS: u8 = 7;
+
+/// The holders of one name of a position (keyed by field and name key, then
+/// chunk): the files called so, whatever their folder — what sorts and
+/// searches by name read.
+pub(super) const NAME_POSTINGS: u8 = 12;
+
+/// The kind of set a partition's postings are.
+pub(super) fn postings_kind(part: u8) -> u8 {
+    if part == VALUE {
+        POSTINGS
+    } else {
+        NAME_POSTINGS
+    }
+}
 
 /// How many non-`Nothing` rows of a field each id holds, as one set per bit
 /// of the count (keyed by field and bit number): the ids holding a value are
@@ -174,7 +188,12 @@ pub(super) const NO_TARGET: u32 = 0;
 /// value key is self-delimiting (fixed-width, or a text ended by its
 /// terminator or marker and hash), so no posting's prefix is another's.
 pub(super) fn posting_prefix(field: &str, key: &[u8]) -> Vec<u8> {
-    [&[POSTINGS][..], &name_key(field), key].concat()
+    part_posting_prefix(field, VALUE, key)
+}
+
+/// The key of the posting of `key` in a partition of `field`, without its chunk.
+pub(super) fn part_posting_prefix(field: &str, part: u8, key: &[u8]) -> Vec<u8> {
+    [&[postings_kind(part)][..], &name_key(field), key].concat()
 }
 
 /// The key of the descendants of `node` in `field`, without its chunk.
@@ -479,16 +498,6 @@ pub(super) fn set_prefix(kind: u8, field: Option<&str>) -> Vec<u8> {
     let mut k = set_key(kind, field, 0);
     k.truncate(k.len() - 2);
     k
-}
-
-pub(super) fn part_prefix(field: &str, part: u8) -> Vec<u8> {
-    let mut k = name_key(field);
-    k.push(part);
-    k
-}
-
-fn part_key(field: &str, part: u8, key: &[u8], id: u32) -> Vec<u8> {
-    [&part_prefix(field, part)[..], key, &id.to_be_bytes()].concat()
 }
 
 fn kids_key(parent: u32, field: &str, id: u32) -> Vec<u8> {
@@ -971,7 +980,9 @@ impl KvTxn<'_> {
             }
         }
         if let Some(k) = name_part_key(value) {
-            self.bump(self.t.parts, &part_key(field, NAME, &k, id), delta)?;
+            let held = delta > 0
+                || rows.iter().any(|r| name_part_key(&r.value).as_deref() == Some(&k[..]));
+            self.chunk_member(SETS, &part_posting_prefix(field, NAME, &k), id, held)?;
         }
         // What the row points at, by the dense id it is filed under.
         let target = match target_of(value) {
@@ -1083,13 +1094,7 @@ impl KvTxn<'_> {
         let Some((part, key)) = text_part_key(value) else { return Ok(None) };
         let text = if part == VALUE { &key[1..] } else { &key[..] };
         if long_prefix(text).is_none() {
-            let held = if part == VALUE {
-                self.chunked_exists(SETS, &posting_prefix(field, &key))?
-            } else {
-                let run = [&part_prefix(field, part)[..], &key].concat();
-                self.t.parts.prefix_iter(&self.txn.borrow(), &run)?.next().transpose()?.is_some()
-            };
-            if held {
+            if self.chunked_exists(SETS, &part_posting_prefix(field, part, &key))? {
                 return Ok(None);
             }
         }
@@ -1962,18 +1967,19 @@ impl KvStore {
         for entry in t.sets.iter(r)? {
             let (k, v) = entry?;
             let kind = k[0];
-            if kind == POSTINGS {
-                // A posting is the value's partition: an entry per holder.
+            if kind == POSTINGS || kind == NAME_POSTINGS {
+                // A posting is an entry per holder of its value or name.
                 let (name, rest) = unesc(&k[1..])?;
                 let field = std::str::from_utf8(&name).context("a field name")?;
                 let key = &rest[..rest.len() - 2];
-                let replayed = pending.get(field);
+                let tag = if kind == POSTINGS { VALUE } else { NAME };
+                let replayed = pending.get(field).filter(|_| tag == VALUE);
                 for id in decode_set(v)? {
                     if replayed.is_some_and(|(e, _)| !events::replay_one(e, key, id, true)) {
                         continue;
                     }
                     if !sifted(id) {
-                        let entry = Entry { space: PART, tag: VALUE, field, key, id, count: 1 };
+                        let entry = Entry { space: PART, tag, field, key, id, count: 1 };
                         sink(Side::Got, entry)?;
                     }
                 }
@@ -2253,8 +2259,9 @@ impl Group {
         let mut emit = |space, tag, key: &[u8], count| {
             sink(Side::Expected, Entry { space, tag, field, key, id, count })
         };
-        for ((part, key), rows) in &self.parts {
-            emit(PART, *part, key, *rows)?;
+        // A posting holds a record once, however many rows have the key.
+        for (part, key) in self.parts.keys() {
+            emit(PART, *part, key, 1)?;
         }
         for (parent, rows) in &self.kids {
             emit(KID, 0, &parent.to_be_bytes(), *rows)?;
@@ -2523,8 +2530,7 @@ mod tests {
     #[test]
     fn test_a_partition_entry_nothing_derives_is_named() {
         let (store, _dir) = populated();
-        let existing = first_key(&store, |t| &t.parts, &name_key("loc"));
-        let id = &existing[existing.len() - 4..];
+        let id = &1u32.to_be_bytes()[..];
         let bogus = [&name_key("title")[..], &[VALUE], &value_key(&Value::Bool(true)).unwrap(), id]
             .concat();
         tamper(&store, |t, w| {

@@ -319,7 +319,7 @@ fn a_reindex_numbers_the_records_in_forest_order() {
     );
 }
 
-/// The bytes the `sets` table holds, values only, but the postings' (kind 7):
+/// The bytes the `sets` table holds, values only, but the postings' (kinds 7 and 12):
 /// a value held by one record is a posting of one id, which no numbering
 /// gathers.
 fn sets_bytes(dir: &std::path::Path) -> usize {
@@ -329,7 +329,7 @@ fn sets_bytes(dir: &std::path::Path) -> usize {
     sets.iter(&r)
         .unwrap()
         .map(|e| e.unwrap())
-        .filter(|(k, _)| k[0] != 7)
+        .filter(|(k, _)| k[0] != 7 && k[0] != 12)
         .map(|(_, v)| v.len())
         .sum()
 }

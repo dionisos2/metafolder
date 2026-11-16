@@ -65,7 +65,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`ids` |uuid |dense id (u32) |
 |`uuids` |dense id |uuid |
 |`sets` |kind · [field] · [key] · chunk |a roaring bitmap of dense ids |
-|`parts` |field · partition · key · dense id |rows (count): the names of positions only |
+|`parts` |— |no longer written: a position's name is a posting, and a store of an older format is derived again when it opens (the table stays, empty) |
 |`kids` |parent's dense id · field · dense id |rows (count) |
 |`grams` |`0` · field · trigram · text key |empty: a distinct text holding the trigram |
 |`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |
@@ -127,8 +127,7 @@ and ranges and sorts are range scans over the keys. A value had its holders in a
 ''partition'' (`parts`, one key per holder) until they were promoted to a posting at 64
 of them; November 2026 dropped the value partition and the promotion — a value held by
 one record is a posting of one id — rather than keep two ways to hold the same thing
-(user decision). What `parts` still lists is the ''name'' of a position (a `tree_ref`'s
-name). A partition by the uuid a value points at was dropped before, a key per
+(user decision). A position's ''name'' (a `tree_ref`'s name, whatever its folder) is a posting too, of its own kind. A partition by the uuid a value points at was dropped before, a key per
 reference and per position written for one reader, which the referrers answer.
 
 !! Filed under the target's dense id

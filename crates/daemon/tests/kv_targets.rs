@@ -51,11 +51,11 @@ fn a_reference_is_filed_once_per_key_space_it_sorts_in() {
     let (mut store, _dir) = open();
     let root = add(&mut store, vec![tree(None, "")]);
     let written = |store: &KvStore| store.last_write_keys().get("parts").copied().unwrap_or(0);
-    // A position: its name in the partition — its value is a posting, and no
-    // entry goes by its parent, which the parent's referrers already answer.
+    // A position: its value and its name are postings, and no entry goes by
+    // its parent, which the parent's referrers already answer.
     let folder = add(&mut store, vec![tree(Some(root), "dir")]);
-    assert_eq!(written(&store), 1, "{:?}", store.last_write_keys());
-    // A reference: its value, a posting, and nothing in the partition.
+    assert_eq!(written(&store), 0, "{:?}", store.last_write_keys());
+    // A reference: its value, a posting.
     add(&mut store, vec![Field::new("link", Value::Ref(folder))]);
     assert_eq!(written(&store), 0, "{:?}", store.last_write_keys());
     check(&store);
