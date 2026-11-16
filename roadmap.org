@@ -19,3 +19,8 @@ doc "Watcher open questions": a per-repository choice of source.
 ** Platform open questions
 doc "Platform open questions": Unicode normalisation of names, Windows long
 paths, what a port to macOS or Windows would take.
+
+** Storage open questions
+doc "Storage open questions": no =Nothing= in a mass add or remove, replace and
+rename as ordinary operations, the marks a record keeps of mass writes, and
+compressing what the log keeps of a deletion.
