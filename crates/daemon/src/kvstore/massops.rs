@@ -393,17 +393,13 @@ impl Read<'_> {
 
     /// The rows operation `op_id` has after it, or before, a stub's included.
     pub(super) fn snapshot_rows(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
-        if let Some(stub) = self.stub_at(op_id)? {
+        let stub = self.stub_at(op_id)?;
+        if let Some(stub) = &stub {
             if !stub.delete {
                 return Ok(stub.snapshot(op_id, after));
             }
             if after {
                 return Ok(Vec::new());
-            }
-            // A deletion's rows: the record's own until the fold wrote them
-            // into the snapshots, where the rest of this function finds them.
-            if !stub.in_snaps {
-                return self.deleted_rows(&stub, op_id);
             }
         }
         let mut out = Vec::new();
@@ -412,6 +408,13 @@ impl Read<'_> {
             out.push(super::dec_row(e?.1)?);
         }
         self.count(out.len() as u64 + 1)?;
+        // A deletion's rows are the snapshots the fold wrote, and for a record
+        // it has not folded — still pending, or given back — the record's own.
+        if out.is_empty() {
+            if let Some(stub) = stub.filter(|s| s.delete) {
+                return self.deleted_rows(&stub, op_id);
+            }
+        }
         Ok(out)
     }
 
@@ -421,29 +424,64 @@ impl Read<'_> {
         let Who::Ids(ids) = &stub.who else { return Ok(Vec::new()) };
         let id =
             ids.select((op_id - stub.first) as u32).context("a deletion shorter than its ids")?;
-        self.record_raw(id)
+        let rows = self.record_raw(id)?;
+        if !rows.is_empty() {
+            return Ok(rows);
+        }
+        // The record is gone: it was given back and deleted again — a redo —
+        // by an operation of the chain of reverts, whose own before snapshot
+        // holds what it deleted, which is what this deletion took.
+        let uuid = self.uuid_of_id(id)?;
+        if let Some(chain) = self.revert_chain(uuid, op_id)? {
+            for member in chain.into_iter().rev() {
+                if self.op(member)?.is_some_and(|o| o.op_type == "delete_metarecord") {
+                    return self.snapshot_rows(member, false);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// The operations after `op_id` on the record of a pending deletion that
+    /// are its revert, the revert of that, and so on (a chain, oldest first);
+    /// `None` when something else was written to the record since.
+    fn revert_chain(&self, uuid: Uuid, op_id: i64) -> Result<Option<Vec<i64>>> {
+        let mut chain = vec![op_id];
+        for later in self.entity_op_ids_after(uuid, op_id)? {
+            let Some(op) = self.op(later)? else { continue };
+            match op.reverts_op_id {
+                Some(r) if chain.contains(&r) => chain.push(later),
+                _ => return Ok(None),
+            }
+        }
+        chain.remove(0);
+        Ok(Some(chain))
+    }
+
+    /// The record of operation `op_id` of a pending deletion, as `(id, uuid)`.
+    fn deleted_record(&self, stub: &Stub, op_id: i64) -> Result<Option<(u32, Uuid)>> {
+        let Who::Ids(ids) = &stub.who else { return Ok(None) };
+        let Some(id) = ids.select((op_id - stub.first) as u32) else { return Ok(None) };
+        Ok(Some((id, self.uuid_of_id(id)?)))
     }
 
     /// Whether the rows operation `op_id` took off its record are known: not
-    /// for a deletion still pending, whose record was written to since by
-    /// anything but the revert of that deletion — the record is no longer
-    /// what the deletion took, and the log, which reads it there, would say
-    /// today's rows.
+    /// for a deletion still pending whose record was written to since by
+    /// anything but a revert of that deletion, or of its revert — the record is
+    /// no longer what the deletion took, and the log, which reads it there,
+    /// would say today's rows.
     pub(super) fn before_known(&self, op_id: i64) -> Result<bool> {
         let Some(stub) = self.stub_at(op_id)? else { return Ok(true) };
-        if !stub.delete || stub.in_snaps {
+        if !stub.delete {
             return Ok(true);
         }
-        let Who::Ids(ids) = &stub.who else { return Ok(true) };
-        let Some(id) = ids.select((op_id - stub.first) as u32) else { return Ok(true) };
-        let uuid = self.uuid_of_id(id)?;
-        for later in self.entity_op_ids_after(uuid, op_id)? {
-            let Some(op) = self.op(later)? else { continue };
-            if op.reverts_op_id != Some(op_id) {
-                return Ok(false);
-            }
+        // Rows the fold froze are known; the others are the record's own.
+        let prefix = key(&[&be(op_id), &[0u8]]);
+        if self.t.snaps.prefix_iter(self.r, &prefix)?.next().is_some() {
+            return Ok(true);
         }
-        Ok(true)
+        let Some((_, uuid)) = self.deleted_record(&stub, op_id)? else { return Ok(true) };
+        Ok(self.revert_chain(uuid, op_id)?.is_some())
     }
 
     /// A record's operations after `after`, ascending: its own, and those of
