@@ -849,8 +849,14 @@ impl<'c> Writer<'c> {
         }
         // Seeded with the metarecord's own term; `log_op` then adds the terms
         // of the rows created below, so a fresh record's version describes its
-        // initial fields like any other (doc "Metarecord version").
-        self.tx.create_metarecord(uuid)?;
+        // initial fields like any other (doc "Metarecord version"). A uuid the
+        // store knows comes back under its dense id, emptied, so that what the
+        // indexes hold about the id never names another metarecord.
+        if self.restore_known(uuid)?.is_some() {
+            self.tx.delete_rows(uuid, None)?;
+        } else {
+            self.tx.create_metarecord(uuid)?;
+        }
 
         let mut after = Vec::with_capacity(fields.len());
         let mut out_fields = Vec::with_capacity(fields.len());
@@ -866,6 +872,50 @@ impl<'c> Writer<'c> {
         self.log_op(OpType::CreateRecord, uuid, None, vec![], after)?;
         let version = self.current_version(uuid)?;
         Ok(MetaRecord { uuid, version, fields: out_fields })
+    }
+
+    /// Gives back a deleted metarecord under its dense id, with the rows its
+    /// last deletion took — the ones the indexes still describe — which are
+    /// returned. `None`, nothing written, when the uuid is no deleted
+    /// metarecord of the store, or when the log no longer says what the
+    /// deletion took.
+    fn restore_known(&mut self, uuid: Uuid) -> Result<Option<Vec<FieldRow>>> {
+        if !self.tx.was_deleted(uuid)? {
+            return Ok(None);
+        }
+        let Some(op) = self
+            .tx
+            .entity_ops_after(uuid, 0)?
+            .into_iter()
+            .rev()
+            .find(|op| op.op_type == "delete_metarecord")
+        else {
+            return Ok(None);
+        };
+        let rows = self.tx.snapshots(op.id)?;
+        Ok(self.tx.restore_metarecord(uuid, op.id, &rows)?.then_some(rows))
+    }
+
+    /// Gives back a deleted metarecord with the rows `wanted` — the revert of
+    /// its deletion — under the dense id it had. The rows it held when it was
+    /// deleted come back with it; those that differ from `wanted` are changed
+    /// in the ordinary way. `false`, nothing written, when the store cannot:
+    /// the caller then creates it anew.
+    pub fn restore_metarecord(&mut self, uuid: Uuid, wanted: Vec<FieldRow>) -> Result<bool> {
+        validate_one_position_each(uuid, wanted.iter().map(|r| (r.name.as_str(), &r.value)))?;
+        for r in &wanted {
+            self.validate_tree_ref(uuid, &r.name, &r.value)?;
+            self.validate_value_type(&r.name, &r.value)?;
+        }
+        let Some(kept) = self.restore_known(uuid)? else { return Ok(false) };
+        if kept.len() != wanted.len() || !wanted.iter().all(|r| kept.contains(r)) {
+            self.tx.delete_rows(uuid, None)?;
+            for r in &wanted {
+                self.tx.insert_row(uuid, &r.name, &r.value)?;
+            }
+        }
+        self.log_op(OpType::CreateRecord, uuid, None, vec![], wanted)?;
+        Ok(true)
     }
 
     /// Deletes a metarecord and all its rows.

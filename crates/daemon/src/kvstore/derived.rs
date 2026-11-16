@@ -614,17 +614,6 @@ impl KvTxn<'_> {
         self.any_live(&kids)
     }
 
-    /// Whether a metarecord that exists is placed under `uuid`, in any field.
-    pub(super) fn has_live_children(&self, uuid: Uuid) -> Result<bool> {
-        let Some(id) = self.id(uuid.as_bytes())? else { return Ok(false) };
-        for field in self.parent_fields(id)? {
-            if self.has_live_kids(id, &field, None)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     /// Adds `id` to (or removes it from) a set, in the transaction's chunk
     /// cache: a bulk write touches each chunk many times and writes it once,
     /// at [`Self::flush_sets`].
@@ -845,7 +834,7 @@ impl KvTxn<'_> {
     }
 
     /// Whether `id` was reserved for a uuid no metarecord has had.
-    fn reserved(&self, id: u32) -> Result<bool> {
+    pub(super) fn reserved(&self, id: u32) -> Result<bool> {
         let mut found = false;
         self.with_chunk(SETS, &set_prefix(RESERVED, None), (id >> 16) as u16, &mut |bm| {
             found = bm.contains(id);
@@ -923,6 +912,104 @@ impl KvTxn<'_> {
     pub(super) fn derive_removed(&self, uuid: Uuid) -> Result<()> {
         let Some(id) = self.id(uuid.as_bytes())? else { return Ok(()) };
         self.set_member(UNIVERSE, None, id, false)
+    }
+
+    /// A deleted metarecord comes back under the id it had (doc "Deleting a
+    /// metarecord in the store"): `rows` are the ones its deletion took, read
+    /// from the log. Everything the indexes hold about the id is still there,
+    /// so only what the deletion took off is given back: the record, the
+    /// universe, the counts, the forest keys and the parents. `false` — nothing
+    /// written — when the uuid never had an id or its metarecord exists.
+    pub(super) fn restore_deleted(
+        &self,
+        uuid: Uuid,
+        op: i64,
+        rows: &[crate::rows::FieldRow],
+    ) -> Result<bool> {
+        let Some(id) = self.id(uuid.as_bytes())? else { return Ok(false) };
+        if self.live_in(&self.txn.borrow(), id)? || self.reserved(id)? {
+            return Ok(false);
+        }
+        // A record of a deletion of many records is given back as that
+        // deletion's own undo does it, for this one operation.
+        let stub = {
+            let txn = self.txn.borrow();
+            self.read_in(&txn, &mut |read: &super::Read| read.stub_at(op))?
+        };
+        if stub.is_some_and(|s| s.delete) && self.mass_undelete_log(op, op)?.is_some() {
+            return Ok(true);
+        }
+        // A deletion of many records still pending leaves the record stored
+        // under a mark: its rows go to the log first, and the mark is gone.
+        if self.deletes_pending() {
+            let marks = {
+                let txn = self.txn.borrow();
+                super::mass::read_part(&self.t, &txn, super::mass::DELETES_PART)?
+            };
+            if marks.iter().any(|m| m.ids.contains(id)) {
+                while self.fold_one_delete()? {}
+            }
+        }
+        // A position a metarecord that exists took since is not given back.
+        for row in rows {
+            let Some(k) = Self::forest_key(&row.name, &row.value) else { continue };
+            let txn = self.txn.borrow();
+            if let Some(v) = self.t.forest.get(&txn, &k)? {
+                let holder = dense(&v[super::FOREST_ID..]);
+                if holder != id && self.live_in(&txn, holder)? {
+                    return Err(crate::error::DomainError::BadRequest(format!(
+                        "tree position already occupied for field '{}'",
+                        row.name
+                    ))
+                    .into());
+                }
+            }
+        }
+        // The entries still naming the id are older than this write: they
+        // change none of its rows, and add none to a field it lacks.
+        let entries = if self.mass_pending() { self.load_record(id)?.entries } else { Vec::new() };
+        if entries.is_empty() {
+            let mut w = self.txn.borrow_mut();
+            if rows.is_empty() {
+                self.t.records.delete(&mut w, &id.to_be_bytes())?;
+            } else {
+                let record = super::mass::Record::plain(rows.to_vec());
+                self.t.records.put(&mut w, &id.to_be_bytes(), &record.encode())?;
+            }
+        } else {
+            let n = self.next("mass_op")? as u64;
+            let fields: BTreeSet<&str> = entries.iter().map(|e| e.field.as_str()).collect();
+            let record = super::mass::Record {
+                ops: vec![n; rows.len()],
+                rows: rows.to_vec(),
+                tombs: Vec::new(),
+                cleared: fields.into_iter().map(|f| (f.to_string(), n)).collect(),
+            };
+            self.t.records.put(&mut self.txn.borrow_mut(), &id.to_be_bytes(), &record.encode())?;
+        }
+        self.t.metarecords.put(&mut self.txn.borrow_mut(), uuid.as_bytes(), &[])?;
+        for row in rows {
+            self.count_type(&row.name, &row.value, 1)?;
+            self.add_hist(&row.name, &row.value)?;
+            if let Some(k) = Self::forest_key(&row.name, &row.value) {
+                let v = super::key(&[uuid.as_bytes(), &id.to_be_bytes()]);
+                self.t.forest.put(&mut self.txn.borrow_mut(), &k, &v)?;
+            }
+            if row.value.position().is_some() {
+                let pid =
+                    self.target_id(&target_of(&row.value).expect("a position has a parent"))?;
+                if pid != NO_TARGET {
+                    self.set_member(PARENTS, Some(&row.name), pid, true)?;
+                }
+            }
+        }
+        self.set_member(UNIVERSE, None, id, true)?;
+        for field in self.parent_fields(id)? {
+            if self.has_live_kids(id, &field, None)? {
+                self.set_member(PARENTS, Some(&field), id, true)?;
+            }
+        }
+        Ok(true)
     }
 
     /// The histogram forgets a row of a metarecord that was deleted: what the

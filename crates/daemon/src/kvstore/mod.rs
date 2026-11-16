@@ -2306,6 +2306,15 @@ impl KvTxn<'_> {
 }
 
 impl WriteTxn for KvTxn<'_> {
+    fn restore_metarecord(&self, uuid: Uuid, op: i64, rows: &[FieldRow]) -> Result<bool> {
+        self.restore_deleted(uuid, op, rows)
+    }
+
+    fn was_deleted(&self, uuid: Uuid) -> Result<bool> {
+        let Some(id) = self.dense_id(uuid.as_bytes())? else { return Ok(false) };
+        Ok(!self.live_in(&self.txn.borrow(), id)? && !self.reserved(id)?)
+    }
+
     fn mass_apply(
         &self,
         kind: MassKind,
@@ -2404,26 +2413,23 @@ impl WriteTxn for KvTxn<'_> {
     /// universe — and nothing of what the indexes hold about it, which every
     /// read sifts through the universe (doc "Deleting a metarecord in the
     /// store"). On a hard disk each index entry is a seek, and a file has
-    /// dozens.
+    /// dozens. What it leaves is what [`KvTxn::restore_deleted`] relies on: the
+    /// id comes back with its entries.
+    ///
+    /// A folder that still has children is removed the same way: a write that
+    /// leaves it so is refused at its commit (`check_forest_integrity`), and a
+    /// write that deletes the children too leaves nothing to unpick.
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()> {
-        // A parent of metarecords that exist is unpicked row by row: its
-        // subtree leaves its ancestors' descendants, which no universe sifts.
-        // The `Writer` refuses to commit that; a write deleting a folder
-        // before its files passes here.
-        if self.has_live_children(uuid)? {
-            self.delete_rows(uuid, None)?;
-        } else {
-            let id = self.dense_id(uuid.as_bytes())?;
-            let mut rows = Vec::new();
-            if let Some(id) = id {
-                self.freeze_given_back(&roaring::RoaringBitmap::from_iter([id]))?;
-                rows = self.load_record(id)?.plain_rows();
-                self.put_record(id, &[])?;
-            }
-            for row in &rows {
-                self.count_type(&row.name, &row.value, -1)?;
-                self.derive_dropped(uuid, &row.name, &row.value)?;
-            }
+        let id = self.dense_id(uuid.as_bytes())?;
+        let mut rows = Vec::new();
+        if let Some(id) = id {
+            self.freeze_given_back(&roaring::RoaringBitmap::from_iter([id]))?;
+            rows = self.load_record(id)?.plain_rows();
+            self.put_record(id, &[])?;
+        }
+        for row in &rows {
+            self.count_type(&row.name, &row.value, -1)?;
+            self.derive_dropped(uuid, &row.name, &row.value)?;
         }
         self.t.metarecords.delete(&mut self.txn.borrow_mut(), uuid.as_bytes())?;
         self.derive_removed(uuid)

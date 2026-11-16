@@ -17,30 +17,17 @@ revert goes one record at a time), and a deletion given back keeps the rows it t
 removes the cause. The ids and uuids tables only grow between reindexes already;
 only =derive_created= hands out a new id for a known uuid.
 
-1. The test of the invariant: a record deleted one by one, then given back by a
-   revert, keeps its dense id (=KvStore::dense_ids=); =check_derived= is clean; a
-   mass add over it, undone, reaches it by the one-pass path (=revert_mass_run=).
-   Also: a plain creation with a uuid the store knows.
-2. A deletion of one record keeps its key in =records= (the rows it had), as it
-   keeps its index entries, =forest= key and id mapping: what =remove_metarecord=
-   does today with =put_record(id, &[])=. The slow path — a folder with live
-   children, unpicked row by row — goes away: deleting a folder that still has
-   children is forbidden (open: at every operation, which means files before their
-   folder everywhere — watcher, reconcile, trash —, or at the commit as today).
-   A reindex drops these rows with the other leftovers.
-3. A restoration (revert of a deletion) reuses the id: the id goes back in the
-   universe, the key back in =metarecords=, the rows are written again — each with
-   the number of the current operation (=write_number=), so that no entry older than
-   the restoration changes them — and, for each field the entries naming the id
-   would touch and the rows lack, a =cleared (field, current number)=. =tombs= and
-   =cleared= are lost when the key is deleted (open question in doc "Storage open
-   questions": keep them?). =count_type=, the histogram, =parents= and the
-   forest give back what =remove_metarecord= took. A restoration is refused when
-   the record's parent does not exist.
-4. Creating a metarecord with a uuid the store knows (=create_metarecord_with_uuid=
-   from =routes/records.rs=, =routes/query.rs=, the revert) first restores it, then
-   writes the new values by the ordinary paths. Then =derive_created= never hands
-   out a new id for a known uuid, and its =move_target= goes.
+Done (steps 1 to 4, one commit): the tests of the invariant, and the restoration —
+=Writer::restore_metarecord=, =KvTxn::restore_deleted=, used by the revert of a
+deletion and by a creation under a known uuid (=restore_known=). It differs from the
+plan on what a deletion keeps: a deletion of one record is folded at once (its record
+leaves =records=, its rows are in the snapshots of its operation) and the id keeps its
+entries; the restoration takes the rows from the log. A deletion of many records
+pending is given back for one operation by =mass_undelete_log=. The slow path of a
+folder deleted with live children is gone (=check_forest_integrity= refuses it at
+the commit). =derive_created= still hands out a new id, with =move_target=, when the
+log no longer says what the last deletion took (a prune).
+
 5. Every write to many records filters its ids by the universe, so that nothing can
    name a deleted record: =Kind::Replace= does not today (=changed = ids.clone()=
    in =mass_log=), nor does the write from a list of uuids (=dense_ids= with
@@ -51,10 +38,6 @@ freezes the marks of records given back (=freeze_all_given_back=) and turns ever
 stub's ids into uuids in the order of the ids (=stubs_to_uuids=); a deletion of
 many records is one stub, and a restoration of sixteen or more of its operations is
 done in one pass (=undelete_pending=).
-To update when done: doc "Deleting a metarecord in the store" ("A dense id is never
-given again" stops being true), "Store tables", "Mass operations in the log",
-"Reverting onto the current state" (Identities). The note says the rule was
-documented: flagged to the user, who decided to change it.
 
 Also noted (doc "Storage open questions"): no =Nothing= in a mass add or remove,
 replace and rename not being mass writes, the marks a deleted record loses,

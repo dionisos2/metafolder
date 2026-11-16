@@ -393,7 +393,11 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                     .into());
                 }
                 let before = before(writer)?;
-                writer.create_metarecord_with_uuid(op.entity_uuid, rows_to_fields(&before))?;
+                // Under the dense id it had; created anew only when the store
+                // lost it (a reindex numbers the ids again).
+                if !writer.restore_metarecord(op.entity_uuid, before.clone())? {
+                    writer.create_metarecord_with_uuid(op.entity_uuid, rows_to_fields(&before))?;
+                }
             }
             "set_metarecord" => {
                 let before = before(writer)?;

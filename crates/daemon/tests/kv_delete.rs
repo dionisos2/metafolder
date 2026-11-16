@@ -268,3 +268,65 @@ fn a_reindex_removes_what_the_deletions_left_behind() {
     every_answer(&store);
     check(&store);
 }
+
+// A record keeps its dense id between two reindexes (roadmap): what the
+// entries and the stubs name by id keeps naming it when it is given back.
+
+#[test]
+fn a_record_given_back_by_a_revert_keeps_its_dense_id() {
+    let mut r = repo();
+    let id = r.store.dense_ids(&[r.file]).unwrap();
+    assert_eq!(id.len(), 1);
+    let head = r.store.head().unwrap();
+    delete(&mut r.store, r.file);
+    common::kv::revert_since(&mut r.store, head);
+    assert_eq!(r.store.dense_ids(&[r.file]).unwrap(), id);
+    check(&r.store);
+    // Deleted and given back a second time.
+    let head = r.store.head().unwrap();
+    delete(&mut r.store, r.file);
+    common::kv::revert_since(&mut r.store, head);
+    assert_eq!(r.store.dense_ids(&[r.file]).unwrap(), id);
+    check(&r.store);
+}
+
+#[test]
+fn a_creation_under_a_uuid_the_store_knows_keeps_its_dense_id() {
+    let mut r = repo();
+    let id = r.store.dense_ids(&[r.file]).unwrap();
+    delete(&mut r.store, r.file);
+    let mut w = Writer::begin(&mut r.store, None).unwrap();
+    w.create_metarecord_with_uuid(r.file, file_fields(r.folder, 0)).unwrap();
+    w.commit().unwrap();
+    assert_eq!(r.store.dense_ids(&[r.file]).unwrap(), id);
+    assert_eq!(r.store.children("loc", r.folder).unwrap().len(), 3);
+    check(&r.store);
+}
+
+#[test]
+fn a_mass_add_over_a_record_given_back_is_undone_in_one_pass() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = common::kv::store();
+    let uuids: Vec<Uuid> = {
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        let v = (0..40)
+            .map(|i| w.create_metarecord(vec![Field::new("n", Value::Int(i))]).unwrap().uuid)
+            .collect();
+        w.commit().unwrap();
+        v
+    };
+    let mut w = Writer::begin(&mut store, Some("mass".into())).unwrap();
+    let label = w.label_id();
+    w.mass_add("tag", Value::String("x".into()), &uuids).unwrap();
+    w.commit().unwrap();
+    // One of the records is deleted and given back after the mass add, which
+    // names it by its dense id.
+    let head = store.head().unwrap();
+    delete(&mut store, uuids[7]);
+    common::kv::revert_since(&mut store, head);
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    assert!(w.revert_mass_run(&ops).unwrap(), "the store refused the one-pass revert");
+    w.commit().unwrap();
+    assert!(store.check_derived().unwrap().is_empty());
+}

@@ -904,6 +904,14 @@ impl KvTxn<'_> {
         if ids.len() != n as u64 || !(&ids & &universe).is_empty() {
             return Ok(None);
         }
+        // What the fold took out of the store: the records, from the rows the
+        // log froze. Each must still be the one it was — its id its uuid's, no
+        // record under either — and a position it held not taken since.
+        let revived =
+            if folded { self.folded_records(&stub, all, first_op, last_op)? } else { None };
+        if folded && revived.is_none() {
+            return Ok(None);
+        }
         // Everything is read before anything is written: a `None` leaves the
         // transaction as it was.
         let mut counts: Vec<(String, Vec<Vec<u8>>, u64)> = Vec::new();
@@ -925,18 +933,32 @@ impl KvTxn<'_> {
                 }
                 out
             };
+            // Every row of the field is gone, and its type with it: the rows
+            // being given back tell it.
+            let types = if types.is_empty() {
+                let mut found: std::collections::BTreeSet<Vec<u8>> = Default::default();
+                for id in ids.iter() {
+                    let rows = match revived.as_ref().and_then(|r| r.iter().find(|f| f.0 == id)) {
+                        Some((_, _, rows)) => rows.clone(),
+                        None => self.load_record(id)?.plain_rows(),
+                    };
+                    for row in rows.iter().filter(|r| {
+                        r.name == field
+                            && !matches!(r.value, metafolder_core::metarecord::Value::Nothing)
+                    }) {
+                        found.insert(
+                            crate::rows::encode_value(&row.value).value_type.as_bytes().to_vec(),
+                        );
+                    }
+                }
+                found.into_iter().collect()
+            } else {
+                types
+            };
             if types.is_empty() {
                 return Ok(None);
             }
             counts.push((field, types, back));
-        }
-        // What the fold took out of the store: the records, from the rows the
-        // log froze. Each must still be the one it was — its id its uuid's, no
-        // record under either — and a position it held not taken since.
-        let revived =
-            if folded { self.folded_records(&stub, all, first_op, last_op)? } else { None };
-        if folded && revived.is_none() {
-            return Ok(None);
         }
         let alive = &universe | &ids;
         let mut parents: Vec<(String, u32)> = Vec::new();
