@@ -147,15 +147,9 @@
         text-align: center;
         color: var(--mf-fg-dim, #8a8a96);
       }
-      /* An operation gone into: what it changed, field by field. Fixed
-         columns, so the before and after line up. */
+      /* An operation gone into: the rows it took off, field by field. */
       #op-detail {
         padding: 8px;
-      }
-      #op-toolbar {
-        display: flex;
-        justify-content: flex-end;
-        margin-bottom: 4px;
       }
       .op-head {
         padding: 3px 8px;
@@ -192,18 +186,6 @@
       }
       table.changes td.field {
         white-space: nowrap;
-      }
-      tr.unchanged td {
-        color: var(--mf-fg-dim, #8a8a96);
-      }
-      tr.changed td.after,
-      tr.added td.after {
-        color: var(--mf-ok, #56c44c);
-      }
-      tr.changed td.before,
-      tr.removed td.before {
-        color: var(--mf-error, #e06c75);
-        text-decoration: line-through;
       }
       .value + .value::before {
         content: ', ';
@@ -248,11 +230,6 @@
         <tbody id="rows"></tbody>
       </table>
       <div id="op-detail" hidden>
-        <div id="op-toolbar">
-          <label class="toggle" title="Also list the fields the operation recorded but did not change (log:toggle unchanged)"
-            ><input type="checkbox" id="unchanged" />Unchanged fields</label
-          >
-        </div>
         <div id="op-body"></div>
       </div>
       <div id="more" class="placeholder" hidden>

@@ -122,7 +122,8 @@ async fn test_log_and_filters() {
     let with_snaps = get_log(&app, &repo, "?include_snapshots=true").await;
     let last = with_snaps["operations"].as_array().unwrap().last().unwrap().clone();
     assert_eq!(last["snapshots_before"][0]["value_int"], 1);
-    assert_eq!(last["snapshots_after"][0]["value_int"], 2);
+    // The log keeps no state a write left, and says none.
+    assert!(last.get("snapshots_after").is_none(), "{last}");
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -170,7 +171,7 @@ async fn test_label_detail() {
     assert_eq!(detail["label"]["is_head"], true);
     let ops = detail["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
-    assert!(ops[0]["snapshots_after"].is_array(), "snapshots always included here");
+    assert!(ops[0]["snapshots_before"].is_array(), "snapshots always included here");
 
     // 404 on a missing label.
     let (status, _) = request(&app, "GET", &format!("/repos/{repo}/log/labels/99999"), None).await;
@@ -226,7 +227,7 @@ async fn test_revision_detail_pages_its_operations() {
     let ops = one["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
     assert_eq!(ops[0]["id"].as_i64().unwrap(), all[2]);
-    assert!(ops[0]["snapshots_after"].is_array());
+    assert!(ops[0]["snapshots_before"].is_array());
 
     // An operation of another write is not this write's.
     let (status, _) =

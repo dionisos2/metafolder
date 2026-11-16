@@ -244,18 +244,16 @@ pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<ser
         // A deletion whose rows were lost says so, instead of the rows of today.
         let known = log.before_known(op.id)?;
         value["before_known"] = json!(known);
-        value["snapshots_before"] =
-            if known { snapshots_json(log, op.id, false)? } else { json!([]) };
-        value["snapshots_after"] = snapshots_json(log, op.id, true)?;
+        value["snapshots_before"] = if known { snapshots_json(log, op.id)? } else { json!([]) };
     }
     Ok(value)
 }
 
 /// Snapshot rows in their raw column form (doc "Log endpoints" examples).
-pub fn snapshots_json(log: &dyn Log, op_id: i64, after: bool) -> Result<serde_json::Value> {
+pub fn snapshots_json(log: &dyn Log, op_id: i64) -> Result<serde_json::Value> {
     let blob_hex = |b: Vec<u8>| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
     let mut out = Vec::new();
-    for row in log.snapshots(op_id, after)? {
+    for row in log.snapshots(op_id)? {
         // Raw column form (doc "Log endpoints" examples), null columns omitted.
         let encoded = rows::encode_value(&row.value);
         let mut snapshot = json!({

@@ -1393,7 +1393,7 @@ impl<'c> Writer<'c> {
         let Some(name) = first.field_name.clone() else { return Ok(false) };
         // Putting a value back is a write like any other: its type is checked.
         if first.op_type == "delete_field" {
-            for row in self.tx.snapshots(first.id, false)? {
+            for row in self.tx.snapshots(first.id)? {
                 self.validate_value_type(&name, &row.value)?;
             }
         }
@@ -1585,12 +1585,14 @@ impl<'c> Writer<'c> {
         after: Vec<FieldRow>,
     ) -> Result<()> {
         self.observe_effects(op_type, &before, &after, entity);
+        let delta = crate::version::net(&before, &after);
         self.pending.push(NewOp {
             op_type,
             entity,
             field_name: field_name.map(str::to_string),
             before,
             after,
+            delta,
             reverts_op_id: self.reverting,
             origin: self.origin.clone(),
         });

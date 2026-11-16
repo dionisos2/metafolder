@@ -491,18 +491,11 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
             println!("    before:  unknown (the record was written to after the deletion)");
             continue;
         }
-        let before = op["snapshots_before"].as_array();
-        let after = op["snapshots_after"].as_array();
-        let empty = before.is_none_or(|a| a.is_empty()) && after.is_none_or(|a| a.is_empty());
-        if empty {
-            println!("    (no snapshot — unknown operation)");
-            continue;
-        }
-        // For field-scoped ops (set_field, file_*) the field name precedes the
-        // before/after to make multi-field writes readable.
+        // The log keeps the rows an operation took off, not the ones it left.
+        // For field-scoped ops (set_field, file_*) the field name precedes
+        // them to make multi-field writes readable.
         let prefix = op["field_name"].as_str().map(|f| format!("{f} ")).unwrap_or_default();
-        println!("    {prefix}before:  {}", fmt_snapshots(before));
-        println!("    {prefix}after:   {}", fmt_snapshots(after));
+        println!("    {prefix}before:  {}", fmt_snapshots(op["snapshots_before"].as_array()));
     }
     Ok(0)
 }

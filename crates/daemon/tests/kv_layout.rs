@@ -147,7 +147,7 @@ fn a_store_of_layout_7_converts_when_it_opens() {
     );
     drop(kv);
 
-    assert_eq!(layout(dir.path()), Some(9i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
     let env = raw_env(dir.path());
     let legacy: Vec<_> =
         ["field_cells", "row_owner", "by_field"].map(|name| (name, open_raw(&env, name))).into();
@@ -175,7 +175,7 @@ fn a_converted_store_is_not_converted_again() {
     drop(KvStore::open(dir.path()).unwrap());
     let after = std::fs::read(dir.path().join("data.mdb")).unwrap();
     assert_eq!(before.len(), after.len());
-    assert_eq!(layout(dir.path()), Some(9i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
 }
 
 /// A metarecord of a store from before has no dense id when the derived data
@@ -264,9 +264,40 @@ fn a_store_of_layout_8_opens_with_an_empty_log_and_its_metarecords() {
     assert_eq!(kv.metarecords().unwrap().len(), before, "the metarecords are kept");
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
     drop(kv);
-    assert_eq!(layout(dir.path()), Some(9i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
     let again = KvStore::open(dir.path()).unwrap();
     assert_eq!(again.metarecords().unwrap().len(), before, "converted once");
+}
+
+/// A store of layout 9 is the one the layout 10 change reaches alone (an
+/// operation no longer records what it left, and records its version delta):
+/// it opens, its metarecords kept, with an empty log — what an older log lacks
+/// cannot be made up (user decision, November 2026).
+#[test]
+fn a_store_of_layout_9_opens_with_an_empty_log_and_its_metarecords() {
+    use metafolder_daemon::store::Log;
+    let dir = TempDir::new("kv-layout-9");
+    let before = {
+        let mut kv = KvStore::open(dir.path()).unwrap();
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        w.create_metarecord(vec![Field::new("a", Value::String("kept".into()))]).unwrap();
+        w.commit().unwrap();
+        assert!(kv.head().unwrap().is_some(), "there is a log to lose");
+        kv.metarecords().unwrap().len()
+    };
+    {
+        let env = raw_env(dir.path());
+        let meta = open_raw(&env, "meta");
+        let mut w = env.write_txn().unwrap();
+        meta.put(&mut w, b"layout", &9i64.to_be_bytes()).unwrap();
+        w.commit().unwrap();
+    }
+    let kv = KvStore::open(dir.path()).unwrap();
+    assert_eq!(kv.head().unwrap(), None, "the log is dropped");
+    assert_eq!(kv.metarecords().unwrap().len(), before, "the metarecords are kept");
+    assert_eq!(kv.check().unwrap(), Vec::<String>::new());
+    drop(kv);
+    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
 }
 
 /// A new store is written in the current layout, and says so.
@@ -274,7 +305,7 @@ fn a_store_of_layout_8_opens_with_an_empty_log_and_its_metarecords() {
 fn a_new_store_records_its_layout() {
     let dir = TempDir::new("kv-layout-new");
     drop(KvStore::open(dir.path()).unwrap());
-    assert_eq!(layout(dir.path()), Some(9i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
 }
 
 /// A store of the first layout is migrated when it opens: every record and

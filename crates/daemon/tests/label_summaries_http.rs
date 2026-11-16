@@ -206,7 +206,7 @@ async fn the_label_detail_can_give_the_newest_operations_without_their_snapshots
     let ids: Vec<i64> =
         all["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(ids.len(), 12);
-    assert!(all["operations"][0].get("snapshots_after").is_some(), "snapshots by default");
+    assert!(all["operations"][0].get("snapshots_before").is_some(), "snapshots by default");
 
     let window = r
         .call("GET", &format!("/log/labels/{label}?newest=1&offset=2&limit=3&snapshots=0"), None)
@@ -220,5 +220,5 @@ async fn the_label_detail_can_give_the_newest_operations_without_their_snapshots
         .collect();
     // Newest first, the two newest skipped.
     assert_eq!(got, vec![ids[9], ids[8], ids[7]]);
-    assert!(window["operations"][0].get("snapshots_after").is_none(), "{window}");
+    assert!(window["operations"][0].get("snapshots_before").is_none(), "{window}");
 }

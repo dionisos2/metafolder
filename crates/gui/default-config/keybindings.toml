@@ -562,7 +562,6 @@ vars.index = "i"
 ]
 "{view} a" = { command = "file-manager:toggle activity", when = "file-manager" }
 "{view} w" = { command = "log:toggle watcher", when = "log" }
-"{view} u" = { command = "log:toggle unchanged", when = "log" }
 "{view} s" = [
   { command = "path-ref:toggle-scope", when = "path-ref" },
   { command = "recent:set-sort", when = "recent" },

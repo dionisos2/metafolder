@@ -119,11 +119,11 @@ fn the_log_reads_a_deletion_per_record_with_the_rows_it_had() {
     );
     for op in &ops {
         assert_eq!(op.op_type, "delete_metarecord");
-        let before = store.snapshots(op.id, false).unwrap();
+        let before = store.snapshots(op.id).unwrap();
         assert_eq!(before.len(), 2, "its two rows: {before:?}");
         assert!(before.iter().any(|r| r.name == "tag"));
         assert!(before.iter().any(|r| r.name == "rank"));
-        assert!(store.snapshots(op.id, true).unwrap().is_empty());
+        assert!(store.added(op.id).unwrap().is_empty());
     }
 }
 
@@ -140,7 +140,7 @@ fn a_fold_deletes_the_records_and_the_log_keeps_their_rows() {
             .iter()
             .map(|o| {
                 let mut rows: Vec<String> = store
-                    .snapshots(o.id, false)
+                    .snapshots(o.id)
                     .unwrap()
                     .iter()
                     .map(|r| format!("{}={:?}", r.name, r.value))
@@ -470,11 +470,11 @@ fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pend
     assert!(Rows::exists(&store, root).unwrap());
     // The deletion's rows are still the log's to say, folded or given back.
     for op in &ops[30..] {
-        assert_eq!(store.snapshots(op.id, false).unwrap().len(), 2, "{op:?}");
+        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
     }
     for op in &ops[..30] {
         assert!(store.before_known(op.id).unwrap());
-        assert!(!store.snapshots(op.id, false).unwrap().is_empty(), "{op:?}");
+        assert!(!store.snapshots(op.id).unwrap().is_empty(), "{op:?}");
     }
 }
 
@@ -606,7 +606,7 @@ fn a_reindex_folds_a_pending_deletion_and_keeps_what_the_log_says() {
             .ops_after(head)
             .unwrap()
             .iter()
-            .map(|o| (o.entity_uuid, store.snapshots(o.id, false).unwrap().len()))
+            .map(|o| (o.entity_uuid, store.snapshots(o.id).unwrap().len()))
             .collect()
     };
     let before = says(&store);
@@ -631,7 +631,7 @@ fn a_prune_in_the_middle_of_a_pending_deletion_leaves_the_rest_its_rows() {
     let left = store.ops_after(head).unwrap();
     assert_eq!(left.len(), 20);
     for op in &left {
-        assert_eq!(store.snapshots(op.id, false).unwrap().len(), 2, "{op:?}");
+        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
     }
     sound(&store);
 }

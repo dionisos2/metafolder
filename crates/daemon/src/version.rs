@@ -104,6 +104,13 @@ pub fn delta(before: &[FieldRow], after: &[FieldRow]) -> (u64, u64) {
     (rows_sum(after), rows_sum(before))
 }
 
+/// What a write that removes `before` and inserts `after` adds to a version, in
+/// modulo-2^53 arithmetic: the one number an operation keeps of it (doc "Log
+/// storage"), subtracted to go back before the operation.
+pub fn net(before: &[FieldRow], after: &[FieldRow]) -> u64 {
+    apply(rows_sum(after), 0, rows_sum(before))
+}
+
 /// Applies a delta to a version, in modulo-2^53 arithmetic. Wrapping `u64`
 /// arithmetic then masking is exactly modulo 2^53, since 2^53 divides 2^64.
 pub fn apply(current: u64, add: u64, sub: u64) -> u64 {

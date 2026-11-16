@@ -21,7 +21,7 @@ label after the fact is not built either.
 !! The model
 
 * The log is a sequence of operations, numbered in the order they were written. There is no parent, no HEAD to move, no branch: the log only grows, and shrinks only by retention.
-* Each operation keeps what it found and what it wrote (the before/after snapshots of today). What it wrote is ''descriptive'': it says what the operation did, it is never a condition for undoing it.
+* Each operation keeps what it found (its before snapshot), and the value an append added; the state it left is not kept. What it records is ''descriptive'': it says what the operation did, it is never a condition for undoing it.
 * There is ''one mechanism'': reverting a set of operations, which applies each one's inverse to the ''current'' state ([[Reverting onto the current state]]). Undo, redo, "back to this morning" ([[Rollback]]), a script's going back: each is a choice of set, nothing more.
 * Operations are grouped by ''labels'' — named, described, nested — instead of revisions ([[Labels and contexts]]). A transaction stays one request; a label groups what belongs together, across as many requests as it takes.
 * Undo and redo target a label of the newest operation, chosen by the user when there are several ([[Undo and redo by label]]).

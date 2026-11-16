@@ -9,7 +9,7 @@
 import { byId, el, formatValue, openButton, pathText, qs } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
 import { underRoot } from '/__file-actions.js';
-import { fieldChanges } from './snapshots.js';
+import { rowsByField } from './snapshots.js';
 import {
   buildTree,
   countOf,
@@ -42,11 +42,10 @@ const OP_LABELS = /** @type {Record<string, string>} */ ({
  * @typedef {import('./tree.js').Node} Node
  * @typedef {import('./tree.js').Row} Row
  *
- * One operation of `GET /log/labels/:id?op=`, with what it changed.
+ * One operation of `GET /log/labels/:id?op=`, with the rows it took off.
  * @typedef {{id: number, op_type: string, entity_uuid: string,
  *            field_name: string|null, reverts_op_id: number|null,
  *            snapshots_before: import('./snapshots.js').Snapshot[],
- *            snapshots_after: import('./snapshots.js').Snapshot[],
  *            before_known?: boolean}} Detail
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
@@ -76,9 +75,6 @@ export async function mount(root, metafolder) {
   // hiding them keeps only what the user wrote. A display filter: the fetch is
   // the same either way.
   let showWatcher = true;
-  // In an operation, the fields it recorded without changing them are hidden
-  // unless asked for.
-  let showUnchanged = false;
   /** The operation gone into, as last read (null while it is being read).
    *  @type {Detail|null} */
   let detail = null;
@@ -110,7 +106,6 @@ export async function mount(root, metafolder) {
   const watcherCheckbox = byId(root, 'show-watcher', HTMLInputElement);
   const opDetail = byId(root, 'op-detail');
   const opBody = byId(root, 'op-body');
-  const unchangedCheckbox = byId(root, 'unchanged', HTMLInputElement);
   const breadcrumb = byId(root, 'breadcrumb');
   const upButton = byId(root, 'up', HTMLButtonElement);
   const statusLine = byId(root, 'status-line');
@@ -523,18 +518,15 @@ export async function mount(root, metafolder) {
       : values.map((v) => valueEl(v, field));
   }
 
-  /** What the operation gone into changed: its head, the metarecord it wrote,
-   *  and a before/after table, one row per field name. */
+  /** What the operation gone into took off: its head, the metarecord it wrote,
+   *  and a table of the rows it replaced or removed, one row per field name. */
   function renderDetail() {
-    unchangedCheckbox.checked = showUnchanged;
     const op = detail;
     if (op === null || shownOp()?.id !== op.id) {
       opBody.replaceChildren(el('p', { class: 'placeholder' }, 'Loading…'));
       return;
     }
-    const changes = fieldChanges(op.snapshots_before ?? [], op.snapshots_after ?? []);
-    const shown = showUnchanged ? changes : changes.filter((c) => c.status !== 'unchanged');
-    const hidden = changes.length - shown.length;
+    const shown = rowsByField(op.snapshots_before ?? []);
     const children = [
       el(
         'div',
@@ -562,25 +554,21 @@ export async function mount(root, metafolder) {
           el(
             'thead',
             {},
-            el('tr', {}, el('th', {}, 'field'), el('th', {}, 'before'), el('th', {}, 'after')),
+            el('tr', {}, el('th', {}, 'field'), el('th', {}, 'before')),
           ),
           el(
             'tbody',
             {},
-            ...shown.map((change) =>
+            ...shown.map((rows) =>
               el(
                 'tr',
-                { class: change.status },
-                el('td', { class: 'field' }, change.field),
-                el('td', { class: 'before' }, valuesCell(change.before, change.field)),
-                el('td', { class: 'after' }, valuesCell(change.after, change.field)),
+                {},
+                el('td', { class: 'field' }, rows.field),
+                el('td', { class: 'before' }, valuesCell(rows.values, rows.field)),
               ),
             ),
           ),
         ),
-      hidden > 0
-        ? el('div', { class: 'entity' }, `${hidden} unchanged field${hidden === 1 ? '' : 's'} not shown`)
-        : null,
     ];
     opBody.replaceChildren(...children.filter((c) => c !== null));
   }
@@ -793,13 +781,6 @@ export async function mount(root, metafolder) {
   }
   watcherCheckbox.addEventListener('change', () => toggleWatcher(watcherCheckbox.checked));
 
-  /** @param {boolean} [on] */
-  function toggleUnchanged(on) {
-    showUnchanged = on ?? !showUnchanged;
-    renderDetail();
-  }
-  unchangedCheckbox.addEventListener('change', () => toggleUnchanged(unchangedCheckbox.checked));
-
   // Grow the fetched window by one page and reload.
   showMoreButton.addEventListener('click', () => {
     limit += LOG_PAGE;
@@ -847,11 +828,10 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, () => unknown>} */
   const LOG_FLAGS = {
     watcher: () => toggleWatcher(),
-    unchanged: () => toggleUnchanged(),
   };
 
   void commands.register('log:toggle', {
-    label: 'Log: toggle a view flag (the watcher’s work / the unchanged fields of an operation)',
+    label: 'Log: toggle a view flag (the watcher’s work)',
     args: [
       {
         name: 'flag',

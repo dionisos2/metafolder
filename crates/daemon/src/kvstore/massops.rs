@@ -59,6 +59,10 @@ pub(super) enum Who {
     Uuids(Vec<Uuid>),
 }
 
+/// A record of a folded deletion as it is put back: its dense id, its uuid, and
+/// the rows the log froze.
+type Folded = (u32, Uuid, Vec<FieldRow>);
+
 impl Who {
     fn len(&self) -> usize {
         match self {
@@ -115,7 +119,6 @@ impl Stub {
             .opt_bytes(self.origin.as_deref().map(str::as_bytes))
             .bytes(self.type_name().as_bytes())
             .bytes(ROOT.as_slice())
-            .opt_int(None)
             .opt_int(None)
             .opt_bytes(Some(self.field.as_bytes()))
             .opt_int(self.reverts)
@@ -184,7 +187,6 @@ impl Stub {
         r.opt_bytes()?;
         r.bytes()?;
         r.bytes()?;
-        r.opt_int()?;
         r.opt_int()?;
         r.opt_bytes()?;
         r.opt_int()?;
@@ -391,19 +393,44 @@ impl Read<'_> {
         Ok(out)
     }
 
-    /// The rows operation `op_id` has after it, or before, a stub's included.
-    pub(super) fn snapshot_rows(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
+    /// The rows `append_field` operation `op_id` added, a stub's included:
+    /// none for any other operation.
+    pub(super) fn added_rows(&self, op_id: i64) -> Result<Vec<FieldRow>> {
+        if let Some(stub) = self.stub_at(op_id)? {
+            return Ok(if stub.delete { Vec::new() } else { stub.snapshot(op_id, true) });
+        }
+        let mut out = Vec::new();
+        let prefix = key(&[&be(op_id), &[1u8]]);
+        for e in self.t.snaps.prefix_iter(self.r, &prefix)? {
+            out.push(super::dec_row(e?.1)?);
+        }
+        self.count(out.len() as u64 + 1)?;
+        Ok(out)
+    }
+
+    /// What operation `op_id` added to its entity's version: the number an
+    /// ordinary operation keeps, and for a stub's the one its own rows give.
+    pub(super) fn version_delta(&self, op_id: i64) -> Result<u64> {
+        if let Some(stub) = self.stub_at(op_id)? {
+            let before = self.snapshot_rows(op_id)?;
+            return Ok(crate::version::net(&before, &stub.snapshot(op_id, true)));
+        }
+        self.count(1)?;
+        let raw = self.t.ops.get(self.r, &be(op_id))?.context("an operation that is not there")?;
+        let delta = super::op_delta(raw)?.context("an operation with no version delta")?;
+        Ok(delta as u64)
+    }
+
+    /// The rows operation `op_id` took off its record, a stub's included.
+    pub(super) fn snapshot_rows(&self, op_id: i64) -> Result<Vec<FieldRow>> {
         let stub = self.stub_at(op_id)?;
         if let Some(stub) = &stub {
             if !stub.delete {
-                return Ok(stub.snapshot(op_id, after));
-            }
-            if after {
-                return Ok(Vec::new());
+                return Ok(stub.snapshot(op_id, false));
             }
         }
         let mut out = Vec::new();
-        let prefix = key(&[&be(op_id), &[after as u8]]);
+        let prefix = key(&[&be(op_id), &[0u8]]);
         for e in self.t.snaps.prefix_iter(self.r, &prefix)? {
             out.push(super::dec_row(e?.1)?);
         }
@@ -435,7 +462,7 @@ impl Read<'_> {
         if let Some(chain) = self.revert_chain(uuid, op_id)? {
             for member in chain.into_iter().rev() {
                 if self.op(member)?.is_some_and(|o| o.op_type == "delete_metarecord") {
-                    return self.snapshot_rows(member, false);
+                    return self.snapshot_rows(member);
                 }
             }
         }
@@ -990,7 +1017,7 @@ impl KvTxn<'_> {
         all: &RoaringBitmap,
         first_op: i64,
         last_op: i64,
-    ) -> Result<Option<Vec<(u32, Uuid, Vec<FieldRow>)>>> {
+    ) -> Result<Option<Vec<Folded>>> {
         let at = (first_op - stub.first) as usize;
         let n = (last_op - first_op + 1) as usize;
         let mut out = Vec::with_capacity(n);

@@ -30,7 +30,7 @@ fn test_log_ops_expands_operations() {
 }
 
 #[test]
-fn test_log_show_displays_before_and_after() {
+fn test_log_show_displays_what_the_operation_replaced() {
     let (repo, _root) = init_repo("log_show");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
@@ -40,7 +40,8 @@ fn test_log_show_displays_before_and_after() {
     assert!(out.stdout.starts_with("Label "), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("set_field(rating)"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("before:  3"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("after:   5"), "stdout: {}", out.stdout);
+    // The log keeps no state a write left.
+    assert!(!out.stdout.contains("after:"), "stdout: {}", out.stdout);
 
     // --raw prints JSON with the label object.
     let raw = mf(&["-u", &repo, "log", "show", "HEAD", "--raw"]);

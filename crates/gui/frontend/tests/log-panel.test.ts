@@ -56,10 +56,6 @@ const DETAIL = (id: number, label: number) => ({
         { field_name: 'tag', value_type: 'string', value_text: 'old' },
         { field_name: 'rating', value_type: 'int', value_int: 3 },
       ],
-      snapshots_after: [
-        { field_name: 'tag', value_type: 'string', value_text: 'new' },
-        { field_name: 'rating', value_type: 'int', value_int: 3 },
-      ],
     },
   ],
 });
@@ -167,7 +163,7 @@ async function mountPanel(units: typeof UNITS = UNITS, above: number[] = []) {
       ),
     rowWith,
     crumbs: () => shadow.getElementById('breadcrumb')!.textContent ?? '',
-    /** The operation gone into: its before/after table, one row per field. */
+    /** The operation gone into: the rows it took off, one row per field. */
     detail: () =>
       [...shadow.querySelectorAll<HTMLElement>('#op-detail tbody tr')].map((tr) =>
         [...tr.querySelectorAll('td')].map((td) => td.textContent?.trim()).join(' | '),
@@ -199,7 +195,7 @@ describe('log panel: going into a label', () => {
     expect(p.crumbs()).toContain('#1 run');
   });
 
-  test("down to an operation, whose ↘ button shows what it changed, field by field", async () => {
+  test("down to an operation, whose ↘ button shows the rows it took off, field by field", async () => {
     const p = await mountPanel();
     for (const name of ['run', 'answer', 'mf tag add', 'op 10']) {
       p.rowWith(name).querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
@@ -208,11 +204,9 @@ describe('log panel: going into a label', () => {
     expect(p.api.daemon.call).toHaveBeenCalledWith('GET', '/repos/r/log/labels/3?op=10');
     expect(p.rows()).toEqual([]);
     expect(p.crumbs()).toContain('op 10');
-    // The unchanged field is hidden until asked for.
-    expect(p.detail()).toEqual(['tag | old | new']);
+    // The log keeps what the operation replaced, not what it left.
+    expect(p.detail()).toEqual(['tag | old', 'rating | 3']);
     expect(p.shadow.getElementById('op-detail')!.textContent).toContain('/photos/a.jpg');
-    await p.run('log:toggle', 'unchanged');
-    expect(p.detail()).toEqual(['tag | old | new', 'rating | 3 | 3']);
   });
 
   test('cursor:parent comes back out of an operation onto its row', async () => {
@@ -220,7 +214,7 @@ describe('log panel: going into a label', () => {
     await p.run('cursor:first'); // #9 edit
     await p.run('cursor:descend');
     await p.run('cursor:descend'); // op 12
-    expect(p.detail()).toEqual(['tag | old | new']);
+    expect(p.detail()).toEqual(['tag | old', 'rating | 3']);
     await p.run('cursor:parent');
     expect(p.shadow.getElementById('op-detail')!.hidden).toBe(true);
     expect(p.selected()).toBe('op 12: set_field tag');
@@ -271,7 +265,6 @@ describe('log panel: going into a label', () => {
           field_name: null,
           before_known: false,
           snapshots_before: [],
-          snapshots_after: [],
         };
       }
       return answer;

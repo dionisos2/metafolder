@@ -70,8 +70,8 @@ fn a_mass_add_is_one_entry_that_reads_as_one_operation_per_record() {
         assert_eq!(op.op_type, "append_field");
         assert_eq!(op.field_name.as_deref(), Some("tag"));
         assert!(uuids.contains(&op.entity_uuid));
-        assert!(store.snapshots(op.id, false).unwrap().is_empty());
-        let after = store.snapshots(op.id, true).unwrap();
+        assert!(store.snapshots(op.id).unwrap().is_empty());
+        let after = store.added(op.id).unwrap();
         assert_eq!(
             (after.len(), &after[0].name, &after[0].value),
             (1, &"tag".to_string(), &s("jazz"))
@@ -111,9 +111,9 @@ fn a_mass_remove_reads_as_a_deletion_per_record() {
     assert_eq!(ops.len(), 30);
     for op in &ops {
         assert_eq!(op.op_type, "delete_field");
-        let before = store.snapshots(op.id, false).unwrap();
+        let before = store.snapshots(op.id).unwrap();
         assert_eq!((before.len(), &before[0].value), (1, &s("blue")));
-        assert!(store.snapshots(op.id, true).unwrap().is_empty());
+        assert!(store.added(op.id).unwrap().is_empty());
     }
 }
 
@@ -235,7 +235,7 @@ fn pruning_cuts_an_entry_and_retention_takes_it_whole() {
     assert_eq!(store.op(target).unwrap().unwrap().entity_uuid, ops[10].entity_uuid);
     assert!(store.op(target - 1).unwrap().is_none());
     // The kept ones read as before.
-    assert_eq!(store.snapshots(target, true).unwrap().len(), 1);
+    assert_eq!(store.added(target).unwrap().len(), 1);
 }
 
 #[test]
@@ -337,9 +337,7 @@ fn a_mass_replace_is_one_entry_that_reads_with_what_it_replaced() {
     for op in &ops {
         assert_eq!(op.op_type, "set_field");
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
-        let after = store.snapshots(op.id, true).unwrap();
-        assert_eq!(after.iter().map(|r| r.value.clone()).collect::<Vec<_>>(), [s("x"), s("y")]);
-        let before = store.snapshots(op.id, false).unwrap();
+        let before = store.snapshots(op.id).unwrap();
         assert_eq!(before.len(), 1);
         assert_eq!(before[0].value, s(["blue", "green"][i % 2]));
     }
@@ -361,8 +359,8 @@ fn a_mass_unset_logs_only_the_records_that_held_the_field() {
     assert_eq!(ops.len(), 20);
     for op in &ops {
         assert_eq!(op.op_type, "delete_field");
-        assert_eq!(store.snapshots(op.id, false).unwrap().len(), 1);
-        assert!(store.snapshots(op.id, true).unwrap().is_empty());
+        assert_eq!(store.snapshots(op.id).unwrap().len(), 1);
+        assert!(store.added(op.id).unwrap().is_empty());
     }
     assert!(uuids.iter().all(|&u| tags_of(&store, u).is_empty()));
     let diff = store.check_derived().unwrap();
@@ -388,7 +386,7 @@ fn what_a_replacement_replaced_survives_the_writes_that_came_after() {
     assert_eq!(ops.len(), 30);
     for op in &ops {
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
-        let before = store.snapshots(op.id, false).unwrap();
+        let before = store.snapshots(op.id).unwrap();
         assert_eq!(before.len(), 1, "record {i}");
         assert_eq!(before[0].value, s(["blue", "green"][i % 2]), "record {i}");
     }
@@ -444,15 +442,14 @@ fn a_replacement_knows_what_the_same_write_put_before_it() {
     let _ = head;
     let ops = store.label_ops(label).unwrap();
     let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_field").collect();
-    let replacement: Vec<_> = set_ops
-        .iter()
-        .filter(|o| store.snapshots(o.id, true).unwrap()[0].value == s("z"))
-        .collect();
-    assert_eq!(replacement.len(), 120);
+    // The log keeps no state a write left: the replacement by "z" is the
+    // newest of the replacements, after the ten that wrote nothing.
+    assert_eq!(set_ops.len(), 130);
+    let replacement: Vec<_> = set_ops.iter().rev().take(120).collect();
     for op in replacement {
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
         let mut before: Vec<Value> =
-            store.snapshots(op.id, false).unwrap().into_iter().map(|r| r.value).collect();
+            store.snapshots(op.id).unwrap().into_iter().map(|r| r.value).collect();
         before.sort_by_key(|v| format!("{v:?}"));
         let mut want = if (100..110).contains(&i) {
             vec![Value::Nothing]

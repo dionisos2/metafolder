@@ -2,11 +2,11 @@ title: Log storage
 tags: [[Event log]]
 kind: reference
 audience: dev
-summary: What an operation records, its before and after snapshot rows, why versions are recomputed, and how one write lays it all down.
+summary: What an operation records — the rows it took off, the value an append added, the version it added — and how one write lays it all down.
 
 The log lives in the repository's store, beside the data it describes — one transaction
 writes both ([[Store tables]]): a ''label'' holds its name, description, parent and
-creation time ([[Labels and contexts]]); an ''operation'' the fields below; each operation its before and after ''snapshot'' rows;
+creation time ([[Labels and contexts]]); an ''operation'' the fields below; each operation the ''snapshot'' rows it took off;
 HEAD — the newest operation, the change feed's cursor — is a record of its own. (Watcher
 events are not here: they are buffered in memory.) The log is a sequence: operations are
 numbered in the order they were written, and none names a parent ([[The operation log]],
@@ -21,6 +21,7 @@ numbered in the order they were written, and none names a parent ([[The operatio
 |`op_type` |[[Operations and their origin]] |
 |`entity_uuid` |the metarecord it changed |
 |`field_name` |for a field operation |
+|`delta` |what the operation added to its entity's version, modulo 2^53 (a stub has none: its records' deltas are computed from its rows) |
 |`reverts_op_id` |for an operation a revert wrote: the one it undid |
 
 The store also keeps each label's operations in order, each label's children, each
@@ -35,18 +36,28 @@ and it may dangle: pruning and retention may remove the operation it names.
 
 !! Snapshots
 
-Each operation stores its state before and after as rows in the column form of a field
-row ([[The column form of a value]]):
+Each operation stores the rows it took off its record, in the column form of a field row
+([[The column form of a value]]) — its ''before''. The state it left, its ''after'', is
+not stored (layout 10, November 2026): nothing needs it, and a write costs a key less.
+Of an append alone the value it added is kept, which a revert takes off:
 
-|!Type |!Before |!After |
-|`create_metarecord` |— |every row of the new metarecord |
+|!Type |!Before |!Added (append only) |
+|`create_metarecord` |— |— |
 |`delete_metarecord` |every row of the deleted one |— |
-|`set_field` |the previous rows of the name |the new rows |
+|`set_field` |the previous rows of the name |— |
 |`append_field` |— |the appended row |
 |`delete_field` |the deleted rows |— |
-|`file_deleted` |the `mfr_path` row |one `nothing` row |
-|`file_moved` |the previous `mfr_path` row |the new one |
-|`file_modified` |`mfr_size`, `mfr_mtime` and the hash rows |the new `mfr_size`, `mfr_mtime` |
+|`file_deleted` |the `mfr_path` row |— |
+|`file_moved` |the previous `mfr_path` row |— |
+|`file_modified` |`mfr_size`, `mfr_mtime` and the hash rows |— |
+
+What reads an operation's ''after'' therefore asks elsewhere: the revert plan's
+`changed_since` warning looks for a later operation on the cell, a redo of the operation (a revert of its revert) excepted (an append and a removal
+compare the rows with the value they added or took); the move a revert of `file_moved`
+makes goes from where the file is recorded after the move — what the next operation on
+its `mfr_path` took off, or the row now ([[Filesystem coordination]]) — to the row the
+move took off. The log panel and `mf log show` show the before alone, and
+`snapshots_after` is gone from the API ([[Log endpoints]]).
 
 A directory's `file_deleted` gives each descendant its own operation in the same write.
 
@@ -55,25 +66,23 @@ which reads as these operations, one per record ([[Mass operations in the log]])
 
 !! Versions recomputed
 
-A snapshot row carries no id (the column an old store wrote one in is ignored). The version is never restored from the log either: it is a hash of the content
+A snapshot row carries no id. The version is never restored from the log either: it is a hash of the content
 ([[Metarecord version]]), so the state a revert writes has the version it should.
-An operation records ''no version'' either. Until November 2026 it held the
-metarecord's version on each side, as provenance; keeping a version current cost
-every write a key of its own, and a write to many metarecords one per metarecord.
-The one reader — a revert matching a trash entry on the version a file had before
-the watcher's flush ([[Filesystem coordination]]) — computes it back: the metarecord's
-version now, with the terms of every row its operations wrote since subtracted and
-those of every row they removed added, newest first. The version being a sum of row
-terms ([[Metarecord version]]), this is exact, and costs the operations on that one
-metarecord. An operation of an older store still carries its two versions, which
-are read past.
+An operation records ''no version'', but the number it added to it: its `delta`, the sum of the
+terms of the rows it wrote minus those of the rows it took off, computed from the rows
+the write already holds. The one reader — a revert matching a trash entry on the version a
+file had before the watcher's flush ([[Filesystem coordination]]) — computes the version
+back: the metarecord's version now, with the delta of each of its operations since the
+label's first subtracted, newest first. The version being a sum of row terms
+([[Metarecord version]]), this is exact, and costs the operations on that one metarecord.
+A store of an older layout has no deltas: it is opened with an empty log.
 
 !! One write
 
 Every request that changes metadata goes through one `log::Writer`, in one transaction:
 its label is checked or opened ([[Labels and contexts]]); for each change, the affected rows and
 the version are read (the before snapshot), the change is applied (the version updated
-incrementally), the resulting rows read (the after snapshot), and an operation appended;
+incrementally), and an operation appended;
 finally HEAD is recorded and the transaction commits. Every writer — reconcile included — follows it, which is what
 keeps the data and HEAD consistent ([[Writes and atomicity]]).
 

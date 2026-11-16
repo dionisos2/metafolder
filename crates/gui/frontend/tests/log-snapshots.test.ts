@@ -1,10 +1,10 @@
-// log panel (panel-types/log/snapshots.js): an operation's
-// before/after snapshots, read back as values and paired field by field, which
-// is what the panel shows as "what this operation changed".
+// log panel (panel-types/log/snapshots.js): the rows an operation took off,
+// read back as values and grouped by field, which is what the panel shows as
+// "what this operation replaced".
 
 import { describe, expect, test } from 'vitest';
 import {
-  fieldChanges,
+  rowsByField,
   snapshotValue,
 } from '../../default-config/panel-types/log/snapshots.js';
 
@@ -60,32 +60,22 @@ const snap = (name: string, int: number) => ({
   value_int: int,
 });
 
-describe('fieldChanges', () => {
-  test('pairs before and after by field name, in first-seen order', () => {
-    const changes = fieldChanges(
-      [snap('rating', 3), snap('year', 2000)],
-      [snap('year', 2000), snap('rating', 5), snap('added', 1)],
-    );
-    expect(changes.map((c: { field: string; status: string }) => [c.field, c.status])).toEqual([
-      ['rating', 'changed'],
-      ['year', 'unchanged'],
-      ['added', 'added'],
+describe('rowsByField', () => {
+  test('groups the rows by field name, in first-seen order', () => {
+    const rows = rowsByField([snap('rating', 3), snap('year', 2000), snap('rating', 4)]);
+    expect(rows).toEqual([
+      {
+        field: 'rating',
+        values: [
+          { type: 'int', value: 3 },
+          { type: 'int', value: 4 },
+        ],
+      },
+      { field: 'year', values: [{ type: 'int', value: 2000 }] },
     ]);
-    expect(changes[0].before).toEqual([{ type: 'int', value: 3 }]);
-    expect(changes[0].after).toEqual([{ type: 'int', value: 5 }]);
   });
 
-  test('a field only before was removed', () => {
-    expect(fieldChanges([snap('gone', 1)], [])[0].status).toBe('removed');
-  });
-
-  test('a multi-map compares as a multiset, whatever the row order', () => {
-    const changes = fieldChanges([snap('t', 1), snap('t', 2)], [snap('t', 2), snap('t', 1)]);
-    expect(changes[0].status).toBe('unchanged');
-  });
-
-  test('an extra copy of the same value is a change', () => {
-    const changes = fieldChanges([snap('t', 1)], [snap('t', 1), snap('t', 1)]);
-    expect(changes[0].status).toBe('changed');
+  test('no row, no field', () => {
+    expect(rowsByField([])).toEqual([]);
   });
 });

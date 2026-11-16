@@ -28,7 +28,7 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 |`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
 |`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
 |`ops` |op id |the operation — or, at its first id, a stub: one entry for the operations of a write to many records ([[Mass operations in the log]]) |the log, in order ([[The operation log]]) |
-|`snaps` |op id · after? · index |a snapshot row |what an operation changed, before and after |
+|`snaps` |op id · added? · index |a snapshot row |the rows an operation took off, and the value an append added |
 |`ops_by_label` |label · op id |— |an undo or revert by label |
 |`ops_by_entity` |uuid · op id |— |a metarecord's history; under the nil uuid, the stubs |
 |`labels` |label id |name · description · parent · created |[[Labels and contexts]] |

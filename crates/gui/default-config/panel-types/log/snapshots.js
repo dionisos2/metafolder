@@ -1,5 +1,5 @@
-// log panel: an operation's before/after snapshots read back as values and
-// paired field by field — "what this operation changed". Pure and unit-tested.
+// log panel: the rows an operation took off its record, read back as values
+// and grouped by field — "what this operation replaced". Pure and unit-tested.
 
 /** The zero uuid: a tree_ref's parent at a forest root (doc "TreeRef forest"). */
 const ZERO_UUID = '0'.repeat(32);
@@ -12,10 +12,8 @@ const ZERO_UUID = '0'.repeat(32);
  *            value_uuid?: string, value_ref_repo?: string,
  *            value_name?: string}} Snapshot
  *
- * One field as the panel displays it: the values before and after, and how the
- * two compare.
- * @typedef {{field: string, before: Metafolder.Value[], after: Metafolder.Value[],
- *            status: 'added'|'removed'|'changed'|'unchanged'}} FieldChange
+ * One field as the panel displays it: the values the operation took off.
+ * @typedef {{field: string, values: Metafolder.Value[]}} FieldRows
  */
 
 /**
@@ -59,50 +57,25 @@ export function snapshotValue(s) {
   }
 }
 
-/** A value's identity, for comparing multisets. @param {Metafolder.Value} v */
-const key = (v) => JSON.stringify(v);
-
-/** @param {Metafolder.Value[]} a @param {Metafolder.Value[]} b */
-function sameMultiset(a, b) {
-  if (a.length !== b.length) return false;
-  const left = a.map(key).sort();
-  const right = b.map(key).sort();
-  return left.every((k, i) => k === right[i]);
-}
-
 /**
- * Pairs the snapshots before and after an operation by field name, in the order
- * the fields first appear. Fields are a multi-map, so the values of one name
- * compare as a multiset.
+ * Groups the rows an operation took off its record by field name, in the order
+ * the fields first appear: what the panel shows of an operation. The log keeps
+ * these rows and not the ones the operation left.
  *
- * @param {Snapshot[]} before @param {Snapshot[]} after
- * @returns {FieldChange[]}
+ * @param {Snapshot[]} snapshots
+ * @returns {FieldRows[]}
  */
-export function fieldChanges(before, after) {
-  /** @type {Map<string, {before: Metafolder.Value[], after: Metafolder.Value[]}>} */
+export function rowsByField(snapshots) {
+  /** @type {Map<string, Metafolder.Value[]>} */
   const byField = new Map();
-  /** @param {string} name */
-  const entry = (name) => {
-    let e = byField.get(name);
-    if (!e) {
-      e = { before: [], after: [] };
-      byField.set(name, e);
+  for (const s of snapshots) {
+    const name = s.field_name ?? '';
+    let values = byField.get(name);
+    if (!values) {
+      values = [];
+      byField.set(name, values);
     }
-    return e;
-  };
-  for (const s of before) entry(s.field_name ?? '').before.push(snapshotValue(s));
-  for (const s of after) entry(s.field_name ?? '').after.push(snapshotValue(s));
-  return [...byField].map(([field, { before: b, after: a }]) => ({
-    field,
-    before: b,
-    after: a,
-    status:
-      b.length === 0
-        ? 'added'
-        : a.length === 0
-          ? 'removed'
-          : sameMultiset(b, a)
-            ? 'unchanged'
-            : 'changed',
-  }));
+    values.push(snapshotValue(s));
+  }
+  return [...byField].map(([field, values]) => ({ field, values }));
 }

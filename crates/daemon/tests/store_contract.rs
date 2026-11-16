@@ -119,9 +119,12 @@ fn the_log_walks_back_from_head() {
     let last = store.op(head).unwrap().expect("the head operation");
     assert_eq!(last.entity_uuid, child);
     assert_eq!(last.field_name.as_deref(), Some("rating"));
-    let after = store.snapshots(head, true).unwrap();
-    assert_eq!(after.iter().map(|r| r.value.clone()).collect::<Vec<_>>(), [Value::Int(3)]);
-    assert!(store.snapshots(head, false).unwrap().is_empty(), "no rating before");
+    // The log keeps what a write took off, and the version it added: no state
+    // a write left, the row it wrote being the delta.
+    assert!(store.snapshots(head).unwrap().is_empty(), "no rating before");
+    assert!(store.added(head).unwrap().is_empty(), "not an append");
+    let wrote = metafolder_daemon::rows::FieldRow { name: "rating".into(), value: Value::Int(3) };
+    assert_eq!(store.version_delta(head).unwrap(), metafolder_daemon::version::rows_sum(&[wrote]));
 
     // The read back from HEAD: newest first, bounded or whole.
     let back = store.ops_back(head, None).unwrap();
@@ -223,11 +226,12 @@ fn appended_operations_chain_from_head() {
     let (mut conn, _dir) = empty();
     let m = Uuid::new_v4();
     let op = |field: &str| NewOp {
-        op_type: OpType::SetField,
+        op_type: OpType::AppendField,
         entity: m,
         field_name: Some(field.into()),
         before: Vec::new(),
         after: vec![metafolder_daemon::rows::FieldRow { name: field.into(), value: Value::Int(3) }],
+        delta: 7,
         reverts_op_id: None,
         origin: None,
     };
@@ -253,7 +257,7 @@ fn appended_operations_chain_from_head() {
     let c = tx.op(last).unwrap().unwrap();
     assert_eq!((c.id, c.label_id, c.field_name.as_deref()), (first + 1, rev, Some("c")));
     assert_eq!(c.timestamp, 2_000);
-    assert_eq!(tx.snapshots(last, true).unwrap()[0].value, Value::Int(3));
+    assert_eq!(tx.added(last).unwrap()[0].value, Value::Int(3));
     let b = tx.op(first).unwrap().unwrap();
     assert_eq!(b.field_name.as_deref(), Some("b"));
     assert_eq!(tx.op(first - 1).unwrap().unwrap().field_name.as_deref(), Some("a"));
@@ -403,7 +407,7 @@ fn pruning_removes_operations_and_their_empty_labels() {
     let store: &dyn Store = &conn;
     assert_eq!(store.counts().unwrap(), (1, 1));
     assert!(store.op(all[2].id).unwrap().is_some());
-    assert!(store.snapshots(all[0].id, true).unwrap().is_empty(), "snapshots go too");
+    assert!(store.added(all[0].id).unwrap().is_empty(), "snapshots go too");
 }
 
 /// A name too long to key whole (LMDB caps a key at 511 bytes) is still one

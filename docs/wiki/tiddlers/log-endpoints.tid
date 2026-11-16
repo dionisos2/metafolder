@@ -31,7 +31,7 @@ with the same key go in it; a read opens nothing. A key that is not 32 hex digit
 |`limit` |— |at most this many operations, the newest |
 |`labels` |— |at most this many labels (each operation counted in its innermost one), the newest — whole unless `limit` cuts the oldest |
 |`since`, `until` |— |only operations written within (Unix ms) |
-|`include_snapshots` |`false` |each operation with `snapshots_before`/`snapshots_after`, and `before_known` (`false` — `snapshots_before` then empty — for a deletion whose rows are lost, [[Mass operations in the log]]) |
+|`include_snapshots` |`false` |each operation with `snapshots_before` (the rows it took off; the log keeps no state a write left, so there is no `snapshots_after` since API 28), and `before_known` (`false` — `snapshots_before` then empty — for a deletion whose rows are lost, [[Mass operations in the log]]) |
 
 ```
 {"head": 3, "first": 1,
@@ -64,7 +64,7 @@ empty, and a client falls back to a full refresh. The GUI's change feed is built
 `GET /log/labels/:id` always includes snapshots (it is for the detail view):
 `{"label": {"id", "name", "description", "parent", "created", "ancestors", "children",
 "is_head", "operation_count"}, "operations": [{"id", "label_id", "timestamp", "origin",
-"op_type", "entity_uuid", "field_name", "snapshots_before", "snapshots_after"}, …]}`, a
+"op_type", "entity_uuid", "field_name", "snapshots_before"}, …]}`, a
 snapshot being a row in column form
 (`{"field_name": "rating", "value_type": "int", "value_int": 3}`). Only
 the label's ''own'' operations are listed — its children are labels of their own. A label

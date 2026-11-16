@@ -15,9 +15,8 @@ fn op_json(
 pub(super) fn snapshots_json(
     conn: &dyn crate::store::Store,
     op_id: i64,
-    is_new: i64,
 ) -> Result<serde_json::Value, ApiError> {
-    Ok(crate::log_view::snapshots_json(conn, op_id, is_new != 0)?)
+    Ok(crate::log_view::snapshots_json(conn, op_id)?)
 }
 
 /// A label with its ancestors, innermost first (`GET /labels/:id`).
@@ -393,17 +392,16 @@ pub(super) async fn prune_log(
     .await
 }
 
-/// Resolves the `mfr_path` of one operation snapshot to an absolute path, for
+/// Resolves the `mfr_path` among `rows` to an absolute path, for
 /// the `from`/`to` of a `move_file` action — as its exact bytes, which is what
 /// a client moves (doc "Tree names").
 pub(super) fn snapshot_abs_path(
     conn: &dyn crate::store::Store,
     cache: &crate::forest::Forest,
     root: &std::path::Path,
-    op_id: i64,
-    is_new: i64,
+    rows: Vec<crate::rows::FieldRow>,
 ) -> Result<Option<metafolder_core::metarecord::TreePath>, ApiError> {
-    for row in conn.snapshots(op_id, is_new != 0)? {
+    for row in rows {
         if row.name == "mfr_path" {
             if let Value::TreeRef { parent, name } = row.value {
                 let parent_rel = match parent {

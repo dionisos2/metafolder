@@ -42,10 +42,9 @@ is kept on the labels, not found by reading operations):
 
 Going into an operation shows it in place of the list: its type, field and `undo of op N`
 badge, the metarecord it wrote with that metarecord's ''current'' path — clicking the uuid
-selects it and shows it in the other slot — and a before/after table: one row per field
-name, a name's values compared as a set (fields are a multi-map), rows marked added,
-removed or changed. Fields the operation recorded without changing are hidden, with a
-count, unless `log:toggle unchanged` (the ''Unchanged fields'' checkbox). A
+selects it and shows it in the other slot — and a table of the rows the operation took
+off (its ''before''; the log keeps no state a write left, [[Log storage]]): one row per field
+name, its values side by side. An append took nothing off, and shows no row. A
 `tree_ref` value is shown as the path it names. It is read again with the log, so a revert
 shows at once.
 

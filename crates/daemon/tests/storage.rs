@@ -374,9 +374,9 @@ fn test_create_record_writes_log() {
     assert_eq!(op.op_type, "create_metarecord");
     assert_eq!(op.entity_uuid, m.uuid);
 
-    // After-snapshot contains the created field rows; no before rows.
-    assert_eq!(conn.snapshots(op.id, false).unwrap().len(), 0);
-    assert_eq!(conn.snapshots(op.id, true).unwrap().len(), 1);
+    // A creation took nothing off, and the log keeps no state it left.
+    assert_eq!(conn.snapshots(op.id).unwrap().len(), 0);
+    assert_eq!(conn.added(op.id).unwrap().len(), 0);
 
     // HEAD points at the operation.
     assert_eq!(conn.head().unwrap(), Some(op.id));
@@ -405,11 +405,9 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
     assert_ne!(got.version, m.version, "the write moves the version");
     assert_eq!(got.version, version_of_content(&conn, m.uuid));
 
-    // Log: before-snapshot has the two old rows, after-snapshot the new one.
+    // Log: the before-snapshot has the two old rows.
     let op = ops_of_type(&conn, "set_field").pop().expect("a set_field operation");
-    let counts =
-        (conn.snapshots(op.id, false).unwrap().len(), conn.snapshots(op.id, true).unwrap().len());
-    assert_eq!(counts, (2, 1));
+    assert_eq!(conn.snapshots(op.id).unwrap().len(), 2);
     assert_eq!(
         conn.version_before_label(op.label_id, m.uuid).unwrap(),
         Some(m.version),
@@ -514,7 +512,7 @@ fn test_delete_record_removes_everything_and_snapshots_before() {
     assert!(conn.version(m.uuid).unwrap().is_none());
 
     let op = ops_of_type(&conn, "delete_metarecord").pop().expect("a delete operation");
-    assert_eq!(conn.snapshots(op.id, false).unwrap().len(), 2);
+    assert_eq!(conn.snapshots(op.id).unwrap().len(), 2);
 }
 
 // ── Writer: write grouping and HEAD chain ──────────────────────────────────
@@ -571,7 +569,17 @@ fn test_large_revision_chain_across_bulk_chunks() {
         if i > 0 {
             assert_eq!(op.id, ops[i - 1].id + 1, "id sequence at op {i}");
         }
-        assert_eq!(conn.snapshots(op.id, true).unwrap().len(), 1, "after-snapshot of op {i}");
+        // A new field: nothing taken off, and the row it wrote is its version delta.
+        assert_eq!(conn.snapshots(op.id).unwrap().len(), 0, "before-snapshot of op {i}");
+        let wrote = metafolder_daemon::rows::FieldRow {
+            name: format!("f{i}"),
+            value: Value::Int(i as i64),
+        };
+        assert_eq!(
+            conn.version_delta(op.id).unwrap(),
+            metafolder_daemon::version::rows_sum(&[wrote]),
+            "version delta of op {i}"
+        );
     }
     assert_eq!(conn.head().unwrap(), Some(ops.last().unwrap().id));
 }

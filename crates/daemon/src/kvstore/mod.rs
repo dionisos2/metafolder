@@ -322,8 +322,10 @@ fn key(parts: &[&[u8]]) -> Vec<u8> {
 /// before the reverts of an operation were indexed; 6: a forest entry
 /// without its metarecord's dense id; 7: a forest entry holding uuid · row id
 /// · dense id, the rows one key each in `field_cells`; 8: a record's rows under
-/// one key, its dense id, in `records`).
-const LAYOUT: i64 = 9;
+/// one key, its dense id, in `records`; 9: the labels a label reverts, in
+/// `label_reverts`; 10: an operation keeps its version delta and not the rows
+/// it left).
+const LAYOUT: i64 = 10;
 
 /// Where the dense id starts in a forest entry's value: uuid · dense id. The
 /// id is what tells a position from one a deleted metarecord left behind,
@@ -509,10 +511,9 @@ fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
         .opt_bytes(op.origin.as_deref().map(str::as_bytes))
         .bytes(op.op_type.as_str().as_bytes())
         .bytes(op.entity.as_bytes())
-        // Where the entity's versions before and after were, until they
-        // stopped being recorded (doc "Log storage"): two absent integers.
-        .opt_int(None)
-        .opt_int(None)
+        // What the operation added to its entity's version; a stub has no
+        // one number for its records (doc "Log storage").
+        .opt_int(Some(op.delta as i64))
         .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
         .opt_int(op.reverts_op_id);
     out.0
@@ -522,8 +523,7 @@ fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
     let mut r = In(b);
     let (label_id, timestamp, origin) = (r.int()?, r.int()?, r.opt_string()?);
     let (op_type, entity_uuid) = (r.string()?, uuid_of(r.bytes()?));
-    // The versions an older store recorded: read past.
-    r.opt_int()?;
+    // The version delta: read by [`op_delta`].
     r.opt_int()?;
     Ok(OpRow {
         id,
@@ -535,6 +535,18 @@ fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
         field_name: r.opt_string()?,
         reverts_op_id: r.opt_int()?,
     })
+}
+
+/// What an ordinary operation added to its entity's version, from its stored
+/// form (a stub has none).
+fn op_delta(v: &[u8]) -> Result<Option<i64>> {
+    let mut r = In(v);
+    r.int()?;
+    r.int()?;
+    r.opt_bytes()?;
+    r.bytes()?;
+    r.bytes()?;
+    r.opt_int()
 }
 
 /// An operation's timestamp, from its stored form (the second field).
@@ -1380,9 +1392,17 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.op(id))
             }
-            fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
+            fn snapshots(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.snapshot_rows(op_id, after))
+                $with(&mut |$read: &Read| $read.snapshot_rows(op_id))
+            }
+            fn added(&self, op_id: i64) -> Result<Vec<FieldRow>> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.added_rows(op_id))
+            }
+            fn version_delta(&self, op_id: i64) -> Result<u64> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.version_delta(op_id))
             }
             fn before_known(&self, op_id: i64) -> Result<bool> {
                 let $me = self;
@@ -1894,7 +1914,8 @@ impl KvStore {
     ///   `op_children`, `restorations`), and the sequence before it was split
     ///   by origin (3), the one grouped by writes (4), and the one with no
     ///   index of its reverts (5), the one with no marks on its labels for the
-    ///   labels they revert (6 to 8). The log is emptied, the metarecords kept
+    ///   labels they revert (6 to 8), the one whose operations carry no version delta
+    ///   and keep the rows they left (9). The log is emptied, the metarecords kept
     ///   (user decision, October and November 2026; doc "The operation log").
     ///
     /// A new store has nothing to move and only records the layout. Answers
@@ -2022,7 +2043,7 @@ impl KvStore {
             // what a label says of the labels it reverts, which an older log has
             // not: the log is emptied rather than converted, user decision,
             // November 2026).
-            if from.is_none_or(|layout| layout <= 8) {
+            if from.is_none_or(|layout| layout <= 9) {
                 for old in gone.into_iter().flatten() {
                     old.clear(w.unjournaled())?;
                 }
@@ -2567,7 +2588,11 @@ impl WriteTxn for KvTxn<'_> {
         for (i, op) in ops.iter().enumerate() {
             let id = base + i as i64;
             t.ops.put(&mut w, &be(id), &enc_op(op, label, timestamp))?;
-            for (after, rows) in [(0u8, &op.before), (1u8, &op.after)] {
+            // What the write took off, and — of an append alone — the value
+            // it added, which a revert takes off in its turn.
+            let added: &[FieldRow] =
+                if op.op_type == crate::log::OpType::AppendField { &op.after } else { &[] };
+            for (after, rows) in [(0u8, &op.before[..]), (1u8, added)] {
                 for (n, row) in rows.iter().enumerate() {
                     let k = key(&[&be(id), &[after], &(n as u32).to_be_bytes()]);
                     t.snaps.put(&mut w, &k, &enc_row(row))?;

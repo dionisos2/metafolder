@@ -127,9 +127,17 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::op($conn, id)
             }
-            fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
+            fn snapshots(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
-                Log::snapshots($conn, op_id, after)
+                Log::snapshots($conn, op_id)
+            }
+            fn added(&self, op_id: i64) -> Result<Vec<FieldRow>> {
+                let $me = self;
+                Log::added($conn, op_id)
+            }
+            fn version_delta(&self, op_id: i64) -> Result<u64> {
+                let $me = self;
+                Log::version_delta($conn, op_id)
             }
             fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;
@@ -459,8 +467,15 @@ pub trait Log {
     fn head(&self) -> Result<Option<i64>>;
     /// One operation.
     fn op(&self, id: i64) -> Result<Option<OpRow>>;
-    /// An operation's snapshot rows: the state after it (`after`) or before.
-    fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>>;
+    /// The rows an operation took off its record: what it replaced, removed
+    /// or deleted (its *before*; the log keeps no *after*).
+    fn snapshots(&self, op_id: i64) -> Result<Vec<FieldRow>>;
+    /// The rows an `append_field` operation added — what a revert takes off;
+    /// none for any other operation.
+    fn added(&self, op_id: i64) -> Result<Vec<FieldRow>>;
+    /// What the operation added to its entity's version (doc "Metarecord
+    /// version"): subtracted, it takes the version back before the operation.
+    fn version_delta(&self, op_id: i64) -> Result<u64>;
     /// Whether the rows the operation took off its record (its before
     /// snapshot) are known. Not when the operation is a deletion whose record
     /// the store still holds and which was written to since — by anything but
@@ -852,8 +867,7 @@ pub mod derive {
 /// [`Log::version_before_label`], for any store: the entity's version now —
 /// that of a metarecord without rows once it is deleted, which is what its
 /// deletion left of the sum — and each of its operations since the label's
-/// first, newest first, taken back: the terms of what it wrote subtracted,
-/// those of what it removed added.
+/// first, newest first, taken back: what it added to the version subtracted.
 pub fn version_before_label<S: Rows + Log + ?Sized>(
     store: &S,
     label: i64,
@@ -870,9 +884,7 @@ pub fn version_before_label<S: Rows + Log + ?Sized>(
         None => crate::version::base(entity),
     };
     for op in store.entity_ops_after(entity, first.id - 1)?.iter().rev() {
-        let (wrote, removed) = (store.snapshots(op.id, true)?, store.snapshots(op.id, false)?);
-        let (add, sub) = crate::version::delta(&wrote, &removed);
-        version = crate::version::apply(version, add, sub);
+        version = crate::version::apply(version, 0, store.version_delta(op.id)?);
     }
     Ok(Some(version))
 }
@@ -904,8 +916,14 @@ pub struct NewOp {
     pub op_type: OpType,
     pub entity: Uuid,
     pub field_name: Option<String>,
+    /// The rows it took off the record.
     pub before: Vec<FieldRow>,
+    /// The rows it left: the value an append added is kept (a revert takes it
+    /// off), the rest is only what the write's effects and its version
+    /// delta are computed from.
     pub after: Vec<FieldRow>,
+    /// What it added to the entity's version ([`crate::version::net`]).
+    pub delta: u64,
     /// The operation this one undoes, when a revert writes it.
     pub reverts_op_id: Option<i64>,
     /// Who wrote it (`log::ORIGIN_WATCHER`, `ORIGIN_TRASH`), `None` for a

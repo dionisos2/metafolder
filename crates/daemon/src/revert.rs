@@ -152,58 +152,77 @@ pub enum Changed {
     Unlogged,
 }
 
-/// Whether the cell `op` wrote still holds what it left there — a warning
+/// Whether the cell `op` wrote still holds what it left there (for the writes
+/// that leave one: the log keeps no state an operation left, so it is a later
+/// operation on the cell that says it changed) — a warning
 /// for the plan, never a refusal: the revert goes back to what `op` replaced
 /// whatever was written since (doc "Reverting onto the current state").
 pub fn changed_since<S: crate::store::Store + ?Sized>(store: &S, op: &OpRow) -> Result<Changed> {
-    let after = store.snapshots(op.id, true)?;
     let entity = op.entity_uuid;
-    let unchanged = match op.op_type.as_str() {
-        "create_metarecord" | "set_metarecord" => {
-            store.exists(entity)? && same_rows(&store.rows(entity)?, &after)
-        }
-        "delete_metarecord" => !store.exists(entity)?,
+    // The log keeps no state left by an operation: an append says what it
+    // added and a removal what it took, which the rows are compared with; for
+    // the others, the cell is as the operation left it unless a later
+    // operation touched it.
+    let checked = match op.op_type.as_str() {
+        "delete_metarecord" => Some(!store.exists(entity)?),
         "append_field" => {
             let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
             let now = store.rows_named(entity, name)?;
-            after.iter().all(|a| now.iter().any(|r| r.value == a.value))
+            Some(store.added(op.id)?.iter().all(|a| now.iter().any(|r| r.value == a.value)))
         }
         "delete_field" => {
             let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
-            let before = store.snapshots(op.id, false)?;
+            let before = store.snapshots(op.id)?;
             let now = store.rows_named(entity, name)?;
-            !before.iter().any(|b| now.iter().any(|r| r.value == b.value))
+            Some(!before.iter().any(|b| now.iter().any(|r| r.value == b.value)))
         }
-        _ => {
-            let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
-            same_rows(&store.rows_named(entity, name)?, &after)
-        }
+        _ => None,
     };
-    if unchanged {
+    if checked == Some(true) {
         return Ok(Changed::No);
     }
     let cell = Cell::of(op);
-    let last = store
-        .entity_ops_after(entity, op.id)?
-        .into_iter()
-        .rev()
-        .find(|o| cell.intersects(&Cell::of(o)));
-    Ok(last.map(Changed::By).unwrap_or(Changed::Unlogged))
+    let later = store.entity_ops_after(entity, op.id)?;
+    // The operations that revert `op`, the revert of that, and so on: each
+    // writes the cell back as the one before it left it, so one at an even
+    // depth (a redo) leaves it as `op` did, whatever was written in between.
+    let mut chain: std::collections::HashMap<i64, usize> = [(op.id, 0)].into();
+    for o in &later {
+        if let Some(depth) = o.reverts_op_id.and_then(|r| chain.get(&r)).copied() {
+            chain.insert(o.id, depth + 1);
+        }
+    }
+    let last = later.into_iter().rev().find(|o| cell.intersects(&Cell::of(o)));
+    if last.as_ref().is_some_and(|o| chain.get(&o.id).is_some_and(|d| d % 2 == 0)) {
+        return Ok(Changed::No);
+    }
+    Ok(match (last, checked) {
+        (Some(o), _) => Changed::By(o),
+        // The value is not there and nothing logged says why.
+        (None, Some(_)) => Changed::Unlogged,
+        // Nothing was written to the cell since.
+        (None, None) => Changed::No,
+    })
 }
 
-/// The same `(name, value)` multiset, row ids aside.
-fn same_rows(a: &[FieldRow], b: &[FieldRow]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut left: Vec<&FieldRow> = b.iter().collect();
-    a.iter().all(|row| match left.iter().position(|r| r.name == row.name && r.value == row.value) {
-        Some(i) => {
-            left.swap_remove(i);
-            true
+/// The rows of `name` that `op` left on its entity, which the log does not
+/// keep: what the next operation on the cell took off, or the rows now when
+/// none came after. Right for the operations that replace the cell — a move, a
+/// `set_field` — and for a cell a later append only adds to, it says what the
+/// append found (nothing).
+pub fn left_by<S: crate::store::Store + ?Sized>(
+    store: &S,
+    op: &OpRow,
+    name: &str,
+) -> Result<Vec<FieldRow>> {
+    let cell = Cell { entity: op.entity_uuid, field: Some(name.to_string()) };
+    for later in store.entity_ops_after(op.entity_uuid, op.id)? {
+        if cell.intersects(&Cell::of(&later)) {
+            let before = store.snapshots(later.id)?;
+            return Ok(before.into_iter().filter(|r| r.name == name).collect());
         }
-        None => false,
-    })
+    }
+    store.rows_named(op.entity_uuid, name)
 }
 
 /// The filesystem action crossing an operation requires, if any — what the
@@ -346,7 +365,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         // is computed from is the state it is written into. Each inverse needs
         // one side of the snapshot at most, and reading a side costs a key
         // even when empty: only the side used is read.
-        let before = |writer: &Writer| writer.store().snapshots(op.id, false);
+        let before = |writer: &Writer| writer.store().snapshots(op.id);
         match op.op_type.as_str() {
             "create_metarecord" => {
                 // Already gone: there is nothing left to take back.
@@ -381,7 +400,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                 writer.set_record(op.entity_uuid, rows_to_fields(&before))?;
             }
             "append_field" => {
-                for row in &writer.store().snapshots(op.id, true)? {
+                for row in &writer.store().added(op.id)? {
                     writer.delete_fields_valued(op.entity_uuid, &row.name, &row.value)?;
                 }
             }
