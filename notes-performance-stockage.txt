@@ -12,7 +12,7 @@ REPRISE — à lire en premier dans une nouvelle session (15 nov. 2026)
 ÉTAT : les dix étapes du plan (sections plus bas) et leurs extensions — 11 et
 11b (suppression de masse, corbeille, check qui replie), 12 (résumés de labels,
 `mf log labels`, panneau log de la GUI) — sont FAITES et commitées sur la
-branche `storage-redesign` (dernier commit de code : 3683b3b3 ; `check.sh`
+branche `storage-redesign` (dernier commit de code : 17db9156 ; `check.sh`
 vert à chaque commit). benchmarks/history/dionisos_portable.jsonl (les mesures HDD de l'utilisateur)
 est désormais dans .gitignore (non suivi, décision utilisateur, 15 nov. 2026).
 
@@ -68,12 +68,18 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    compté. FAIT AUSSI : annuler un ajout/retrait de masse (>= 16 ops d'un stub) =
    un stub inverse dont l'op k annule l'op reverts+k (créneau reverts_op_id de
    l'en-tête du stub, sans changement de disposition ; index reverted_by écrit
-   par op) : 5 000 records 425 ms -> 11 ms. PIÈGE trouvé par le e2e mass-delete (b1a553b7) : un repli d'une suppression rendue en partie marquait tout le stub in_snaps ; les lignes se lisent maintenant dans les snaps d'abord, puis dans le record (ou la chaîne de reverts qui l'a re-supprimé). RESTE : annuler une suppression REPLIÉE (recréation en lot, ids réutilisables : ids/uuids ne sont pas effacés) ; règle « valeur avant inconnue » du panneau log (décision user :
+   par op) : 5 000 records 425 ms -> 11 ms. PIÈGE trouvé par le e2e mass-delete (b1a553b7) : un repli d'une suppression rendue en partie marquait tout le stub in_snaps ; les lignes se lisent maintenant dans les snaps d'abord, puis dans le record (ou la chaîne de reverts qui l'a re-supprimé). FAIT AUSSI (bee0feb8, 16 nov. 2026) : annuler une suppression REPLIÉE = remise en bloc des records sous leurs propres ids (folded_records ; repli record par record si l'id/l'uuid/la position de forêt est pris, ou après réindexation ; non mesuré, pas de scénario de bench ; le chemin « en attente » ne contrôle pas non plus la prise d'une position entre-temps). Règle « valeur avant inconnue » du panneau log (décision user :
    une opération postérieure sur le record, autre que l'annulation, rend l'« avant »
    de la suppression inconnu) — FAITE (before_known, 1b51bb64) ; les « après » des snapshots
-   (décision user du début de refonte : supprimés) ne le sont PAS dans le code
-   ni dans le wiki (Log storage, Log endpoints) : à trancher/faire.
-4. LAYOUT 9 (journal vidé à l'ouverture d'un store de disposition <= 8,
+   sont SUPPRIMÉS (17db9156, 16 nov. 2026) : une op ne garde que son « avant »,
+   la valeur ajoutée d'un append_field et son delta de version (un slot
+   opt_int) ; `snapshots_after` retiré de l'API (API_VERSION 28) ; le panneau
+   log et `mf log show` n'affichent que l'« avant » (plus de bascule
+   « unchanged »). changed_since compare à la valeur ajoutée / l'avant / une op
+   postérieure sur la cellule (le redo, reconnu par la chaîne reverts_op_id,
+   n'est pas un changement). Précision perdue acceptée : une op postérieure qui
+   réécrit la même valeur est signalée « modifiée ». Wiki mis à jour.
+4. LAYOUT 10 (17db9156 : journal vidé aussi pour <= 9) ; LAYOUT 9 (journal vidé à l'ouverture d'un store de disposition <= 8,
    décision de l'utilisateur) : les dépôts de développement perdent leur
    historique au premier lancement du nouveau daemon. Testé (kv_layout.rs :
    dispositions 6, 8 et arbre) ; rien d'autre à faire.
