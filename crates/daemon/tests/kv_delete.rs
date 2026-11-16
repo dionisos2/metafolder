@@ -351,3 +351,35 @@ fn a_write_to_many_records_by_ids_never_names_a_deleted_one() {
     }
     check(&r.store);
 }
+
+/// Delete, give back, add a field, delete, then revert the first deletion:
+/// what the indexes still hold is what the second deletion took (with the
+/// field), and the record must come back as the first one took it (without).
+#[test]
+fn reverting_an_older_deletion_after_the_record_changed_gives_its_rows() {
+    use metafolder_daemon::store::{Log, Rows};
+    let mut r = repo();
+    let id = r.store.dense_ids(&[r.file]).unwrap();
+    let before = Rows::rows(&r.store, r.file).unwrap();
+    let head = r.store.head().unwrap();
+    delete(&mut r.store, r.file);
+    let first_deletion = r.store.ops_after(head.unwrap_or(0)).unwrap().pop().unwrap();
+    assert_eq!(first_deletion.op_type, "delete_metarecord");
+    common::kv::revert_since(&mut r.store, head);
+    let mut w = Writer::begin(&mut r.store, None).unwrap();
+    w.append_field(r.file, "rate", Value::Int(5)).unwrap();
+    w.commit().unwrap();
+    delete(&mut r.store, r.file);
+    check(&r.store);
+
+    let mut w = Writer::begin(&mut r.store, None).unwrap();
+    metafolder_daemon::revert::apply(&mut w, &[first_deletion]).unwrap();
+    w.commit().unwrap();
+    assert_eq!(r.store.dense_ids(&[r.file]).unwrap(), id);
+    let mut got = Rows::rows(&r.store, r.file).unwrap();
+    let mut want = before;
+    got.sort_by(|a, b| a.name.cmp(&b.name));
+    want.sort_by(|a, b| a.name.cmp(&b.name));
+    assert_eq!(got, want, "no `rate` row: the first deletion did not take it");
+    check(&r.store);
+}
