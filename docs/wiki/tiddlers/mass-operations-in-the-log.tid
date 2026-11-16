@@ -94,7 +94,9 @@ An undo of a deletion still pending does not recreate the records one by one: th
 * the state is the one the deletion left: every operation written since is itself in the revert, and ahead of it;
 * no record is alive already, no parent of a given-back record is gone, and every field they hold still has a type counted.
 
-Anything else — the fold has written the records out, a few records, a write in between — goes one by one as before. Undoing the undo is then an ordinary deletion of each record.
+A deletion the fold has already written out of the store is given back in one pass too, from the rows the fold froze in the snapshots: the same `mass_undelete_log` writes each record under its own dense id again (the ids and uuids tables were never emptied, and the index entries filed under the id were never dropped), puts its key back in `metarecords`, gives its rows back to the histograms and its positions to the forest, then does what the pending case does. Besides the three conditions above, each record must be as the fold left it — its id still its uuid's, no record stored under the id or the uuid — and no position it held taken by a live record since. A reindex numbers the ids again and turns the stub into one that holds uuids: its ids mean nothing, and the records go one by one.
+
+Anything else — a few records, a write in between, a taken position, a reindex since — goes one by one as before. Undoing the undo is then an ordinary deletion of each record.
 
 The records are alive again and may be written to, while the log reads the rows of a pending deletion in the record itself. So once an operation that is not the deletion's own revert comes after the deletion on that record (operation numbers say so), the rows the deletion took are ''unknown'': `before_known` is `false` ([[Log endpoints]]), the log panel and `mf log show` say so instead of showing today's rows, and reverting that deletion is refused.
 

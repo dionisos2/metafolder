@@ -935,6 +935,15 @@ impl KvTxn<'_> {
         Ok(())
     }
 
+    /// The histogram counts a row again: what a deletion's fold took off, put
+    /// back with the record.
+    pub(super) fn add_hist(&self, field: &str, value: &Value) -> Result<()> {
+        if let Some(bucket) = value_key(value).as_deref().and_then(hist_bucket) {
+            self.bump(self.t.hist, &hist_key(field, &bucket), 1)?;
+        }
+        Ok(())
+    }
+
     /// A row of `uuid` goes with its metarecord, which is being removed whole
     /// (not [`Self::derive_row`], which unpicks every entry of the row): only
     /// what no universe can sift is kept exact — the histograms, which count

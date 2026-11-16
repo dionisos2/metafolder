@@ -309,6 +309,111 @@ fn undoing_a_pending_mass_delete_only_gives_the_universe_back() {
     assert!(store.check().unwrap().is_empty());
 }
 
+/// Undoing a deletion the fold already wrote out of the store puts the records
+/// back in one pass: their dense ids are still theirs, so the indexes that
+/// name them are right as they stand, and no id is made, per record, for a
+/// uuid that had one.
+#[test]
+fn undoing_a_folded_mass_delete_keeps_the_dense_ids() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 80);
+    let ids_before = store.dense_ids(&uuids).unwrap();
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids[..50]).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    while store.fold_step().unwrap() {}
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 30);
+
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+
+    let written = store.last_write_keys();
+    for table in ["ids", "uuids", "kids", "forest"] {
+        assert_eq!(written.get(table), None, "{table} untouched: {written:?}");
+    }
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
+    assert_eq!(store.dense_ids(&uuids).unwrap(), ids_before, "the records keep their ids");
+    let undone = store.ops_after(ops.last().unwrap().id).unwrap();
+    assert_eq!(undone.len(), 50, "one operation per record");
+    for (op, reverted) in undone.iter().zip(ops.iter().rev()) {
+        assert_eq!(op.op_type, "create_metarecord");
+        assert_eq!(op.reverts_op_id, Some(reverted.id));
+    }
+    for &u in &uuids {
+        assert_eq!(Rows::rows(&store, u).unwrap().len(), 2);
+    }
+    // The rows the deletion took are still the log's to say.
+    assert!(store.before_known(ops[0].id).unwrap());
+    while store.fold_step().unwrap() {}
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
+    sound(&store);
+    assert!(store.check().unwrap().is_empty());
+}
+
+/// A reindex numbers the ids again: the ids a folded deletion named mean
+/// nothing after it, and the records come back one by one, whole.
+#[test]
+fn undoing_a_folded_mass_delete_after_a_reindex_gives_the_records_back_one_by_one() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 60);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids[..40]).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    while store.fold_step().unwrap() {}
+    store.reindex().unwrap();
+
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 60);
+    for &u in &uuids {
+        assert_eq!(Rows::rows(&store, u).unwrap().len(), 2);
+    }
+    sound(&store);
+}
+
+/// A position a live record took since the fold is not given back: the
+/// records are put back one at a time, and the one in conflict is refused as
+/// any revert onto a taken position is.
+#[test]
+fn undoing_a_folded_mass_delete_whose_position_was_taken_is_not_done_in_bulk() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let (root, kids) = write(&mut store, |w| {
+        let root = w.create_metarecord(vec![tree(None, "root")]).unwrap().uuid;
+        let kids: Vec<Uuid> = (0..30)
+            .map(|i| w.create_metarecord(vec![tree(Some(root), &format!("k{i}"))]).unwrap().uuid)
+            .collect();
+        (root, kids)
+    });
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&kids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    while store.fold_step().unwrap() {}
+    let taker =
+        write(&mut store, |w| w.create_metarecord(vec![tree(Some(root), "k3")]).unwrap().uuid);
+
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    assert!(revert::apply(&mut w, &ops).is_err(), "k3 is taken");
+    drop(w);
+    assert!(Rows::exists(&store, taker).unwrap());
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 2);
+    sound(&store);
+}
+
 /// The giving back leaves the indexes as a rebuild would: the type counts of
 /// a field whose every holder was deleted, the parents of a folder's children,
 /// and what is left pending of the deletion still folds.

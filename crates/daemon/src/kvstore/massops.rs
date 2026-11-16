@@ -839,20 +839,30 @@ impl KvTxn<'_> {
             let txn = self.txn.borrow();
             self.read_in(&txn, &mut |read: &Read| read.stub_at(first_op))?
         };
-        let Some(stub) = stub.filter(|s| s.delete && !s.in_snaps && s.covers(last_op)) else {
+        let Some(stub) = stub.filter(|s| s.delete && s.covers(last_op)) else {
             return Ok(None);
         };
         let Who::Ids(all) = &stub.who else { return Ok(None) };
-        // The mark that names every one of these operations.
-        let marks = {
-            let txn = self.txn.borrow();
-            super::mass::read_part(&self.t, &txn, DELETES_PART)?
-        };
-        let Some(mark) = marks.into_iter().find(|m| {
-            let (from, to) = (m.op as i64, m.op as i64 + m.ids.len() as i64 - 1);
-            from <= first_op && last_op <= to
-        }) else {
-            return Ok(None);
+        // The fold wrote the records out of the store when the stub holds
+        // their rows (`in_snaps`): they are put back from there.
+        let folded = stub.in_snaps;
+        // The mark that names every one of these operations, which a fold
+        // took away.
+        let mark = if folded {
+            None
+        } else {
+            let marks = {
+                let txn = self.txn.borrow();
+                super::mass::read_part(&self.t, &txn, DELETES_PART)?
+            };
+            let found = marks.into_iter().find(|m| {
+                let (from, to) = (m.op as i64, m.op as i64 + m.ids.len() as i64 - 1);
+                from <= first_op && last_op <= to
+            });
+            if found.is_none() {
+                return Ok(None);
+            }
+            found
         };
         let (a, n) = ((first_op - stub.first) as usize, (last_op - first_op + 1) as usize);
         let ids: RoaringBitmap = all.iter().skip(a).take(n).collect();
@@ -886,6 +896,14 @@ impl KvTxn<'_> {
             }
             counts.push((field, types, back));
         }
+        // What the fold took out of the store: the records, from the rows the
+        // log froze. Each must still be the one it was — its id its uuid's, no
+        // record under either — and a position it held not taken since.
+        let revived =
+            if folded { self.folded_records(&stub, all, first_op, last_op)? } else { None };
+        if folded && revived.is_none() {
+            return Ok(None);
+        }
         let alive = &universe | &ids;
         let mut parents: Vec<(String, u32)> = Vec::new();
         for field in self.fields_with_sets(REFERRERS)? {
@@ -916,6 +934,17 @@ impl KvTxn<'_> {
             touches_watch |= !(&self.holder_ids_now(field)? & &ids).is_empty();
         }
         // What is read is settled: the writes.
+        for (id, uuid, rows) in revived.iter().flatten() {
+            self.put_record(*id, rows)?;
+            self.t.metarecords.put(&mut self.txn.borrow_mut(), uuid.as_bytes(), &[])?;
+            for row in rows {
+                self.add_hist(&row.name, &row.value)?;
+                if let Some(k) = Self::forest_key(&row.name, &row.value) {
+                    let v = key(&[uuid.as_bytes(), &id.to_be_bytes()]);
+                    self.t.forest.put(&mut self.txn.borrow_mut(), &k, &v)?;
+                }
+            }
+        }
         self.chunk_apply(SETS, &set_prefix(UNIVERSE, None), &ids, true)?;
         for (field, types, back) in counts {
             for ty in types {
@@ -925,6 +954,9 @@ impl KvTxn<'_> {
         for (field, parent) in parents {
             self.set_member(PARENTS, Some(&field), parent, true)?;
         }
+        let Some(mark) = mark else {
+            return Ok(Some(MassApplied { changed: ids, last_op, touches_watch }));
+        };
         // The mark keeps the operations it still names, each at its own number.
         let mut w = self.txn.borrow_mut();
         self.t.mass.delete(&mut w, &entry_key(DELETES_PART, mark.op))?;
@@ -944,6 +976,53 @@ impl KvTxn<'_> {
             self.t.mass.put(&mut w, &entry_key(DELETES_PART, entry.op), &entry.encode())?;
         }
         Ok(Some(MassApplied { changed: ids, last_op, touches_watch }))
+    }
+
+    /// The records the fold of a deletion wrote out of the store, for the
+    /// operations `first_op..=last_op` of `stub` (whose ids are `all`): each
+    /// `(id, uuid, rows)`, the rows being those the log froze. `None` when one
+    /// is not as the fold left it: a record stored under its id or its uuid
+    /// (given back, or not folded yet), an id that is no longer its uuid's, or
+    /// a position a live record took since.
+    fn folded_records(
+        &self,
+        stub: &Stub,
+        all: &RoaringBitmap,
+        first_op: i64,
+        last_op: i64,
+    ) -> Result<Option<Vec<(u32, Uuid, Vec<FieldRow>)>>> {
+        let at = (first_op - stub.first) as usize;
+        let n = (last_op - first_op + 1) as usize;
+        let mut out = Vec::with_capacity(n);
+        let txn = self.txn.borrow();
+        for (rank, id) in all.iter().skip(at).take(n).enumerate() {
+            let op = first_op + rank as i64;
+            let Some(uuid) = self.t.uuids.get(&txn, &id.to_be_bytes())? else { return Ok(None) };
+            let Ok(uuid) = Uuid::from_slice(uuid) else { return Ok(None) };
+            let named = self.t.ids.get(&txn, uuid.as_bytes())?;
+            if named != Some(&id.to_be_bytes()[..])
+                || self.t.metarecords.get(&txn, uuid.as_bytes())?.is_some()
+                || self.t.records.get(&txn, &id.to_be_bytes())?.is_some()
+            {
+                return Ok(None);
+            }
+            let prefix = key(&[&be(op), &[0u8]]);
+            let mut rows = Vec::new();
+            for e in self.t.snaps.prefix_iter(&txn, &prefix)? {
+                rows.push(dec_row(e?.1)?);
+            }
+            for row in &rows {
+                let Some(k) = Self::forest_key(&row.name, &row.value) else { continue };
+                if let Some(v) = self.t.forest.get(&txn, &k)? {
+                    let holder = super::derived::dense(&v[super::FOREST_ID..]);
+                    if holder != id && self.live_in(&txn, holder)? {
+                        return Ok(None);
+                    }
+                }
+            }
+            out.push((id, uuid, rows));
+        }
+        Ok(Some(out))
     }
 
     /// The parents of `field` that had a child among `gone` and have none
