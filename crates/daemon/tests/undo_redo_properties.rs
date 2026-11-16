@@ -633,13 +633,6 @@ async fn two_writes_are_undone_and_redone_as_a_stack() {
                     if first.deletes() && !matches!(second, Write::Create) {
                         continue;
                     }
-                    // Held by `a_mass_write_is_undone_on_a_record_deleted_and_restored_since`.
-                    if n > 16
-                        && matches!(first, Write::MassAdd | Write::MassRemove)
-                        && matches!(second, Write::DeleteOne)
-                    {
-                        continue;
-                    }
                     let fold = (i + j) % 2 == 0;
                     let case = format!("{first:?} then {second:?}, {n} records, fold {fold}");
                     let fx = fixture("stack", n).await;
@@ -671,7 +664,6 @@ async fn two_writes_are_undone_and_redone_as_a_stack() {
 /// brought back since — which holds again what the write left on it — must be
 /// undone like the others: undoing both, newest first, is the state before both.
 #[tokio::test]
-#[ignore = "bug: the one-pass undo of a mass add or remove misses a record deleted and restored since"]
 async fn a_mass_write_is_undone_on_a_record_deleted_and_restored_since() {
     for write in [Write::MassAdd, Write::MassRemove] {
         let fx = fixture("mass_deleted_since", 40).await;

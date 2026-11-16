@@ -835,6 +835,13 @@ impl KvTxn<'_> {
         if ids.len() != n as u64 {
             return Ok(None);
         }
+        // A record deleted since, then given back, is alive under another id
+        // (the id it had stays in the holders, which only the universe
+        // sifts): the revert by ids would miss it, and say it did it.
+        let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
+        if !ids.is_subset(&universe) {
+            return Ok(None);
+        }
         let opposite = if stub.kind == Kind::Add { Kind::Remove } else { Kind::Add };
         self.mass_log(
             opposite,
