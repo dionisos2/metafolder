@@ -68,7 +68,7 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    compté. FAIT AUSSI : annuler un ajout/retrait de masse (>= 16 ops d'un stub) =
    un stub inverse dont l'op k annule l'op reverts+k (créneau reverts_op_id de
    l'en-tête du stub, sans changement de disposition ; index reverted_by écrit
-   par op) : 5 000 records 425 ms -> 11 ms. RESTE : annuler une suppression REPLIÉE ; règle « valeur avant inconnue » du panneau log (décision user :
+   par op) : 5 000 records 425 ms -> 11 ms. PIÈGE trouvé par le e2e mass-delete (b1a553b7) : un repli d'une suppression rendue en partie marquait tout le stub in_snaps ; les lignes se lisent maintenant dans les snaps d'abord, puis dans le record (ou la chaîne de reverts qui l'a re-supprimé). RESTE : annuler une suppression REPLIÉE (recréation en lot, ids réutilisables : ids/uuids ne sont pas effacés) ; règle « valeur avant inconnue » du panneau log (décision user :
    une opération postérieure sur le record, autre que l'annulation, rend l'« avant »
    de la suppression inconnu) — FAITE (before_known, 1b51bb64) ; les « après » des snapshots
    (décision user du début de refonte : supprimés) ne le sont PAS dans le code
