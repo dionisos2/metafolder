@@ -367,6 +367,20 @@ impl KvTxn<'_> {
         self.deletes.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    pub(super) fn kept_stored(&self) -> bool {
+        self.kept.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Notes that the record of a deleted metarecord stays in the store until
+    /// a reindex: reads sift the records they find through the universe.
+    pub(super) fn keep_records(&self) -> Result<()> {
+        if !self.kept_stored() {
+            self.meta_put("kept", 1)?;
+            self.kept.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
     /// Whether a write to many records of `field` is open: its rows are not
     /// written into the records.
     pub(super) fn in_mass(&self, field: &str) -> bool {
@@ -503,14 +517,9 @@ impl KvTxn<'_> {
         for e in &entries {
             ids |= &e.ids;
         }
+        // A deleted record is folded too: its record says what the entries it
+        // keeps in the indexes describe, which a restoration relies on.
         for id in ids {
-            let live = {
-                let txn = self.txn.borrow();
-                self.live_in(&txn, id)?
-            };
-            if !live {
-                continue;
-            }
             let raw = match self.t.records.get(&self.txn.borrow(), &id.to_be_bytes())? {
                 Some(v) => Record::decode(v)?,
                 None => Record::default(),

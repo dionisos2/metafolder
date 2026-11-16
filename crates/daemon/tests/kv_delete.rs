@@ -125,7 +125,7 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
     for table in ["forest", "ids", "uuids", "parts", "kids", "grams"] {
         assert_eq!(written.get(table), None, "a deletion wrote to {table}: {written:?}");
     }
-    assert_eq!(written.get("records"), Some(&1), "the record's one key: {written:?}");
+    assert_eq!(written.get("records"), None, "the record keeps its key: {written:?}");
     // The universe, and nothing else: the folder still has children.
     assert_eq!(written.get("sets"), Some(&1), "{written:?}");
     check(&r.store);
@@ -381,5 +381,46 @@ fn reverting_an_older_deletion_after_the_record_changed_gives_its_rows() {
     got.sort_by(|a, b| a.name.cmp(&b.name));
     want.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(got, want, "no `rate` row: the first deletion did not take it");
+    check(&r.store);
+}
+
+#[test]
+fn a_deleted_record_keeps_its_rows_and_no_reader_sees_them() {
+    use metafolder_daemon::store::Rows;
+    let mut r = repo();
+    delete(&mut r.store, r.file);
+    assert!(!Rows::exists(&r.store, r.file).unwrap());
+    assert!(Rows::rows(&r.store, r.file).unwrap().is_empty());
+    assert!(Rows::rows_named(&r.store, r.file, "title").unwrap().is_empty());
+    // And a folder deleted with its files still there is refused, though its
+    // record, with its position, is kept.
+    let mut w = Writer::begin(&mut r.store, None).unwrap();
+    w.delete_metarecord(r.folder).unwrap();
+    assert!(w.commit().is_err());
+    check(&r.store);
+}
+
+#[test]
+fn a_record_is_given_back_under_its_id_when_the_log_forgot_its_deletion() {
+    use metafolder_daemon::store::Rows;
+    let mut r = repo();
+    let id = r.store.dense_ids(&[r.file]).unwrap();
+    let rows = Rows::rows(&r.store, r.file).unwrap();
+    delete(&mut r.store, r.file);
+    let target = r.store.head().unwrap().unwrap();
+    // A later operation, so that the deletion is older than the target.
+    let mut w = Writer::begin(&mut r.store, None).unwrap();
+    w.append_field(r.root, "note", Value::Int(1)).unwrap();
+    w.commit().unwrap();
+    let newer = r.store.head().unwrap().unwrap();
+    assert!(newer > target);
+    metafolder_daemon::log::prune(&mut r.store, newer).unwrap();
+    let mut w = Writer::begin(&mut r.store, None).unwrap();
+    w.create_metarecord_with_uuid(r.file, vec![Field::new("title", Value::String("again".into()))])
+        .unwrap();
+    w.commit().unwrap();
+    assert_eq!(r.store.dense_ids(&[r.file]).unwrap(), id);
+    assert_eq!(Rows::rows(&r.store, r.file).unwrap().len(), 1);
+    assert!(rows.len() > 1);
     check(&r.store);
 }

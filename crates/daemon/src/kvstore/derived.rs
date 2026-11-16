@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[path = "events.rs"]
 pub(super) mod events;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use heed::RoTxn;
 use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
@@ -55,8 +55,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket.
-pub(super) const DERIVED_VERSION: i64 = 14;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex.
+pub(super) const DERIVED_VERSION: i64 = 15;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -856,11 +856,7 @@ impl KvTxn<'_> {
                 self.set_member(RESERVED, None, reserved, false)?;
                 reserved
             }
-            Some(former) => {
-                let id = self.new_id(uuid.as_bytes())?;
-                self.move_target(former, id)?;
-                id
-            }
+            Some(_) => bail!("metarecord {uuid} was deleted: it is given back, not created"),
             None => self.new_id(uuid.as_bytes())?,
         };
         self.set_member(UNIVERSE, None, id, true)?;
@@ -868,37 +864,6 @@ impl KvTxn<'_> {
             if self.has_live_kids(id, &field, None)? {
                 self.set_member(PARENTS, Some(&field), id, true)?;
             }
-        }
-        Ok(())
-    }
-
-    /// Files under `to` what was filed under the target `from`: its
-    /// referrers and its descendants in every field that holds references,
-    /// and its children.
-    fn move_target(&self, from: u32, to: u32) -> Result<()> {
-        let mut fields: BTreeSet<String> = BTreeSet::new();
-        for entry in self.t.field_types.iter(&self.txn.borrow())? {
-            let (name, ty) = unesc(entry?.0)?;
-            if matches!(ty, b"ref" | b"tree_ref" | b"hierarchy_ref") {
-                fields.insert(String::from_utf8(name).context("a field name")?);
-            }
-        }
-        for field in &fields {
-            for prefix in [referrers_prefix, descendants_prefix] {
-                let ids = self.read_chunked(SETS, &prefix(field, from))?;
-                self.chunk_apply(SETS, &prefix(field, from), &ids, false)?;
-                self.chunk_apply(SETS, &prefix(field, to), &ids, true)?;
-            }
-        }
-        let mut w = self.txn.borrow_mut();
-        let mut kids = Vec::new();
-        for entry in self.t.kids.prefix_iter(&w, &from.to_be_bytes())? {
-            let (k, v) = entry?;
-            kids.push((k.to_vec(), v.to_vec()));
-        }
-        for (k, v) in kids {
-            self.t.kids.delete(&mut w, &k)?;
-            self.t.kids.put(&mut w, &[&to.to_be_bytes()[..], &k[4..]].concat(), &v)?;
         }
         Ok(())
     }
@@ -915,41 +880,36 @@ impl KvTxn<'_> {
     }
 
     /// A deleted metarecord comes back under the id it had (doc "Deleting a
-    /// metarecord in the store"): `rows` are the ones its deletion took, read
-    /// from the log. Everything the indexes hold about the id is still there,
-    /// so only what the deletion took off is given back: the record, the
-    /// universe, the counts, the forest keys and the parents. `false` — nothing
-    /// written — when the uuid never had an id or its metarecord exists.
-    pub(super) fn restore_deleted(
-        &self,
-        uuid: Uuid,
-        op: i64,
-        rows: &[crate::rows::FieldRow],
-    ) -> Result<bool> {
-        let Some(id) = self.id(uuid.as_bytes())? else { return Ok(false) };
+    /// metarecord in the store"): its record, which stays until a reindex, says
+    /// what the entries that stayed in the indexes describe, so only what the
+    /// deletion took off is given back: the record's number, the universe, the
+    /// counts, the forest keys and the parents. The rows it holds again are
+    /// returned; `None` — nothing written — when the uuid never had an id or its
+    /// metarecord exists.
+    pub(super) fn restore_deleted(&self, uuid: Uuid) -> Result<Option<Vec<crate::rows::FieldRow>>> {
+        let Some(id) = self.id(uuid.as_bytes())? else { return Ok(None) };
         if self.live_in(&self.txn.borrow(), id)? || self.reserved(id)? {
-            return Ok(false);
+            return Ok(None);
         }
-        // A record of a deletion of many records is given back as that
-        // deletion's own undo does it, for this one operation.
-        let stub = {
-            let txn = self.txn.borrow();
-            self.read_in(&txn, &mut |read: &super::Read| read.stub_at(op))?
-        };
-        if stub.is_some_and(|s| s.delete) && self.mass_undelete_log(op, op)?.is_some() {
-            return Ok(true);
-        }
-        // A deletion of many records still pending leaves the record stored
-        // under a mark: its rows go to the log first, and the mark is gone.
+        // A record of a deletion of many records still pending is given back
+        // as that deletion's own undo does it, for this one operation: the
+        // mark names the id, and the operation is its rank.
         if self.deletes_pending() {
             let marks = {
                 let txn = self.txn.borrow();
                 super::mass::read_part(&self.t, &txn, super::mass::DELETES_PART)?
             };
-            if marks.iter().any(|m| m.ids.contains(id)) {
+            if let Some(mark) = marks.iter().find(|m| m.ids.contains(id)) {
+                let op = mark.op as i64 + (mark.ids.rank(id) - 1) as i64;
+                if self.mass_undelete_log(op, op)?.is_some() {
+                    return Ok(Some(self.load_record(id)?.plain_rows()));
+                }
+                // The mark is gone before the record is given back.
                 while self.fold_one_delete()? {}
             }
         }
+        let rows = self.load_record(id)?.plain_rows();
+        let rows = rows.as_slice();
         // A position a metarecord that exists took since is not given back.
         for row in rows {
             let Some(k) = Self::forest_key(&row.name, &row.value) else { continue };
@@ -1009,7 +969,7 @@ impl KvTxn<'_> {
                 self.set_member(PARENTS, Some(&field), id, true)?;
             }
         }
-        Ok(true)
+        Ok(Some(rows.to_vec()))
     }
 
     /// The histogram forgets a row of a metarecord that was deleted: what the
@@ -1504,13 +1464,28 @@ impl KvTxn<'_> {
         let mut gone: Vec<(super::Db, Vec<u8>)> = Vec::new();
         {
             let r = self.txn.borrow();
+            // The records of the metarecords that are gone, which stayed for a
+            // restoration: held against the primary key of each uuid.
+            for entry in t.records.iter(&r)? {
+                let (k, _) = entry?;
+                let exists = match t.uuids.get(&r, k)? {
+                    Some(uuid) => t.metarecords.get(&r, uuid)?.is_some(),
+                    None => false,
+                };
+                if !exists {
+                    gone.push((t.records, k.to_vec()));
+                }
+            }
+            // What the forest holds is read from the records that remain.
+            let records_gone: std::collections::HashSet<Vec<u8>> =
+                gone.iter().map(|(_, k)| k.clone()).collect();
             for entry in t.forest.iter(&r)? {
                 let (k, v) = entry?;
                 let (field, _) = unesc(k)?;
                 let field = String::from_utf8(field).context("a field name")?;
                 let record = match t.records.get(&r, &v[super::FOREST_ID..])? {
-                    Some(rows) => dec_rows(rows)?,
-                    None => Vec::new(),
+                    Some(rows) if !records_gone.contains(&v[super::FOREST_ID..]) => dec_rows(rows)?,
+                    _ => Vec::new(),
                 };
                 let placed = record.iter().any(|row| {
                     row.name == field && KvTxn::forest_key(&field, &row.value).as_deref() == Some(k)
@@ -1736,7 +1711,9 @@ impl KvStore {
         }
         txn.fold_grams()?;
         txn.meta_put("derived", DERIVED_VERSION)?;
+        txn.meta_put("kept", 0)?;
         txn.finish()?;
+        self.kept.store(false, std::sync::atomic::Ordering::Relaxed);
         self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
         self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())

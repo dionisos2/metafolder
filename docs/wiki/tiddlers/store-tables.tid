@@ -142,7 +142,7 @@ kept in the ''reserved'' set; the metarecord takes it when it comes.
 
 A dense id is not a metarecord's for life, so what is filed under one follows it:
 
-* a metarecord deleted and created again (a revert) keeps its id ([[Deleting a metarecord in the store]]); only when the log no longer says what its deletion took does it get a new id, and its referrers, descendants and `kids` are moved under the new one in the same write — a few keys per field holding references;
+* a metarecord deleted and created again (a revert) keeps its id ([[Deleting a metarecord in the store]]), and its record stays under that id until a reindex;
 * `mf repo reindex` numbers every metarecord again and rebuilds all of this. Whatever else holds a dense id must be rewritten by it — today the `forest` entries — and what a client holds is refused afterwards: a page's cursor is bound to the ''numbering'', a counter the reindex moves ([[Pagination and sorting]]).
 
 `kids` is the forest keyed by parent first, so a metarecord arriving or leaving finds

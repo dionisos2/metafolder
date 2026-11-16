@@ -388,15 +388,15 @@ fn a_compact_shrinks_the_file_and_keeps_the_store_whole() {
         w.delete_metarecord(u).unwrap();
     }
     w.commit().unwrap();
+    // The deleted records stay until a reindex, which frees their pages.
+    store.reindex().unwrap();
     let file = dir.path().join("data.mdb");
     let before = std::fs::metadata(&file).unwrap().len();
 
     let compacted = store.compact().unwrap();
     assert_eq!(compacted.before, before);
     assert_eq!(compacted.after, std::fs::metadata(&file).unwrap().len(), "the store's own file");
-    // The log keeps the deleted records' snapshots, and the indexes what
-    // they held about them until a reindex (doc "Deleting a metarecord in
-    // the store"): a fifth goes, not all.
+    // The log keeps the deleted records' snapshots: a fifth goes, not all.
     assert!(
         compacted.after * 5 < before * 4,
         "{before} bytes shrink by a fifth, to {}",

@@ -875,25 +875,14 @@ impl<'c> Writer<'c> {
     }
 
     /// Gives back a deleted metarecord under its dense id, with the rows its
-    /// last deletion took — the ones the indexes still describe — which are
-    /// returned. `None`, nothing written, when the uuid is no deleted
-    /// metarecord of the store, or when the log no longer says what the
-    /// deletion took.
+    /// record held when it was deleted — the ones the indexes still describe —
+    /// which are returned. `None`, nothing written, when the uuid is no deleted
+    /// metarecord of the store.
     fn restore_known(&mut self, uuid: Uuid) -> Result<Option<Vec<FieldRow>>> {
         if !self.tx.was_deleted(uuid)? {
             return Ok(None);
         }
-        let Some(op) = self
-            .tx
-            .entity_ops_after(uuid, 0)?
-            .into_iter()
-            .rev()
-            .find(|op| op.op_type == "delete_metarecord")
-        else {
-            return Ok(None);
-        };
-        let rows = self.tx.snapshots(op.id)?;
-        Ok(self.tx.restore_metarecord(uuid, op.id, &rows)?.then_some(rows))
+        self.tx.restore_metarecord(uuid)
     }
 
     /// Gives back a deleted metarecord with the rows `wanted` — the revert of

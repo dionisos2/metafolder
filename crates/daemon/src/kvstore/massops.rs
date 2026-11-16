@@ -762,6 +762,7 @@ impl KvTxn<'_> {
             touches_watch |= !(&self.holder_ids_now(field)? & &changed).is_empty();
         }
         self.chunk_apply(SETS, &set_prefix(UNIVERSE, None), &changed, false)?;
+        self.keep_records()?;
         let stub = Stub {
             first: self.next_op_id()?,
             label,
@@ -1074,7 +1075,6 @@ impl KvTxn<'_> {
             let named = self.t.ids.get(&txn, uuid.as_bytes())?;
             if named != Some(&id.to_be_bytes()[..])
                 || self.t.metarecords.get(&txn, uuid.as_bytes())?.is_some()
-                || self.t.records.get(&txn, &id.to_be_bytes())?.is_some()
             {
                 return Ok(None);
             }
@@ -1195,8 +1195,8 @@ impl KvTxn<'_> {
                 }
                 marked.entry(stub.first).or_insert_with(|| stub.clone());
             }
-            self.t.records.delete(&mut w, &id.to_be_bytes())?;
-            // The key of a uuid is the metarecord's, if it is back by now.
+            // The key of a uuid is the metarecord's, if it is back by now. The
+            // record stays: it is what a restoration finds.
             if let Some(uuid) = uuid {
                 if super::derived::id_of(&self.t, &w, &uuid)? == Some(id) {
                     self.t.metarecords.delete(&mut w, &uuid)?;

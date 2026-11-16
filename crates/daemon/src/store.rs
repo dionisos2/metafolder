@@ -936,13 +936,12 @@ pub struct NewOp {
 pub trait WriteTxn: Store {
     /// A new metarecord, with no row yet.
     fn create_metarecord(&self, uuid: Uuid) -> Result<()>;
-    /// Gives back a deleted metarecord under the dense id it had, with the
-    /// rows its deletion — operation `op` — took (doc "Deleting a metarecord
-    /// in the store").
-    /// `false`, nothing written, when the store cannot: the uuid never had an
-    /// id, or its metarecord exists.
-    fn restore_metarecord(&self, _uuid: Uuid, _op: i64, _rows: &[FieldRow]) -> Result<bool> {
-        Ok(false)
+    /// Gives back a deleted metarecord under the dense id it had, with the rows
+    /// its record held when it was deleted, which are returned (doc "Deleting a
+    /// metarecord in the store"). `None`, nothing written, when the store
+    /// cannot: the uuid never had an id, or its metarecord exists.
+    fn restore_metarecord(&self, _uuid: Uuid) -> Result<Option<Vec<FieldRow>>> {
+        Ok(None)
     }
     /// Whether `uuid` is a deleted metarecord that [`Self::restore_metarecord`]
     /// can give back: it has a dense id, and nothing reserved it.

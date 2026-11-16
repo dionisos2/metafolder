@@ -19,14 +19,12 @@ only =derive_created= hands out a new id for a known uuid.
 
 Done (steps 1 to 4, one commit): the tests of the invariant, and the restoration —
 =Writer::restore_metarecord=, =KvTxn::restore_deleted=, used by the revert of a
-deletion and by a creation under a known uuid (=restore_known=). It differs from the
-plan on what a deletion keeps: a deletion of one record is folded at once (its record
-leaves =records=, its rows are in the snapshots of its operation) and the id keeps its
-entries; the restoration takes the rows from the log. A deletion of many records
+deletion and by a creation under a known uuid (=restore_known=). A deletion keeps the
+record (and the fold of a mass deletion too) until a reindex, as planned: the
+restoration reads it, not the log (flag =kept=, derived 15). A deletion of many records
 pending is given back for one operation by =mass_undelete_log=. The slow path of a
 folder deleted with live children is gone (=check_forest_integrity= refuses it at
-the commit). =derive_created= still hands out a new id, with =move_target=, when the
-log no longer says what the last deletion took (a prune).
+the commit). =move_target= and the new id for a known uuid are gone.
 
 Step 5 done too: =mass_log= filters its ids by the universe, so that no write by ids
 names a deleted record (a write by uuids already did, through =dense_ids_of=).

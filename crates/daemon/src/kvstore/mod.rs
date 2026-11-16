@@ -244,6 +244,10 @@ pub struct KvStore {
     /// Whether a deletion of many records is pending, whose records are still
     /// stored: when none is, no read sifts what it finds through the universe.
     deletes: std::sync::atomic::AtomicBool,
+    /// Whether the store holds the record of a deleted metarecord, which stays
+    /// until a reindex: when none does, no read sifts a record through the
+    /// universe (doc "Deleting a metarecord in the store").
+    kept: std::sync::atomic::AtomicBool,
     /// Whether records given back by the undo of a deletion still hold the
     /// rows the log reads as its before: when none does, no write looks for
     /// them (doc "Mass operations in the log").
@@ -695,6 +699,7 @@ impl KvStore {
             reads: Default::default(),
             mass: Default::default(),
             deletes: Default::default(),
+            kept: Default::default(),
             thawed: Default::default(),
             written: Default::default(),
             memory: None,
@@ -711,6 +716,8 @@ impl KvStore {
             let deleting =
                 store.t.mass.prefix_iter(&r, &mass::DELETES_PART.to_be_bytes())?.next().is_some();
             store.deletes.store(deleting, std::sync::atomic::Ordering::Relaxed);
+            let kept = store.t.meta.get(&r, b"kept")?.is_some_and(|v| from_be(v) != 0);
+            store.kept.store(kept, std::sync::atomic::Ordering::Relaxed);
         }
         let mut derived = derived;
         if layout != Some(LAYOUT) {
@@ -773,6 +780,9 @@ struct Read<'a> {
     /// Whether a deletion of many records is pending: the records it deleted
     /// are still stored, and a read of one sifts it through the universe.
     deletes: bool,
+    /// Whether the store holds the records of deleted metarecords, which a read
+    /// of one sifts through the universe.
+    kept: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
 }
@@ -833,7 +843,7 @@ impl Read<'_> {
     /// The rows of the record of dense id `id`: its one key. None for a
     /// metarecord a pending deletion took out of the universe.
     fn record(&self, id: u32) -> Result<Vec<FieldRow>> {
-        if self.deletes && !self.live(id)? {
+        if (self.deletes || self.kept) && !self.live(id)? {
             return Ok(Vec::new());
         }
         self.record_raw(id)
@@ -1562,6 +1572,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         holders: None,
         mass: me.mass_pending(),
         deletes: me.deletes_pending(),
+        kept: me.kept_stored(),
         universe: Default::default(),
     })
 });
@@ -1607,6 +1618,11 @@ impl KvStore {
     /// Whether a deletion of many records is pending.
     pub(super) fn deletes_pending(&self) -> bool {
         self.deletes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether the record of a deleted metarecord may be stored.
+    pub(super) fn kept_stored(&self) -> bool {
+        self.kept.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The uuids of dense ids, in the order of the ids (a tool for tests).
@@ -1658,6 +1674,7 @@ impl KvTxn<'_> {
             holders: Some(&holders),
             mass: self.mass_pending(),
             deletes: self.deletes_pending(),
+            kept: self.kept_stored(),
             universe: Default::default(),
         })
     }
@@ -1702,6 +1719,8 @@ pub struct KvTxn<'e> {
     mass_lists: &'e std::sync::atomic::AtomicBool,
     /// The store's flag that a deletion of many records is pending.
     deletes: &'e std::sync::atomic::AtomicBool,
+    /// The store's flag that the record of a deleted metarecord is stored.
+    kept: &'e std::sync::atomic::AtomicBool,
     /// The store's flag that records given back hold the log's before.
     thawed: &'e std::sync::atomic::AtomicBool,
 }
@@ -2130,6 +2149,7 @@ impl<'e> KvTxn<'e> {
             reads: &store.reads,
             mass_lists: &store.mass,
             deletes: &store.deletes,
+            kept: &store.kept,
             thawed: &store.thawed,
             written: &store.written,
             universe: RefCell::new(HashMap::new()),
@@ -2169,6 +2189,14 @@ impl<'e> KvTxn<'e> {
 }
 
 impl KvTxn<'_> {
+    /// The dense id of a metarecord that exists: a deleted one keeps its
+    /// record, which no write may change.
+    fn live_id(&self, uuid: Uuid) -> Result<Option<u32>> {
+        let Some(id) = self.dense_id(uuid.as_bytes())? else { return Ok(None) };
+        let live = self.live_in(&self.txn.borrow(), id)?;
+        Ok(live.then_some(id))
+    }
+
     fn next(&self, counter: &str) -> Result<i64> {
         let mut w = self.txn.borrow_mut();
         let n = self.t.meta.get(&w, counter.as_bytes())?.map_or(1, from_be);
@@ -2253,6 +2281,7 @@ impl KvTxn<'_> {
                     holders: None,
                     mass: false,
                     deletes: false,
+                    kept: false,
                     universe: Default::default(),
                 };
                 let Some(meta) = self.t.labels.get(&txn, &be(label))? else { break };
@@ -2306,8 +2335,8 @@ impl KvTxn<'_> {
 }
 
 impl WriteTxn for KvTxn<'_> {
-    fn restore_metarecord(&self, uuid: Uuid, op: i64, rows: &[FieldRow]) -> Result<bool> {
-        self.restore_deleted(uuid, op, rows)
+    fn restore_metarecord(&self, uuid: Uuid) -> Result<Option<Vec<FieldRow>>> {
+        self.restore_deleted(uuid)
     }
 
     fn was_deleted(&self, uuid: Uuid) -> Result<bool> {
@@ -2409,12 +2438,13 @@ impl WriteTxn for KvTxn<'_> {
         self.derive_created(uuid)
     }
 
-    /// Removes a metarecord: its rows, its existence and its place in the
-    /// universe — and nothing of what the indexes hold about it, which every
-    /// read sifts through the universe (doc "Deleting a metarecord in the
-    /// store"). On a hard disk each index entry is a seek, and a file has
-    /// dozens. What it leaves is what [`KvTxn::restore_deleted`] relies on: the
-    /// id comes back with its entries.
+    /// Removes a metarecord: its existence and its place in the universe —
+    /// and nothing of what the store holds about it, neither the indexes nor
+    /// its record, which every read sifts through the universe (doc "Deleting
+    /// a metarecord in the store"). On a hard disk each index entry is a seek,
+    /// and a file has dozens. What it leaves is what [`KvTxn::restore_deleted`]
+    /// relies on: the id comes back with its entries, and its record says what
+    /// they describe. Only a reindex frees the record.
     ///
     /// A folder that still has children is removed the same way: a write that
     /// leaves it so is refused at its commit (`check_forest_integrity`), and a
@@ -2425,7 +2455,7 @@ impl WriteTxn for KvTxn<'_> {
         if let Some(id) = id {
             self.freeze_given_back(&roaring::RoaringBitmap::from_iter([id]))?;
             rows = self.load_record(id)?.plain_rows();
-            self.put_record(id, &[])?;
+            self.keep_records()?;
         }
         for row in &rows {
             self.count_type(&row.name, &row.value, -1)?;
@@ -2485,7 +2515,7 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn delete_row(&self, owner: Uuid, name: &str, value: &Value) -> Result<()> {
-        let Some(id) = self.dense_id(owner.as_bytes())? else { return Ok(()) };
+        let Some(id) = self.live_id(owner)? else { return Ok(()) };
         let loaded = self.load_record(id)?;
         let Some(at) = loaded.rows.iter().position(|(r, _)| r.name == name && &r.value == value)
         else {
@@ -2507,7 +2537,7 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()> {
-        let Some(id) = self.dense_id(uuid.as_bytes())? else { return Ok(()) };
+        let Some(id) = self.live_id(uuid)? else { return Ok(()) };
         let loaded = self.load_record(id)?;
         let wanted = |row: &FieldRow| name.is_none_or(|n| n == row.name);
         let gone: Vec<FieldRow> =
