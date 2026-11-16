@@ -55,8 +55,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it).
-pub(super) const DERIVED_VERSION: i64 = 13;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket.
+pub(super) const DERIVED_VERSION: i64 = 14;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -230,6 +230,13 @@ pub(crate) fn hist_bucket(key: &[u8]) -> Option<Vec<u8>> {
 /// The key of a bucket of `field`'s histogram.
 pub(super) fn hist_key(field: &str, bucket: &[u8]) -> Vec<u8> {
     [&name_key(field)[..], bucket].concat()
+}
+
+/// The key of the count of posting keys in a bucket of `field`'s histogram:
+/// how many keys a walk of the bucket reads, a key per chunk of each value.
+/// Past every bucket's tag, so a range of buckets never meets it.
+pub(super) fn hist_chunks_key(field: &str, bucket: &[u8]) -> Vec<u8> {
+    [&name_key(field)[..], &[0xFF], bucket].concat()
 }
 
 /// The two tables of chunked bitmaps, as the transaction's chunk cache
@@ -656,7 +663,12 @@ impl KvTxn<'_> {
         let mut cache = self.sets.borrow_mut();
         if !cache.contains_key(&k) {
             let loaded = match db.get(&self.txn.borrow(), &k[1..])? {
-                Some(bytes) => decode_set(bytes)?,
+                Some(bytes) => {
+                    if table == SETS && k[1] == POSTINGS {
+                        self.chunks_existing.borrow_mut().insert(k.clone());
+                    }
+                    decode_set(bytes)?
+                }
                 None => RoaringBitmap::new(),
             };
             cache.insert(k.clone(), loaded);
@@ -727,7 +739,19 @@ impl KvTxn<'_> {
             let state = self.grams.borrow()[&field];
             self.t.grams.put(&mut w, &gram_state_key(&field), &state.encode())?;
         }
+        // The posting chunks that came or went, by bucket of their value.
+        let mut chunks: BTreeMap<Vec<u8>, i64> = BTreeMap::new();
         for (k, mut bm) in self.sets.borrow_mut().drain() {
+            if k[0] == SETS && k[1] == POSTINGS {
+                let existed = self.chunks_existing.borrow_mut().remove(&k);
+                let delta = i64::from(!bm.is_empty()) - i64::from(existed);
+                if let (true, Ok((name, rest))) = (delta != 0, unesc(&k[2..])) {
+                    let bucket = hist_bucket(&rest[..rest.len() - 2]);
+                    if let (Some(bucket), Ok(field)) = (bucket, String::from_utf8(name)) {
+                        *chunks.entry(hist_chunks_key(&field, &bucket)).or_default() += delta;
+                    }
+                }
+            }
             let db = if k[0] == SETS { self.t.sets } else { self.t.grams };
             if bm.is_empty() {
                 db.delete(&mut w, &k[1..])?;
@@ -740,6 +764,10 @@ impl KvTxn<'_> {
                 bm.serialize_into(&mut bytes)?;
                 db.put(&mut w, &k[1..], &bytes)?;
             }
+        }
+        drop(w);
+        for (key, delta) in chunks {
+            self.bump(self.t.hist, &key, delta)?;
         }
         Ok(())
     }
@@ -2106,6 +2134,17 @@ impl KvStore {
             behind.insert(name);
         }
         let settled = |key: &[u8]| unesc(key).is_ok_and(|(name, _)| !behind.contains(&name));
+        // The posting keys of each bucket, counted from the postings.
+        let mut expected = expected;
+        for entry in self.t.sets.prefix_iter(r, &[POSTINGS])? {
+            let (k, _) = entry?;
+            let (name, rest) = unesc(&k[1..])?;
+            if let (Some(bucket), Ok(field)) =
+                (hist_bucket(&rest[..rest.len() - 2]), String::from_utf8(name))
+            {
+                *expected.entry(hist_chunks_key(&field, &bucket)).or_default() += 1;
+            }
+        }
         let mut expected = expected.into_iter().filter(|(k, _)| settled(k)).peekable();
         for entry in self.t.hist.iter(r)? {
             let (k, v) = entry?;
@@ -2658,6 +2697,33 @@ mod tests {
         let diff = store.check_derived().unwrap();
         assert_eq!(diff.len(), 1, "{}", some(&diff));
         assert!(has(&diff, "histogram unexpected: "), "{}", some(&diff));
+    }
+
+    #[test]
+    fn test_the_posting_keys_of_a_bucket_are_counted_and_exact() {
+        let (store, _dir) = populated();
+        // Twelve sizes, each its own value: a key a bucket holds per value.
+        let bucket = hist_bucket(&value_key(&Value::Int(1_000)).unwrap()).unwrap();
+        let key = hist_chunks_key("size", &bucket);
+        let n = {
+            let r = store.env.read_txn().unwrap();
+            from_be(store.t.hist.get(&r, &key).unwrap().expect("the keys are counted"))
+        };
+        assert!(n >= 1, "{n}");
+
+        // Off by one.
+        tamper(&store, |t, w| {
+            t.hist.put(w, &key, &be(n + 1)).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "histogram of "), "{}", some(&diff));
+
+        // Gone.
+        tamper(&store, |t, w| {
+            t.hist.delete(w, &key).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "histogram missing: "), "{}", some(&diff));
     }
 
     #[test]

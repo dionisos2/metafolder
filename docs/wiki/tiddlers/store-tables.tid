@@ -70,7 +70,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`grams` |`0` · field · trigram · text key |empty: a distinct text holding the trigram |
 |`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |
 |`grams` |`2` · field |the field's trigram state: its mode, its counts |
-|`hist` |field · bucket |rows (count) |
+|`hist` |field · bucket, or field · `FF` · bucket |rows (count), or posting keys (count) |
 |`events` |field · number |a pending event of the field's values: kind · values · a bitmap of dense ids ([[Mass writes in the store]]) |
 
 ''Dense ids'' come first: each metarecord gets a small integer, allocated in
@@ -148,8 +148,9 @@ A dense id is not a metarecord's for life, so what is filed under one follows it
 `kids` is the forest keyed by parent first, so a metarecord arriving or leaving finds
 the fields it is a parent in without a scan. `grams` holds the trigrams of a
 field's texts, naming the distinct texts or the ids that hold each ([[Text search in the store]]). `hist` counts a number's or a date's rows per bucket,
-a bucket being a fixed-width prefix of the value key: the histograms the planner
-estimates a range from ([[Query planner]]).
+a bucket being a fixed-width prefix of the value key — and, under a key of its own, the
+posting keys of the bucket (a key per chunk of each value): the histograms the planner
+estimates a range from, and the cost of walking it ([[Query planner]]).
 
 Every row change goes through one primitive (`derive_row`), every metarecord creation
 and removal through two others (`derive_created`, `derive_removed`) — reverts

@@ -477,11 +477,30 @@ impl KvSource<'_> {
     /// reference). The operand is of the field's type: another is refused
     /// before evaluation (doc "Comparisons").
     pub fn range_rows(&self, field: &str, op: CmpOp, value: &Value) -> Option<RangeRows> {
+        self.range_counted(field, op, value, hist_key)
+    }
+
+    /// [`Self::range_rows`] for the keys a walk of the range reads: the
+    /// histogram counts the posting keys of each bucket, a key per chunk of
+    /// each value.
+    fn range_chunks(&self, field: &str, op: CmpOp, value: &Value) -> Option<RangeRows> {
+        self.range_counted(field, op, value, derived::hist_chunks_key)
+    }
+
+    /// What the buckets on the comparison's side of the operand count, under
+    /// the keys `key_of` gives them.
+    fn range_counted(
+        &self,
+        field: &str,
+        op: CmpOp,
+        value: &Value,
+        key_of: fn(&str, &[u8]) -> Vec<u8>,
+    ) -> Option<RangeRows> {
         let operand = hist_bucket(&value_key(value)?)?;
         let tag = operand[0];
-        let region = hist_key(field, &[tag]);
-        let end = hist_key(field, &[tag + 1]);
-        let at = hist_key(field, &operand);
+        let region = key_of(field, &[tag]);
+        let end = key_of(field, &[tag + 1]);
+        let at = key_of(field, &operand);
         let range: (Bound<&[u8]>, Bound<&[u8]>) = match op {
             CmpOp::Eq => (Bound::Included(&at), Bound::Included(&at)),
             CmpOp::Neq => (Bound::Included(&region), Bound::Excluded(&end)),
@@ -527,39 +546,15 @@ impl KvSource<'_> {
         if op == CmpOp::Neq {
             return true;
         }
-        match (self.range_rows(field, op, value), value_key(value)) {
-            (Some(e), Some(key)) if plan::probes(n, e.at_most) => {
-                plan::probes(n, self.range_walk(field, op, &key, e.at_most))
+        match self.range_rows(field, op, value) {
+            Some(e) if plan::probes(n, e.at_most) => {
+                // The keys walking the range reads, which the rows bound.
+                let keys = self.range_chunks(field, op, value).map_or(e.at_most, |k| k.at_most);
+                plan::probes(n, keys.min(e.at_most))
             }
-            (Some(_), _) => false,
-            (None, _) => true,
+            Some(_) => false,
+            None => true,
         }
-    }
-
-    /// The keys walking `field op key` reads: a key per chunk of each value in
-    /// the range, as its postings say when the field has few enough to be
-    /// counted (`WALK_COUNT_MAX` keys); the `rows` the histogram gives the
-    /// range when it has more — an upper bound, a value being at least a row.
-    fn range_walk(&self, field: &str, op: CmpOp, key: &[u8], rows: u64) -> u64 {
-        const WALK_COUNT_MAX: u64 = 256;
-        let read = || -> Result<u64> {
-            let prefix = [&[derived::POSTINGS][..], &name_key(field)].concat();
-            let (mut seen, mut keys) = (0, 0);
-            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
-                let (k, _) = entry?;
-                self.read_keys(1)?;
-                seen += 1;
-                if seen > WALK_COUNT_MAX {
-                    return Ok(rows);
-                }
-                let value = &k[prefix.len()..k.len() - 2];
-                if value.first() == key.first() && op.matches_ordering(value.cmp(key)) {
-                    keys += 1;
-                }
-            }
-            Ok(keys.min(rows))
-        };
-        self.ok(read(), rows)
     }
 
     /// A whole set; a read per chunk of 65 536 ids it spans.

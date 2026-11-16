@@ -1669,6 +1669,9 @@ pub struct KvTxn<'e> {
     /// Which chunks of each bitmap (table tag · key without chunk) the cache
     /// holds: a bitmap is read back whole without scanning the cache.
     cached_chunks: RefCell<HashMap<Vec<u8>, std::collections::BTreeSet<u16>>>,
+    /// The posting chunks the cache loaded that were stored: a chunk coming
+    /// or going counts in the histogram of its field (doc "Query planner").
+    chunks_existing: RefCell<std::collections::HashSet<Vec<u8>>>,
     /// The store's read counter: a write's reads count as much as a query's
     /// (`tests/log_cost.rs` holds the trim to it).
     reads: &'e std::sync::atomic::AtomicU64,
@@ -2113,6 +2116,7 @@ impl<'e> KvTxn<'e> {
             memory,
             sets: RefCell::new(HashMap::new()),
             cached_chunks: RefCell::new(HashMap::new()),
+            chunks_existing: RefCell::new(Default::default()),
             reads: &store.reads,
             mass_lists: &store.mass,
             deletes: &store.deletes,

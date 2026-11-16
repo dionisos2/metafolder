@@ -58,8 +58,9 @@ key per holder, and every reader had both cases. A record is now in a value's po
 one of its rows has the key, so taking a row off reads the field's rows once.) An equality
 reads the posting; a range or a `!=` takes the postings of the values in range whole, so
 `rating > 4` reads five postings, not half the repository. The cost of such a walk is
-counted from the postings when the field has few of them, and bounded by the histogram's
-rows when it has many. A
+the keys it reads — a key per chunk of each value in the range —, which the histogram
+counts per bucket beside its rows, so a field of ten values and one of a million are told
+apart without reading a posting. A
 sorted walk hands a posted value's holders over as one run, and a page sorted on a
 field of ten values costs about the page over the density of its ties, however large
 the repository.
