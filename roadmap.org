@@ -5,6 +5,65 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
+* A record keeps its dense id between two reindexes
+Decided with the user (17 November 2026), in this order, test first each time.
+Background: the undo/redo property tests (=crates/daemon/tests/undo_redo_properties.rs=)
+found that a record deleted one by one and given back got a new dense id
+(=derive_created=, =KvTxn::new_id=) while the stubs of the mass writes, the
+postings and the pending entries name records by dense id. Two things were done
+meanwhile: =mass_revert_log= refuses ids that are not in the universe (so such a
+revert goes one record at a time), and a deletion given back keeps the rows it took
+(marks under =THAWED_PART=, doc "Mass operations in the log"). The invariant below
+removes the cause. The ids and uuids tables only grow between reindexes already;
+only =derive_created= hands out a new id for a known uuid.
+
+1. The test of the invariant: a record deleted one by one, then given back by a
+   revert, keeps its dense id (=KvStore::dense_ids=); =check_derived= is clean; a
+   mass add over it, undone, reaches it by the one-pass path (=revert_mass_run=).
+   Also: a plain creation with a uuid the store knows.
+2. A deletion of one record keeps its key in =records= (the rows it had), as it
+   keeps its index entries, =forest= key and id mapping: what =remove_metarecord=
+   does today with =put_record(id, &[])=. The slow path — a folder with live
+   children, unpicked row by row — goes away: deleting a folder that still has
+   children is forbidden (open: at every operation, which means files before their
+   folder everywhere — watcher, reconcile, trash —, or at the commit as today).
+   A reindex drops these rows with the other leftovers.
+3. A restoration (revert of a deletion) reuses the id: the id goes back in the
+   universe, the key back in =metarecords=, the rows are written again — each with
+   the number of the current operation (=write_number=), so that no entry older than
+   the restoration changes them — and, for each field the entries naming the id
+   would touch and the rows lack, a =cleared (field, current number)=. =tombs= and
+   =cleared= are lost when the key is deleted (open question in doc "Storage open
+   questions": keep them?). =count_type=, the histogram, =parents= and the
+   forest give back what =remove_metarecord= took. A restoration is refused when
+   the record's parent does not exist.
+4. Creating a metarecord with a uuid the store knows (=create_metarecord_with_uuid=
+   from =routes/records.rs=, =routes/query.rs=, the revert) first restores it, then
+   writes the new values by the ordinary paths. Then =derive_created= never hands
+   out a new id for a known uuid, and its =move_target= goes.
+5. Every write to many records filters its ids by the universe, so that nothing can
+   name a deleted record: =Kind::Replace= does not today (=changed = ids.clone()=
+   in =mass_log=), nor does the write from a list of uuids (=dense_ids= with
+   =must_exist= false); the revert by ids already does.
+
+Already true and relied on: a reindex begins with a full fold (=fold_all_mass=),
+freezes the marks of records given back (=freeze_all_given_back=) and turns every
+stub's ids into uuids in the order of the ids (=stubs_to_uuids=); a deletion of
+many records is one stub, and a restoration of sixteen or more of its operations is
+done in one pass (=undelete_pending=).
+To update when done: doc "Deleting a metarecord in the store" ("A dense id is never
+given again" stops being true), "Store tables", "Mass operations in the log",
+"Reverting onto the current state" (Identities). The note says the rule was
+documented: flagged to the user, who decided to change it.
+
+Also noted (doc "Storage open questions"): no =Nothing= in a mass add or remove,
+replace and rename not being mass writes, the marks a deleted record loses,
+compressing what the log keeps of a deletion. And the =undo_redo_properties= suite
+takes about 9 minutes: it should be brought under 2 without losing the cases that
+found the bug (fewer fold masks for the larger size, a subset of the pairs).
+Not measured yet: =scripts/dev/bench.sh --quick= after the postings change (every
+value a posting, derived 11 to 14).
+
 * To discuss
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
