@@ -319,12 +319,19 @@ fn a_reindex_numbers_the_records_in_forest_order() {
     );
 }
 
-/// The bytes the `sets` table holds, values only.
+/// The bytes the `sets` table holds, values only, but the postings' (kind 7):
+/// a value held by one record is a posting of one id, which no numbering
+/// gathers.
 fn sets_bytes(dir: &std::path::Path) -> usize {
     let env = common::kv::raw_env(dir);
     let sets = common::kv::open_raw(&env, "sets");
     let r = env.read_txn().unwrap();
-    sets.iter(&r).unwrap().map(|e| e.unwrap().1.len()).sum()
+    sets.iter(&r)
+        .unwrap()
+        .map(|e| e.unwrap())
+        .filter(|(k, _)| k[0] != 7)
+        .map(|(_, v)| v.len())
+        .sum()
 }
 
 /// Twenty folders discovered interleaved — a file of each in turn — get

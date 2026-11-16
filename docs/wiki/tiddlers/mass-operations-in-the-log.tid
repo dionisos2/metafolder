@@ -48,12 +48,10 @@ replaced the rows (none for `unset`). Its operations read as `set_field` (or
 what it replaces, so the stub keeps it: for each value the field held on the records,
 the ''places'' — among the stub's records — of those that held it, a `Nothing` row
 included. They are places, not ids, so a reindex has nothing to rewrite in them. The
-write finds them without a record per id: the postings of the field, the rows of the
-values that have none, the events pending ([[Mass writes in the store]]), and one
+write finds them without a record per id: the postings of the field, the events pending ([[Mass writes in the store]]), and one
 record per ''distinct value'' found, to give the value back (a key is not always its
 value: an int and a float of one number share it). The cost is that of the field's
-vocabulary — the number of its distinct values and of its rows outside a posting —
-not of the records written. The types' counts (`field_types`) are kept from the
+vocabulary — the number of its distinct values — not of the records written. The types' counts (`field_types`) are kept from the
 counters: the rows that go are the sum of the field's counts over the records.
 
 !! A deletion

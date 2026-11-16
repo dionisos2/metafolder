@@ -1,9 +1,9 @@
-//! Postings for frequent values on the key-value store (doc "Store tables", `postings`): a value
-//! held by 64 records or more is answered from
-//! one chunked bitmap instead of a key per holder. The query suites run on
-//! repositories far too small to promote a value, so this file builds ones
-//! that do — and holds every answer to the oracle, and the postings
-//! themselves to a rebuild, across writes and the log's navigation.
+//! Postings on the key-value store (doc "Store tables", `postings`): every
+//! value is one chunked bitmap of its holders, whatever their number. The
+//! query suites run on small repositories; this file builds ones with values
+//! held by hundreds of records, long texts and several values a record — and
+//! holds every answer to the oracle, and the postings themselves to a
+//! rebuild, across writes and the log's navigation.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
@@ -190,10 +190,10 @@ fn a_posting_follows_writes_and_reverts() {
     check(&store);
     let (found, reads) = holders(&store, "a");
     assert_eq!(found, 200);
-    assert!(reads < 20, "a promoted value read {reads} keys for 200 holders");
+    assert!(reads < 20, "a value read {reads} keys for 200 holders");
     let full = store.head().unwrap();
 
-    // Down below the threshold, then to nothing: the posting stays exact.
+    // Down to fewer holders, then to nothing: the posting stays exact.
     let mut w = Writer::begin(&mut store, None).unwrap();
     for &u in &uuids[..150] {
         w.set_field(u, "kind", string("b")).unwrap();
@@ -222,4 +222,70 @@ fn a_posting_follows_writes_and_reverts() {
     store.reindex().unwrap();
     check(&store);
     assert_eq!(holders(&store, "a").0, 200);
+}
+
+/// Every value is a posting, whatever its holders: a record with values of its
+/// own writes no key in the value partition (`parts` is left to a position's
+/// name), and what it writes of its values goes to `sets`.
+#[test]
+fn a_value_held_once_is_a_posting() {
+    let (mut store, _dir) = open();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let uuid = w
+        .create_metarecord(vec![
+            Field::new("kind", string("unique")),
+            Field::new("rating", Value::Int(41)),
+            Field::new("label", Value::String(long_text())),
+        ])
+        .unwrap()
+        .uuid;
+    w.commit().unwrap();
+    let written = store.last_write_keys();
+    assert_eq!(written.get("parts"), None, "no key in the value partition: {written:?}");
+    assert!(written.get("sets").copied().unwrap_or(0) > 0, "{written:?}");
+    check(&store);
+    assert_eq!(holders(&store, "unique").0, 1);
+
+    // Deleting the value takes its posting with it, and a write to the
+    // record's other values does not touch it.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.set_field(uuid, "rating", Value::Int(42)).unwrap();
+    w.commit().unwrap();
+    check(&store);
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.delete_fields_named(uuid, "kind").unwrap();
+    w.commit().unwrap();
+    check(&store);
+    assert_eq!(holders(&store, "unique").0, 0);
+}
+
+/// A store whose derived key spaces are of the format before every value was
+/// a posting is derived again when it opens: the value partition's keys are
+/// gone, the postings are all there.
+#[test]
+fn a_store_with_a_value_partition_is_derived_again_when_it_opens() {
+    use common::kv::{open_raw, raw_env};
+    let dir = TempDir::new("kv-postings-format");
+    {
+        let mut store = KvStore::open(dir.path()).unwrap();
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        for i in 0..5 {
+            w.create_metarecord(vec![Field::new("kind", string(&format!("v{i}")))]).unwrap();
+        }
+        w.commit().unwrap();
+    }
+    {
+        let env = raw_env(dir.path());
+        let meta = open_raw(&env, "meta");
+        let parts = open_raw(&env, "parts");
+        let mut w = env.write_txn().unwrap();
+        meta.put(&mut w, b"derived", &10i64.to_be_bytes()).unwrap();
+        // What the old format wrote for a value: field · partition 0 · key · id.
+        let key = [&b"kind\0\0"[..], &[0], &[3, b'v', b'0', 0, 0], &1u32.to_be_bytes()].concat();
+        parts.put(&mut w, &key, &1i64.to_be_bytes()).unwrap();
+        w.commit().unwrap();
+    }
+    let store = KvStore::open(dir.path()).unwrap();
+    check(&store);
+    assert_eq!(holders(&store, "v0").0, 1);
 }

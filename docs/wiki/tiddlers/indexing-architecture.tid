@@ -39,8 +39,8 @@ is not knowable in advance, and requiring one would produce "why is this slow?"
 surprises. The encoding is chosen from the field's one value type
 ([[One value type per field name]]): a bitmap per value for categorical fields, reverse
 bitmaps (target → sources) for references and trees, and — in the resident design — a
-bit-sliced index for numeric and date ranges. The store keeps the first two as value
-partitions and postings ([[Sorting and postings]]); a bit-sliced index for numeric
+bit-sliced index for numeric and date ranges. The store keeps the first two as postings
+([[Sorting and postings]]); a bit-sliced index for numeric
 ranges was dropped there.
 
 Counts are ''exact'' and free: the result is a bitmap before it is counted, which is

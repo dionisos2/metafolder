@@ -5,7 +5,7 @@ audience: dev
 summary: One evaluator over the store's bitmaps, no SQL and no fallback; two leaves are rewritten against the forest first, the cursor bound to the query sent; a naive oracle checks it.
 
 A query is ''not'' compiled to SQL. Every operand is answered from the store's derived
-key spaces — bitmaps of dense ids, value partitions, the forest's positions — and rows
+key spaces — bitmaps of dense ids, postings, the forest's positions — and rows
 are read only for the metarecords that come out ([[Store tables]]). There is one
 engine (`index::Eval`, generic over a `Source`; `KvSource` is the one source) and
 ''no fallback'': a shape it cannot serve is a daemon bug, answered `500`, not a slow

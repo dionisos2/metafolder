@@ -8,7 +8,7 @@ The filter yields a bitmap first, so the number of matches is known ''exactly an
 free'' before sorting. The sort then either:
 
 * ''fetches'' the sort key of each match and sorts them — about one random read per match, weighted four walk steps each (`FETCH_COST`); or
-* ''walks'' the ordered partition — or the forest, for a path sort — testing each id against the match bitmap until the page is full: about page × holders / matches steps, if the matches are spread along the index.
+* ''walks'' the ordered postings — or the forest, for a path sort — testing each id against the match bitmap until the page is full: about page × holders / matches steps, if the matches are spread along the index.
 
 It takes the cheaper by that estimate. No statistics are kept: the match count is
 exact, and the holders are the field's presence count (or the walk's subtree). The
@@ -27,7 +27,7 @@ sort key and uuid, and each strategy resumes strictly after it.
 !! A record of several values is met several times
 
 A record sorts on its smallest value ascending, its largest descending — its
-''representative''. The value partition lists it once per value, so a walk meets it
+''representative''. Its postings list it once per value, so a walk meets it
 again at each of the others. Telling the first meeting from the next ones used to
 read the record's values: one read per entry walked, and on a field where every
 record holds several values — tags — one read per holder of a frequent value, until
@@ -51,11 +51,15 @@ by alternating strategies to the oracle's.
 
 !! Postings
 
-A value reaching 64 holders gets a ''posting'' — its holders as one set — in the same
-transaction, and keeps it, exact, until its last holder goes; a rarer value is
-answered from its partition, where its ids are adjacent. An equality reads the
-posting; a range or a `!=` takes each posted value's posting whole and jumps past its
-run in the partition, so `rating > 4` reads five postings, not half the repository. A
+Every value is a ''posting'' — its holders as one set, a key per 65 536 ids — written in
+the transaction of the row, and kept, exact, until its last holder goes. (Until November
+2026 only a value reaching 64 holders was; a rarer one lived in a ''value partition'', a
+key per holder, and every reader had both cases. A record is now in a value's posting while
+one of its rows has the key, so taking a row off reads the field's rows once.) An equality
+reads the posting; a range or a `!=` takes the postings of the values in range whole, so
+`rating > 4` reads five postings, not half the repository. The cost of such a walk is
+counted from the postings when the field has few of them, and bounded by the histogram's
+rows when it has many. A
 sorted walk hands a posted value's holders over as one run, and a page sorted on a
 field of ten values costs about the page over the density of its ties, however large
 the repository.

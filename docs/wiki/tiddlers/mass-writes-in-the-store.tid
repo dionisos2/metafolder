@@ -22,7 +22,7 @@ number). A write to many records appends one, naming the operation and the recor
 |replace by `vals` on `B` |`∖ B`, then `∪ B` for the values of `vals` |
 
 A replacement never names the values it removes. The holders of a value are what is
-''stored'' — its run of the value partition or its posting, and for a `ref` its
+''stored'' — its posting, and for a `ref` its
 referrers ([[Store tables]]) — with the field's events replayed over it, in order.
 
 What cannot wait is kept exact at once, by set operations whatever the number of
@@ -54,7 +54,7 @@ and empties the list. A replacement is where its removed values are found: the
 field's stored values are walked for the records it was written on, and the
 histograms give back the rows they held. Until then the histogram of a field with
 events counts those rows, so `mf repo check` does not hold it to the rows; the
-partition and the referrers are held to them as replayed
+postings and the referrers are held to them as replayed
 ([[Checking and reindexing a repository]]).
 
 !! The rows: one entry per part

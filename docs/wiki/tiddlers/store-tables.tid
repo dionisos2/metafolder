@@ -65,7 +65,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`ids` |uuid |dense id (u32) |
 |`uuids` |dense id |uuid |
 |`sets` |kind · [field] · [key] · chunk |a roaring bitmap of dense ids |
-|`parts` |field · partition · key · dense id |rows (count) |
+|`parts` |field · partition · key · dense id |rows (count): the names of positions only |
 |`kids` |parent's dense id · field · dense id |rows (count) |
 |`grams` |`0` · field · trigram · text key |empty: a distinct text holding the trigram |
 |`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |
@@ -96,7 +96,7 @@ chunk: a write rewrites one chunk, a read unions a few. The kinds:
 |parents |field |on a `tree_ref` field, the ids with a child |
 |referrers |field · target's dense id |the ids pointing at a metarecord — a folder's children, a `ref`'s referrers ([[The forest in the store]]) |
 |descendants |field · node's dense id |every id below a node ([[The forest in the store]]) |
-|postings |field · value key |the holders of a frequent value ([[Sorting and postings]]) |
+|postings |field · value key |the holders of a value — every value has its own ([[Sorting and postings]]) |
 |long texts |field |the ids whose text is too long for trigrams ([[Text search in the store]]) |
 |pending trigrams |field |in a field whose trigrams are kept by metarecord, the ids written since the last fold ([[Text search in the store]]) |
 |reserved |— |the ids given to a uuid something points at and no metarecord has had |
@@ -121,11 +121,15 @@ number of ids — and removing one a borrow; "holds several" cannot be kept that
 since whether a record that loses a value still holds several depends on how many it
 had. A `Nothing` row is not a value: it is the `absent` set, beside the count.
 
-A ''partition'' (`parts`) lists a field's rows in the order of a key whose bytes sort
-like the values, so equality, ranges and sorts are range scans. Two per field:
-''value'' (the value itself) and ''name'' (a `tree_ref`'s name). A third, by the uuid
-a value points at, was dropped in November 2026: a key per reference and per position
-written for one reader, which the referrers answer.
+A value is a ''posting'': its holders as one chunked set, under a key whose bytes
+sort like the values (`POSTINGS · field · value key · chunk`), so equality is one read
+and ranges and sorts are range scans over the keys. A value had its holders in a
+''partition'' (`parts`, one key per holder) until they were promoted to a posting at 64
+of them; November 2026 dropped the value partition and the promotion — a value held by
+one record is a posting of one id — rather than keep two ways to hold the same thing
+(user decision). What `parts` still lists is the ''name'' of a position (a `tree_ref`'s
+name). A partition by the uuid a value points at was dropped before, a key per
+reference and per position written for one reader, which the referrers answer.
 
 !! Filed under the target's dense id
 
@@ -155,7 +159,7 @@ check` holds all of them to a rebuild, on the ids of the metarecords that exist.
 
 !! Key size
 
-LMDB refuses a key over 511 bytes, and a partition key (holding a value) or a forest
+LMDB refuses a key over 511 bytes, and a posting's key (holding a value) or a forest
 key (holding a name) can hold any text:
 
 * ''A text over 256 escaped bytes'' is keyed by that prefix, a marker `00 01` and a 64-bit hash of the whole. The marker sorts after the `00 00` ending a text equal to the prefix and before anything longer, so order is kept — except among long texts sharing the prefix, which a reader resolves from the values.

@@ -9,7 +9,7 @@ The original indexing design had an ''adaptive planner'' choosing an access path
 operand. It was taken off the roadmap in September 2026: in the resident engine each
 operand had exactly one way to be answered, so there was nothing to choose. On the
 key-value store an operand can again be answered several ways — a posting or a walk of
-the value partition, a per-candidate check or a scan of distinct values, a fetch or an
+the postings, a per-candidate check or a scan of distinct values, a fetch or an
 ordered walk. So a planner "may be useful again — to be seen" (user, September 2026):
 minimal and oriented to the store, one cost choice at a time, from what profiling
 finds. It was built in October 2026 (`index/plan.rs`) on fixed rules; the cold

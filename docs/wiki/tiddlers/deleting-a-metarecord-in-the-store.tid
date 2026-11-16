@@ -6,7 +6,7 @@ audience: dev
 
 
 Deleting a metarecord used to unpick everything the store held about it: each row's
-entries in the value partitions, the trigrams of its texts, its bitmaps, its owner
+entries in the postings, the trigrams of its texts, its bitmaps, its owner
 and field entries. On a hard disk that is the whole cost of a deletion — not the
 volume, a few kilobytes, but the ''number of places'': each key lives on a page
 somewhere else, and each page is a seek (about 9 ms to read cold, 3 ms to write,
@@ -23,8 +23,8 @@ in memory.
 |its parent out of the `parents` set, if it was the last child |a fact about ''another'' metarecord |
 |the operation and its snapshots |the log, appended ([[The operation log]]) |
 
-Everything else stays: the value and name partitions, the trigrams, the
-postings, the `present` / `absent` / `multi` sets, the referrers and descendants, the
+Everything else stays: the postings, the name partition, the trigrams, the
+`present` / `absent` / `multi` sets, the referrers and descendants, the
 `kids`, the id's mapping to its uuid — and, in the primary tables, its key in
 `forest`. The same file of eight rows now writes its record's key and its chunk of
 the universe outside the log and those small tables.

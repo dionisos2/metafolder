@@ -32,9 +32,9 @@ use uuid::Uuid;
 
 use super::super::{get_value, name_key, put_value, In, KvStore, KvTxn, Out, Tables};
 use super::{
-    count_prefix, decode_set, dense, hist_bucket, hist_key, long_prefix, part_key, part_prefix,
-    posting_prefix, referrers_prefix, search_text, set_prefix, unesc, value_key, ABSENT,
-    COUNT_BITS, GRAM_PENDING, LONG_TEXTS, POSTINGS, REFERRERS, SETS, TRIGRAM_MAX, VALUE,
+    count_prefix, decode_set, hist_bucket, hist_key, long_prefix, posting_prefix, referrers_prefix,
+    search_text, set_prefix, unesc, value_key, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS,
+    POSTINGS, REFERRERS, SETS, TRIGRAM_MAX,
 };
 
 pub(crate) use crate::store::MassKind as Kind;
@@ -366,14 +366,9 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// The holders of a value as stored: its posting, or its run of the
-    /// value partition.
+    /// The holders of a value as stored: its posting.
     fn stored_holders(&self, field: &str, key: &[u8]) -> Result<RoaringBitmap> {
-        let posting = super::posting_prefix(field, key);
-        if self.chunked_exists(SETS, &posting)? {
-            return self.read_chunked(SETS, &posting);
-        }
-        self.value_holders(field, key, u64::MAX)
+        self.read_chunked(SETS, &super::posting_prefix(field, key))
     }
 
     /// The holders of a value as the transaction sees them: stored, the
@@ -402,12 +397,7 @@ impl KvTxn<'_> {
         ids: &RoaringBitmap,
         add: bool,
     ) -> Result<()> {
-        for id in ids {
-            self.bump(self.t.parts, &part_key(field, VALUE, key, id), if add { 1 } else { -1 })?;
-        }
-        for id in ids {
-            self.derive_posting(field, key, id)?;
-        }
+        self.chunk_apply(SETS, &posting_prefix(field, key), ids, add)?;
         if let Some(Value::Ref(target)) = value {
             let tid = self.target_id(target.as_bytes())?;
             self.chunk_apply(SETS, &referrers_prefix(field, tid), ids, add)?;
@@ -437,19 +427,13 @@ impl KvTxn<'_> {
                     }
                 }
                 Kind::Replace => {
-                    let prefix = part_prefix(field, VALUE);
-                    let mut gone: Vec<(Vec<u8>, u32)> = Vec::new();
-                    for entry in t.parts.prefix_iter(&self.txn.borrow(), &prefix)? {
-                        let (k, _) = entry?;
-                        let id = dense(&k[k.len() - 4..]);
-                        if e.ids.contains(id) {
-                            gone.push((k[prefix.len()..k.len() - 4].to_vec(), id));
+                    for (key, holders) in self.postings_of(field)? {
+                        let gone = &holders & &e.ids;
+                        if gone.is_empty() {
+                            continue;
                         }
-                    }
-                    for (key, id) in &gone {
-                        let ids = RoaringBitmap::from_iter([*id]);
-                        self.store_holders(field, None, key, &ids, false)?;
-                        self.hist_bump(field, key, -1)?;
+                        self.store_holders(field, None, &key, &gone, false)?;
+                        self.hist_bump(field, &key, -(gone.len() as i64))?;
                     }
                     // Whatever the records pointed at, they no longer do.
                     let referrers = [&[REFERRERS][..], &name_key(field)].concat();
@@ -485,13 +469,45 @@ impl KvTxn<'_> {
         Ok(())
     }
 
+    /// Every value of `field` that has a holder as stored, the transaction's
+    /// own writes included, with its holders: its postings, whole.
+    pub(in super::super) fn postings_of(
+        &self,
+        field: &str,
+    ) -> Result<Vec<(Vec<u8>, RoaringBitmap)>> {
+        let posted = [&[POSTINGS][..], &name_key(field)].concat();
+        let mut keys = BTreeSet::new();
+        {
+            let txn = self.txn.borrow();
+            for entry in self.t.sets.prefix_iter(&txn, &posted)? {
+                let k = entry?.0;
+                keys.insert(k[posted.len()..k.len() - 2].to_vec());
+            }
+        }
+        // The postings this transaction made are not in the table yet.
+        let whole = [&[SETS][..], &posted[..]].concat();
+        for k in self.sets.borrow().keys() {
+            if k.starts_with(&whole) && k.len() >= whole.len() + 2 {
+                keys.insert(k[whole.len()..k.len() - 2].to_vec());
+            }
+        }
+        let mut out = Vec::new();
+        for key in keys {
+            let holders = self.read_chunked(SETS, &posting_prefix(field, &key))?;
+            if !holders.is_empty() {
+                out.push((key, holders));
+            }
+        }
+        Ok(out)
+    }
+
     /// The values `field` holds on `ids` as the transaction sees them, each
     /// with the places — among `ids`, in the order of their ids — of the
     /// records holding it; a `Nothing` row too. What a replacement of the
     /// field on `ids` is about to take off, for the log to say.
     ///
-    /// It reads the field's values, not its records: the postings, the rows of
-    /// the values that have none, the events pending — and one record for each
+    /// It reads the field's values, not its records: the postings, the events
+    /// pending — and one record for each
     /// distinct value found, to give back the value itself (a key is not
     /// always its value: an int and a float of one number share it).
     pub(in super::super) fn values_held(
@@ -504,37 +520,8 @@ impl KvTxn<'_> {
         for key in named(&events) {
             stored.entry(key).or_default();
         }
-        {
-            let txn = self.txn.borrow();
-            let posted = [&[POSTINGS][..], &name_key(field)].concat();
-            let mut posting_keys = BTreeSet::new();
-            for entry in self.t.sets.prefix_iter(&txn, &posted)? {
-                let k = entry?.0;
-                posting_keys.insert(k[posted.len()..k.len() - 2].to_vec());
-            }
-            drop(txn);
-            // The postings this transaction made are not in the table yet.
-            let whole = [&[SETS][..], &posted[..]].concat();
-            for k in self.sets.borrow().keys() {
-                if k.starts_with(&whole) && k.len() >= whole.len() + 2 {
-                    posting_keys.insert(k[whole.len()..k.len() - 2].to_vec());
-                }
-            }
-            for key in posting_keys {
-                let holders = self.read_chunked(SETS, &posting_prefix(field, &key))?;
-                *stored.entry(key).or_default() |= &(holders & ids);
-            }
-        }
-        {
-            let txn = self.txn.borrow();
-            let prefix = part_prefix(field, VALUE);
-            for entry in self.t.parts.prefix_iter(&txn, &prefix)? {
-                let k = entry?.0;
-                let id = dense(&k[k.len() - 4..]);
-                if ids.contains(id) {
-                    stored.entry(k[prefix.len()..k.len() - 4].to_vec()).or_default().insert(id);
-                }
-            }
+        for (key, holders) in self.postings_of(field)? {
+            *stored.entry(key).or_default() |= &(holders & ids);
         }
         let places = |holders: &RoaringBitmap| -> RoaringBitmap {
             holders.iter().map(|id| (ids.rank(id) - 1) as u32).collect()

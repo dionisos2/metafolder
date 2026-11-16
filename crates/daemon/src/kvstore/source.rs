@@ -191,14 +191,16 @@ impl KvSource<'_> {
         start_key: Option<&[u8]>,
         visit: &mut dyn FnMut(&SortRep, Walked<'_>) -> bool,
     ) -> Result<()> {
-        let prefix = part_prefix(field, VALUE);
+        // A value is its posting: a key per chunk of its holders, the keys of
+        // one value side by side.
+        let prefix = [&[derived::POSTINGS][..], &name_key(field)].concat();
         // A hashed start may sit anywhere in its run: start at the run.
         let start_key: Option<Vec<u8>> = start_key.map(|k| match hashed_run(k) {
             Some(run) => run.to_vec(),
             None => k.to_vec(),
         });
-        // The walk's far bound, moved past each posted value it takes whole.
-        let mut bound: Vec<u8> = if want_max {
+        // The walk's far bound.
+        let bound: Vec<u8> = if want_max {
             match &start_key {
                 Some(k) => [&prefix[..], k, &[0xFF; 16][..]].concat(),
                 None => [&prefix[..], &[0xFF; 2][..]].concat(),
@@ -209,7 +211,6 @@ impl KvSource<'_> {
                 None => prefix.clone(),
             }
         };
-        let posted = self.posted(field);
         // Before the start in the walk's direction: already paged.
         let before_start =
             |rep: &SortRep| start.is_some_and(|s| if want_max { rep > s } else { rep < s });
@@ -249,63 +250,72 @@ impl KvSource<'_> {
                 run.sort_by(|a, b| if want_max { b.0.cmp(&a.0) } else { a.0.cmp(&b.0) });
                 run.drain(..).all(|(rep, id)| visit(&rep, Walked::One(id)))
             };
-        'resume: loop {
-            let entries: Entries<'_> = if want_max {
-                let range = (Bound::Included(prefix.as_slice()), Bound::Excluded(bound.as_slice()));
-                Box::new(self.t.parts.rev_range(&self.r, &range)?)
-            } else {
-                let range = (Bound::Included(bound.as_slice()), Bound::Unbounded);
-                Box::new(self.t.parts.range(&self.r, &range)?)
-            };
-            for entry in entries {
-                let (k, _) = entry?;
-                self.read_keys(1)?;
-                if !k.starts_with(&prefix) {
-                    break;
-                }
-                let key = &k[prefix.len()..k.len() - 4];
-                let id = dense(&k[k.len() - 4..]);
-                if let Some(r) = hashed_run(key) {
-                    if run_key.as_deref() != Some(r) {
-                        if !emit_run(&mut run, visit) || !named_upto(Some(key), visit) {
-                            return Ok(());
-                        }
-                        run_key = Some(r.to_vec());
+        let entries: Entries<'_> = if want_max {
+            let range = (Bound::Included(prefix.as_slice()), Bound::Excluded(bound.as_slice()));
+            Box::new(self.t.sets.rev_range(&self.r, &range)?)
+        } else {
+            let range = (Bound::Included(bound.as_slice()), Bound::Unbounded);
+            Box::new(self.t.sets.range(&self.r, &range)?)
+        };
+        // One value at a time: its chunks come one after the other.
+        let mut value: Option<(Vec<u8>, RoaringBitmap)> = None;
+        let mut hand = |key: &[u8],
+                        holders: RoaringBitmap,
+                        run: &mut Vec<(SortRep, u32)>,
+                        run_key: &mut Option<Vec<u8>>,
+                        visit: &mut dyn FnMut(&SortRep, Walked<'_>) -> bool|
+         -> bool {
+            if let Some(r) = hashed_run(key) {
+                if run_key.as_deref() != Some(r) {
+                    if !emit_run(run, visit) || !named_upto(Some(key), visit) {
+                        return false;
                     }
-                    // Its rows say what a replaced record still holds.
+                    *run_key = Some(r.to_vec());
+                }
+                // Its rows say what a replaced record still holds.
+                for id in holders {
                     if let Some(rep) = self.rep_at(id, field, key).filter(|r| !before_start(r)) {
                         run.push((rep, id));
                     }
-                    continue;
                 }
-                if !emit_run(&mut run, visit) || !named_upto(Some(key), visit) {
-                    return Ok(());
-                }
-                run_key = None;
-                let past = if want_max {
-                    [&prefix[..], key].concat()
-                } else {
-                    [&prefix[..], key, &ID_MAX[..]].concat()
-                };
-                // A value the events name was handed over just now, replayed.
-                if named.contains(key) {
-                    bound = past;
-                    continue 'resume;
-                }
-                let Some(rep) = key_rep(key) else { continue };
-                if posted.contains(key) {
-                    let holders = self.posting(field, key).unwrap_or_default() - &replaced;
-                    if !before_start(&rep) && !visit(&rep, Walked::Run(&holders)) {
-                        return Ok(());
+                return true;
+            }
+            if !emit_run(run, visit) || !named_upto(Some(key), visit) {
+                return false;
+            }
+            *run_key = None;
+            // A value the events name was handed over just now, replayed.
+            if named.contains(key) {
+                return true;
+            }
+            let Some(rep) = key_rep(key) else { return true };
+            let holders = holders - &replaced;
+            before_start(&rep) || holders.is_empty() || visit(&rep, Walked::Run(&holders))
+        };
+        for entry in entries {
+            let (k, v) = entry?;
+            self.read_keys(1)?;
+            if !k.starts_with(&prefix) || k.len() < prefix.len() + 2 {
+                break;
+            }
+            let key = &k[prefix.len()..k.len() - 2];
+            let chunk = derived::decode_set(v)?;
+            match &mut value {
+                Some((held, holders)) if held == key => *holders |= chunk,
+                _ => {
+                    if let Some((held, holders)) = value.take() {
+                        if !hand(&held, holders, &mut run, &mut run_key, visit) {
+                            return Ok(());
+                        }
                     }
-                    bound = past;
-                    continue 'resume;
-                }
-                if !replaced.contains(id) && !before_start(&rep) && !visit(&rep, Walked::One(id)) {
-                    return Ok(());
+                    value = Some((key.to_vec(), chunk));
                 }
             }
-            break;
+        }
+        if let Some((held, holders)) = value.take() {
+            if !hand(&held, holders, &mut run, &mut run_key, visit) {
+                return Ok(());
+            }
         }
         if emit_run(&mut run, visit) {
             named_upto(None, visit);
@@ -526,25 +536,28 @@ impl KvSource<'_> {
         }
     }
 
-    /// The keys walking `field op key` reads, from the `rows` the histogram
-    /// gives the range: the values held often enough to have a posting are
-    /// read as their postings (a key for the value, a key per chunk), not a
-    /// key per holder. An upper bound still — a posted holder counts a row,
-    /// and the operand's bucket counts whole.
+    /// The keys walking `field op key` reads: a key per chunk of each value in
+    /// the range, as its postings say when the field has few enough to be
+    /// counted (`WALK_COUNT_MAX` keys); the `rows` the histogram gives the
+    /// range when it has more — an upper bound, a value being at least a row.
     fn range_walk(&self, field: &str, op: CmpOp, key: &[u8], rows: u64) -> u64 {
+        const WALK_COUNT_MAX: u64 = 256;
         let read = || -> Result<u64> {
             let prefix = [&[derived::POSTINGS][..], &name_key(field)].concat();
-            let (mut posted, mut keys) = (0, 0);
+            let (mut seen, mut keys) = (0, 0);
             for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
-                let (k, v) = entry?;
+                let (k, _) = entry?;
                 self.read_keys(1)?;
+                seen += 1;
+                if seen > WALK_COUNT_MAX {
+                    return Ok(rows);
+                }
                 let value = &k[prefix.len()..k.len() - 2];
                 if value.first() == key.first() && op.matches_ordering(value.cmp(key)) {
-                    posted += derived::decode_set(v)?.len();
-                    keys += 2;
+                    keys += 1;
                 }
             }
-            Ok(rows.saturating_sub(posted) + keys)
+            Ok(keys.min(rows))
         };
         self.ok(read(), rows)
     }
@@ -614,12 +627,10 @@ impl KvSource<'_> {
         to: Bound<&[u8]>,
         keep: &dyn Fn(&[u8]) -> bool,
     ) -> RoaringBitmap {
-        let posted = if part == VALUE { self.posted(field) } else { Default::default() };
-        self.scan_part(field, part, from, to, keep, &posted)
+        self.scan_part(field, part, from, to, keep)
     }
 
-    /// [`Self::part_ids`], the values with a posting given — with the
-    /// field's pending events replayed, in the value partition (doc "Mass
+    /// [`Self::part_ids`], with the field's pending events replayed, in the value partition (doc "Mass
     /// writes in the store"). The values an event names are left out of the
     /// scan of what is stored and read one by one, replayed; any other value
     /// has only lost the records a replacement was written on.
@@ -630,15 +641,14 @@ impl KvSource<'_> {
         from: Bound<&[u8]>,
         to: Bound<&[u8]>,
         keep: &dyn Fn(&[u8]) -> bool,
-        posted: &std::collections::BTreeSet<Vec<u8>>,
     ) -> RoaringBitmap {
         let pending = if part == VALUE { self.events(field) } else { Default::default() };
         if pending.is_empty() {
-            return self.scan_stored(field, part, from, to, keep, posted);
+            return self.scan_stored(field, part, from, to, keep);
         }
         let named = events::named(&pending);
         let unnamed = |k: &[u8]| !named.contains(k) && keep(k);
-        let mut out = self.scan_stored(field, part, from, to, &unnamed, posted);
+        let mut out = self.scan_stored(field, part, from, to, &unnamed);
         out -= events::replaced(&pending);
         // A key is in the range when its entries are: a key, then an id.
         let within = |k: &[u8]| {
@@ -661,7 +671,9 @@ impl KvSource<'_> {
         out
     }
 
-    /// [`Self::scan_part`] over what is stored.
+    /// [`Self::scan_part`] over what is stored. A value's postings are taken
+    /// whole, a key per chunk of its holders; a name's entries, in the
+    /// partition, are an id each.
     fn scan_stored(
         &self,
         field: &str,
@@ -669,11 +681,17 @@ impl KvSource<'_> {
         from: Bound<&[u8]>,
         to: Bound<&[u8]>,
         keep: &dyn Fn(&[u8]) -> bool,
-        posted: &std::collections::BTreeSet<Vec<u8>>,
     ) -> RoaringBitmap {
-        let prefix = part_prefix(field, part);
+        let postings = part == VALUE;
+        let prefix = if postings {
+            [&[derived::POSTINGS][..], &name_key(field)].concat()
+        } else {
+            part_prefix(field, part)
+        };
+        // A key of the partition ends with an id, a posting's with a chunk.
+        let tail = if postings { 2 } else { 4 };
         let with = |k: &[u8]| [&prefix[..], k].concat();
-        let mut lo = match from {
+        let lo = match from {
             Bound::Included(k) => Bound::Included(with(k)),
             Bound::Excluded(k) => Bound::Excluded(with(k)),
             Bound::Unbounded => Bound::Included(prefix.clone()),
@@ -683,51 +701,31 @@ impl KvSource<'_> {
             Bound::Excluded(k) => Bound::Excluded(with(k)),
             Bound::Unbounded => Bound::Unbounded,
         };
-        let mut read = || -> Result<RoaringBitmap> {
+        let read = || -> Result<RoaringBitmap> {
             let mut ids = Vec::new();
             let mut out = RoaringBitmap::new();
-            'resume: loop {
-                let range = (lo.as_ref().map(|k| k.as_slice()), hi.as_ref().map(|k| k.as_slice()));
-                for entry in self.t.parts.range(&self.r, &range)? {
-                    let (k, _) = entry?;
-                    self.read_keys(1)?;
-                    if !k.starts_with(&prefix) {
-                        break;
-                    }
-                    let key = &k[prefix.len()..k.len() - 4];
-                    if posted.contains(key) {
-                        if keep(key) {
-                            out |= self.posting(field, key).unwrap_or_default();
-                        }
-                        lo = Bound::Excluded([&prefix[..], key, &ID_MAX[..]].concat());
-                        continue 'resume;
-                    }
-                    if keep(key) {
-                        ids.push(dense(&k[k.len() - 4..]));
-                    }
+            let range = (lo.as_ref().map(|k| k.as_slice()), hi.as_ref().map(|k| k.as_slice()));
+            let table = if postings { self.t.sets } else { self.t.parts };
+            for entry in table.range(&self.r, &range)? {
+                let (k, v) = entry?;
+                self.read_keys(1)?;
+                if !k.starts_with(&prefix) || k.len() < prefix.len() + tail {
+                    break;
                 }
-                break;
+                if !keep(&k[prefix.len()..k.len() - tail]) {
+                    continue;
+                }
+                if postings {
+                    out |= derived::decode_set(v)?;
+                } else {
+                    ids.push(dense(&k[k.len() - 4..]));
+                }
             }
             ids.sort_unstable();
             out |= RoaringBitmap::from_sorted_iter(ids.into_iter().dedup()).expect("sorted ids");
             Ok(out)
         };
         self.ok(read(), RoaringBitmap::new())
-    }
-
-    /// The value keys of `field` that have a posting.
-    fn posted(&self, field: &str) -> std::collections::BTreeSet<Vec<u8>> {
-        let read = || -> Result<std::collections::BTreeSet<Vec<u8>>> {
-            let prefix = [&[derived::POSTINGS][..], &name_key(field)].concat();
-            let mut out = std::collections::BTreeSet::new();
-            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
-                let (k, _) = entry?;
-                self.read_keys(1)?;
-                out.insert(k[prefix.len()..k.len() - 2].to_vec());
-            }
-            Ok(out)
-        };
-        self.ok(read(), Default::default())
     }
 
     /// The posting of a value key in `field`; `None` for a value without one.
@@ -758,18 +756,15 @@ impl KvSource<'_> {
         events::replay(&pending, key, stored)
     }
 
-    /// The ids stored under exactly `key` in a partition — a posting, where
-    /// the value has one.
+    /// The ids stored under exactly `key` in a partition — a value's posting.
     fn bucket_stored(&self, field: &str, part: u8, key: &[u8]) -> RoaringBitmap {
         if part == VALUE {
-            if let Some(ids) = self.posting(field, key) {
-                return ids;
-            }
+            return self.posting(field, key).unwrap_or_default();
         }
-        // No posting: the value's run, read holder by holder.
+        // A name's run, read holder by holder.
         let hi = [key, &ID_MAX[..]].concat();
         let (from, to) = (Bound::Included(key), Bound::Excluded(hi.as_slice()));
-        self.scan_stored(field, part, from, to, &|k| k == key, &Default::default())
+        self.scan_stored(field, part, from, to, &|k| k == key)
     }
 
     /// The ids holding a key other than `key` in a partition.

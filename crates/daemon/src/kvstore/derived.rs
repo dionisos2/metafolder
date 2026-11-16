@@ -7,7 +7,7 @@
 //! | ids   | uuid                                 | dense id (u32)           |
 //! | uuids | dense id                             | uuid                     |
 //! | sets  | kind · [field] · [key] · chunk       | a roaring bitmap         |
-//! | parts | field · partition · key · dense id   | rows (count)             |
+//! | parts | field · partition · key · dense id   | rows (count), names only |
 //! | kids  | parent id · field · dense id         | rows (count)             |
 //! | grams | 0 · field · trigram · text key       | (empty)                  |
 //! | grams | 1 · field · trigram · chunk          | a roaring bitmap         |
@@ -18,13 +18,11 @@
 //! bits), so a write rewrites one chunk and a read unions a few: the universe,
 //! and per field the ids holding a value (`present`), a `Nothing` (`absent`),
 //! and — on a `tree_ref` field — a child (`parents`). A *partition* orders a
-//! field's rows by a key whose bytes sort like the values: the value itself
-//! (equality, ranges, the distinct-value scans), a `tree_ref`'s name, and the
-//! uuid a value points at (its referent, or its parent). `kids` is the forest
+//! field's `tree_ref` names by a key whose bytes sort like them. `kids` is the forest
 //! keyed by parent first, so a metarecord arriving or leaving finds the fields
-//! it is a parent in without a scan. A value held by [`POSTING_MIN`] records
-//! or more also gets a *posting*: its holders as one set, so an equality on a
-//! frequent value reads a key per 65 536 holders, not one per holder.
+//! it is a parent in without a scan. A value is a *posting*: its holders as
+//! one set (`POSTINGS · field · value key · chunk`), so an equality reads a
+//! key per 65 536 holders and the values are in order of their keys.
 //! A number's or a date's row also counts in its field's *histogram*: rows
 //! per bucket, a bucket being a prefix of the value key ([`hist_bucket`]), so
 //! the planner estimates a range by summing a few counts (doc "Planner
@@ -57,8 +55,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events.
-pub(super) const DERIVED_VERSION: i64 = 10;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition.
+pub(super) const DERIVED_VERSION: i64 = 11;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -80,12 +78,10 @@ pub(super) const REFERRERS: u8 = 5;
 /// move is set arithmetic.
 pub(super) const DESCENDANTS: u8 = 6;
 
-/// The holders of one value of a field (keyed by field and value key), for
-/// the values held by [`POSTING_MIN`] records or more (doc "Store tables", `postings`). A rarer
-/// value is answered from its run in the value
-/// partition, where its ids are adjacent. A posting is never demoted: it
-/// stays, exact, when its value grows rarer, and goes only with its last
-/// holder — so "a value has a posting" always means "all its ids are in it".
+/// The holders of one value of a field (keyed by field and value key, then
+/// chunk): every value that has a holder (doc "Store tables", `postings`).
+/// The value partition is gone: a posting is a value's run, in the order of
+/// the keys, and goes with its last holder.
 pub(super) const POSTINGS: u8 = 7;
 
 /// How many non-`Nothing` rows of a field each id holds, as one set per bit
@@ -173,9 +169,6 @@ pub(super) const NUMBERING: &str = "numbering";
 /// The dense id standing for "no parent": what a forest's roots are filed
 /// under. No metarecord gets it — ids start at 1.
 pub(super) const NO_TARGET: u32 = 0;
-
-/// How many holders promote a value to a posting.
-pub(crate) const POSTING_MIN: u64 = 64;
 
 /// The key of the posting of a value key in `field`, without its chunk. A
 /// value key is self-delimiting (fixed-width, or a text ended by its
@@ -767,36 +760,6 @@ impl KvTxn<'_> {
         Ok(false)
     }
 
-    /// The first `limit` holders of a value key in `field`'s value partition.
-    fn value_holders(&self, field: &str, key: &[u8], limit: u64) -> Result<RoaringBitmap> {
-        let prefix = [&part_prefix(field, VALUE)[..], key].concat();
-        let mut out = RoaringBitmap::new();
-        for entry in self.t.parts.prefix_iter(&self.txn.borrow(), &prefix)? {
-            let (k, _) = entry?;
-            out.insert(dense(&k[prefix.len()..]));
-            if out.len() >= limit {
-                break;
-            }
-        }
-        Ok(out)
-    }
-
-    /// Keeps `id` in the posting of `key` as it is in the value partition,
-    /// promoting the value once it has [`POSTING_MIN`] holders.
-    fn derive_posting(&self, field: &str, key: &[u8], id: u32) -> Result<()> {
-        let prefix = posting_prefix(field, key);
-        let held =
-            self.t.parts.get(&self.txn.borrow(), &part_key(field, VALUE, key, id))?.is_some();
-        if self.chunked_exists(SETS, &prefix)? {
-            return self.chunk_member(SETS, &prefix, id, held);
-        }
-        if held && self.value_holders(field, key, POSTING_MIN)?.len() >= POSTING_MIN {
-            let all = self.value_holders(field, key, u64::MAX)?;
-            self.chunk_apply(SETS, &prefix, &all, true)?;
-        }
-        Ok(())
-    }
-
     /// Adds `delta` to a row count, deleting the key at zero.
     fn bump(&self, db: super::Db, k: &[u8], delta: i64) -> Result<()> {
         let mut w = self.txn.borrow_mut();
@@ -991,12 +954,17 @@ impl KvTxn<'_> {
             Some(_) => self.new_text(field, value)?,
             None => None,
         };
+        // The metarecord's rows of the field, as the primary write left them.
+        let rows = Rows::rows_named(self, uuid, field)?;
         if let Some(k) = value_key(value) {
             if eventful {
                 self.single_event(field, value, id, delta > 0)?;
             } else {
-                self.bump(self.t.parts, &part_key(field, VALUE, &k, id), delta)?;
-                self.derive_posting(field, &k, id)?;
+                // A record is in a value's posting while one of its rows has
+                // its key: a row going leaves it only if no other does.
+                let held = delta > 0
+                    || rows.iter().any(|r| value_key(&r.value).as_deref() == Some(&k[..]));
+                self.chunk_member(SETS, &posting_prefix(field, &k), id, held)?;
             }
             if let Some(bucket) = hist_bucket(&k) {
                 self.bump(self.t.hist, &hist_key(field, &bucket), delta)?;
@@ -1005,7 +973,6 @@ impl KvTxn<'_> {
         if let Some(k) = name_part_key(value) {
             self.bump(self.t.parts, &part_key(field, NAME, &k, id), delta)?;
         }
-        let rows = Rows::rows_named(self, uuid, field)?;
         // What the row points at, by the dense id it is filed under.
         let target = match target_of(value) {
             Some(target) => Some((target, self.target_id(&target)?)),
@@ -1116,8 +1083,13 @@ impl KvTxn<'_> {
         let Some((part, key)) = text_part_key(value) else { return Ok(None) };
         let text = if part == VALUE { &key[1..] } else { &key[..] };
         if long_prefix(text).is_none() {
-            let run = [&part_prefix(field, part)[..], &key].concat();
-            if self.t.parts.prefix_iter(&self.txn.borrow(), &run)?.next().transpose()?.is_some() {
+            let held = if part == VALUE {
+                self.chunked_exists(SETS, &posting_prefix(field, &key))?
+            } else {
+                let run = [&part_prefix(field, part)[..], &key].concat();
+                self.t.parts.prefix_iter(&self.txn.borrow(), &run)?.next().transpose()?.is_some()
+            };
+            if held {
                 return Ok(None);
             }
         }
@@ -1748,7 +1720,6 @@ impl KvStore {
             })?;
             detail.report(&mut diff);
         }
-        self.check_postings(&r, &mut diff)?;
         // A deletion pending leaves the rows it deleted counted: the fold gives
         // them back.
         if !self.deletes_pending() {
@@ -1991,9 +1962,26 @@ impl KvStore {
         for entry in t.sets.iter(r)? {
             let (k, v) = entry?;
             let kind = k[0];
-            if kind == POSTINGS || kind == GRAM_PENDING || kind == RESERVED {
-                // Not an equality: see `check_postings`, and `GramCheck`; a
-                // reserved id is no metarecord's.
+            if kind == POSTINGS {
+                // A posting is the value's partition: an entry per holder.
+                let (name, rest) = unesc(&k[1..])?;
+                let field = std::str::from_utf8(&name).context("a field name")?;
+                let key = &rest[..rest.len() - 2];
+                let replayed = pending.get(field);
+                for id in decode_set(v)? {
+                    if replayed.is_some_and(|(e, _)| !events::replay_one(e, key, id, true)) {
+                        continue;
+                    }
+                    if !sifted(id) {
+                        let entry = Entry { space: PART, tag: VALUE, field, key, id, count: 1 };
+                        sink(Side::Got, entry)?;
+                    }
+                }
+                continue;
+            }
+            if kind == GRAM_PENDING || kind == RESERVED {
+                // Not an equality: see `GramCheck`; a reserved id is no
+                // metarecord's.
                 continue;
             }
             let (name, rest) =
@@ -2039,12 +2027,12 @@ impl KvStore {
         // name.
         for (field, (list, by_target)) in &pending {
             for key in events::named(list) {
-                let run = [&part_prefix(field, VALUE)[..], &key].concat();
+                let run = posting_prefix(field, &key);
                 let mut stored = RoaringBitmap::new();
-                for entry in t.parts.prefix_iter(r, &run)? {
-                    let k = entry?.0;
-                    if k.len() == run.len() + 4 {
-                        stored.insert(dense(&k[run.len()..]));
+                for entry in t.sets.prefix_iter(r, &run)? {
+                    let (k, v) = entry?;
+                    if k.len() == run.len() + 2 {
+                        stored |= decode_set(v)?;
                     }
                 }
                 for id in events::replay(list, &key, stored.clone()) - stored {
@@ -2083,95 +2071,6 @@ impl KvStore {
             if !sifted(entry.id) {
                 sink(Side::Got, entry)?;
             }
-        }
-        Ok(())
-    }
-
-    /// Postings: required from the threshold on, and exact wherever kept (a
-    /// value grown rarer keeps its posting). Held against the value
-    /// partition, where a value's holders are adjacent — and which
-    /// [`Self::walk_entries`] holds against the rows.
-    fn check_postings(&self, r: &RoTxn<'_>, diff: &mut Diff) -> Result<()> {
-        let t = &self.t;
-        // `(field, value key)`, as the lines name a value.
-        let value = |name_and_key: &[u8]| -> Result<(String, Vec<u8>)> {
-            let (name, key) = unesc(name_and_key)?;
-            Ok((String::from_utf8(name).context("a field name")?, key.to_vec()))
-        };
-
-        // Each posting kept, against its value's holders.
-        let exact = |prefix: &[u8], got: &RoaringBitmap, diff: &mut Diff| -> Result<()> {
-            let (field, key) = value(&prefix[1..])?;
-            let run = [&name_key(&field)[..], &[VALUE], &key].concat();
-            let mut holders = RoaringBitmap::new();
-            for entry in t.parts.prefix_iter(r, &run)? {
-                let (k, _) = entry?;
-                if k.len() == run.len() + 4 {
-                    holders.insert(dense(&k[run.len()..]));
-                }
-            }
-            if holders.is_empty() {
-                diff.push(format!("posting unexpected: {:?} (no holder)", (field, key)));
-            } else if holders != *got {
-                diff.push(format!(
-                    "posting of {:?}: {} ids, the value has {} holders",
-                    (field, key),
-                    got.len(),
-                    holders.len()
-                ));
-            }
-            Ok(())
-        };
-        let mut posting: Option<(Vec<u8>, RoaringBitmap)> = None;
-        for entry in t.sets.prefix_iter(r, &[POSTINGS])? {
-            let (k, v) = entry?;
-            let prefix = &k[..k.len() - 2];
-            if posting.as_ref().is_some_and(|(p, _)| p != prefix) {
-                let (p, got) = posting.take().expect("a posting");
-                exact(&p, &got, diff)?;
-            }
-            posting.get_or_insert_with(|| (prefix.to_vec(), RoaringBitmap::new())).1 |=
-                decode_set(v)?;
-        }
-        if let Some((p, got)) = posting {
-            exact(&p, &got, diff)?;
-        }
-
-        // Each value held often enough, against the postings.
-        let required = |run: &[u8], holders: u64, diff: &mut Diff| -> Result<()> {
-            if holders < POSTING_MIN {
-                return Ok(());
-            }
-            let (name, rest) = unesc(run)?;
-            if rest[0] != VALUE {
-                return Ok(());
-            }
-            let name_len = run.len() - rest.len();
-            let prefix = [&[POSTINGS][..], &run[..name_len], &rest[1..]].concat();
-            let mut chunks = t.sets.prefix_iter(r, &prefix)?;
-            if chunks.next().transpose()?.is_none() {
-                let field = String::from_utf8(name).context("a field name")?;
-                diff.push(format!(
-                    "posting missing: {:?} ({holders} holders)",
-                    (field, rest[1..].to_vec())
-                ));
-            }
-            Ok(())
-        };
-        let mut run: (Vec<u8>, u64) = (Vec::new(), 0);
-        for entry in t.parts.iter(r)? {
-            let (k, _) = entry?;
-            let prefix = &k[..k.len() - 4];
-            if run.0 != prefix {
-                if run.1 > 0 {
-                    required(&run.0, run.1, diff)?;
-                }
-                run = (prefix.to_vec(), 0);
-            }
-            run.1 += 1;
-        }
-        if run.1 > 0 {
-            required(&run.0, run.1, diff)?;
         }
         Ok(())
     }
@@ -2533,8 +2432,7 @@ mod tests {
     use crate::kvstore::test_store;
     use crate::log::Writer;
 
-    /// A root, a folder and files under it, with texts and a value frequent
-    /// enough to have a posting.
+    /// A root, a folder and files under it, with texts and a value they share.
     fn populated() -> (KvStore, crate::kvstore::TestDir) {
         let (mut store, dir) = test_store();
         let tree = |parent, name: &str| Value::TreeRef { parent, name: TreeName::from(name) };
@@ -2542,7 +2440,7 @@ mod tests {
         let root = w.create_metarecord(vec![Field::new("loc", tree(None, ""))]).unwrap().uuid;
         let folder =
             w.create_metarecord(vec![Field::new("loc", tree(Some(root), "dir"))]).unwrap().uuid;
-        for i in 0..(POSTING_MIN as usize + 6) {
+        for i in 0..12 {
             w.create_metarecord(vec![
                 Field::new("loc", tree(Some(folder), &format!("file{i}.txt"))),
                 Field::new("kind", Value::String("text".into())),
@@ -2625,7 +2523,7 @@ mod tests {
     #[test]
     fn test_a_partition_entry_nothing_derives_is_named() {
         let (store, _dir) = populated();
-        let existing = first_key(&store, |t| &t.parts, &name_key("title"));
+        let existing = first_key(&store, |t| &t.parts, &name_key("loc"));
         let id = &existing[existing.len() - 4..];
         let bogus = [&name_key("title")[..], &[VALUE], &value_key(&Value::Bool(true)).unwrap(), id]
             .concat();
@@ -2675,12 +2573,12 @@ mod tests {
     }
 
     #[test]
-    fn test_postings_are_required_and_exact() {
+    fn test_postings_are_held_to_the_rows() {
         let (store, _dir) = populated();
         let posting = posting_prefix("kind", &value_key(&Value::String("text".into())).unwrap());
         let key = first_key(&store, |t| &t.sets, &posting);
 
-        // Inexact: one holder short.
+        // One holder short: that holder's entry is missing.
         let short = {
             let r = store.env.read_txn().unwrap();
             let mut set = decode_set(store.t.sets.get(&r, &key).unwrap().unwrap()).unwrap();
@@ -2693,14 +2591,15 @@ mod tests {
             t.sets.put(w, &key, &short).unwrap();
         });
         let diff = store.check_derived().unwrap();
-        assert!(has(&diff, "posting of "), "{}", some(&diff));
+        assert!(has(&diff, "part missing: "), "{}", some(&diff));
+        assert!(!has(&diff, "part unexpected: "), "{}", some(&diff));
 
-        // Gone, for a value over the threshold.
+        // Gone: every holder's entry is.
         tamper(&store, |t, w| {
             t.sets.delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
-        assert!(has(&diff, "posting missing: "), "{}", some(&diff));
+        assert!(has(&diff, "part missing: "), "{}", some(&diff));
 
         // Kept for a value nothing holds.
         let orphan =
@@ -2711,7 +2610,7 @@ mod tests {
             t.sets.put(w, &orphan, &short).unwrap();
         });
         let diff = store.check_derived().unwrap();
-        assert!(has(&diff, "posting unexpected: "), "{}", some(&diff));
+        assert!(has(&diff, "part unexpected: "), "{}", some(&diff));
     }
 
     #[test]

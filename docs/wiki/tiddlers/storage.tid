@@ -12,7 +12,7 @@ open ([[The repository lock]]).
 
 |!Kind |!What |!If it is wrong |
 |''primary data'' |the metarecords, their field rows, the operation log and HEAD — what was written |data is lost: the defence is [[Backups and restore]] |
-|''indexes'' — in the code, the ''derived key spaces'' |dense ids, bitmaps, value partitions, the forest's bitmaps, trigrams, postings — computed from the primary data to answer queries |queries answer wrongly, nothing is lost: `mf repo reindex` rebuilds them ([[Checking and reindexing a repository]]) |
+|''indexes'' — in the code, the ''derived key spaces'' |dense ids, bitmaps, the forest's bitmaps, trigrams, postings — computed from the primary data to answer queries |queries answer wrongly, nothing is lost: `mf repo reindex` rebuilds them ([[Checking and reindexing a repository]]) |
 
 Both are written in the same transaction by every write, so they agree by
 construction ([[Writes and atomicity]]).
