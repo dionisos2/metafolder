@@ -42,9 +42,10 @@ clap = { version = "4", features = ["derive"] }
 # The navigation gate parses URLs rather than prefix-matching them (sandbox.rs).
 url = "2"
 # The desktop's trash (freedesktop.org specification) for a path no repository
-# holds (doc "Trash"). `chrono` writes the DeletionDate the specification
-# requires; the other default features are Windows COM settings.
-trash = { version = "5", default-features = false, features = ["chrono"] }
+# holds (doc "Trash"). `freedesktop` is that backend, `jiff` writes the
+# DeletionDate the specification requires; the other default feature is a
+# Windows COM setting.
+trash = { version = "5.4", default-features = false, features = ["freedesktop", "jiff"] }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 # Already in the dependency tree via wry; used directly to react to

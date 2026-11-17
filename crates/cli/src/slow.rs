@@ -169,10 +169,9 @@ fn timestamp(at_ms: i64, offset_secs: i64) -> String {
 /// the log is read against the reader's clock, and a UTC time with no `Z`
 /// reads as a local one hours off. 0 where it cannot be told.
 fn local_offset_secs(at_ms: i64) -> i64 {
-    use chrono::{Local, Offset, TimeZone};
-    match Local.timestamp_millis_opt(at_ms) {
-        chrono::LocalResult::Single(t) => t.offset().fix().local_minus_utc() as i64,
-        _ => 0,
+    match jiff::Timestamp::from_millisecond(at_ms) {
+        Ok(at) => jiff::tz::TimeZone::system().to_offset(at).seconds() as i64,
+        Err(_) => 0,
     }
 }
 
