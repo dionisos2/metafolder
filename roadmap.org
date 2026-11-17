@@ -18,6 +18,13 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   record loses, compressing what the log keeps of a deletion.
 - The =undo_redo_properties= suite takes about 3 minutes on four cores; the cost
   left is the writes of its cases, not their set-up.
+- Left by the review of 17 November 2026 (=notes-performance-stockage.txt=, point 5
+  of the REPRISE), none decided: =before_known= of a record deleted with no row at
+  all, once folded; the revert plan reads about one key per operation and newer
+  stub (read to undo a trashing of many files); one fold step folds a whole list
+  under the store's lock, which a request arriving then waits for; =mass_begin= /
+  =mass_end= of =KvTxn= are no longer reached; =tests/kv_fold_schedule.rs= does not
+  draw positions (folders) yet.
 
 * To discuss
 Every deferred or proposed note, to be gone through one by one: build it, keep

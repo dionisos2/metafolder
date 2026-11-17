@@ -84,6 +84,35 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    historique au premier lancement du nouveau daemon. Testé (kv_layout.rs :
    dispositions 6, 8 et arbre) ; rien d'autre à faire.
 
+5. REVUE (17 nov. 2026) — CORRIGÉ, tests ajoutés :
+   - annuler une suppression de masse REPLIÉE réécrivait les records en lignes
+     « simples » : les entrées encore en attente sur leur partie (écriture de
+     masse antérieure) se réappliquaient et écrasaient une écriture faite à la
+     main depuis (put_given_back, partagé avec restore_deleted) ;
+   - les drapeaux deletes / thawed / mass / kept étaient modifiés dans la
+     transaction sans retour en arrière : un revert qui échoue après avoir
+     replié les suppressions (restore_deleted) laissait deletes=false → des
+     records encore supprimés sur disque redevenaient visibles (exists, count,
+     liste). TxnFlag : copie locale publiée au commit ;
+   - before_known disait « inconnu » pour un record rendu puis supprimé de
+     nouveau (suppression en attente), « connu » après repli : il lit
+     maintenant les marques (DELETES / THAWED) ;
+   - un prune d'une suppression rendue puis écrite laissait ses snapshots
+     orphelins (cut_stub ne les ôtait que si in_snaps) ;
+   - added() d'une op set_field de stub rendait les valeurs posées.
+   Test différentiel tests/kv_fold_schedule.rs : trois stores (repli entier à
+   chaque pas / repli d'une liste au hasard / masse faite record par record),
+   écritures abandonnées comprises ; FOLD_SCHEDULE_SEEDS=300 en release.
+   RESTE (non corrigé, à décider) : before_known d'un record supprimé SANS
+   aucune ligne, une fois replié (rien dans snaps : indiscernable d'un
+   « perdu ») ; le plan de revert coûte ~1 clé par (op × stub plus récent)
+   (2 000 ops, 40 stubs : 92 000 clés, 67 ms SSD), lu pour défaire une
+   corbeille de masse ; un pas de repli replie une liste ENTIÈRE sous le verrou
+   (une suppression de 5 000 records) : une requête arrivant pendant ce pas
+   l'attend en entier ; KvTxn::mass_begin / mass_end (mode masse de derive_row)
+   sont du code mort ; le générateur ne couvre pas encore les positions
+   (tree_ref, dossiers).
+
 Où lire ce qui a été fait : sections 9a, 9b, 10a–10d, 11, 11b, 12a–12c et
 « MESURE SSD » plus bas ; wiki : "Mass operations in the log", "Mass writes in
 the store", "Folding in idle time", "Storage wear", "Label summaries",
