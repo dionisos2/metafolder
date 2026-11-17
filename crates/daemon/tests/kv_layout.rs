@@ -149,14 +149,12 @@ fn a_store_of_layout_7_converts_when_it_opens() {
 
     assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
     let env = raw_env(dir.path());
-    let legacy: Vec<_> =
-        ["field_cells", "row_owner", "by_field"].map(|name| (name, open_raw(&env, name))).into();
+    for name in ["field_cells", "row_owner", "by_field"] {
+        assert!(!has_table(&env, name), "{name} is removed");
+    }
     let records = open_raw(&env, "records");
     let forest = open_raw(&env, "forest");
     let r = env.read_txn().unwrap();
-    for (name, db) in &legacy {
-        assert!(db.is_empty(&r).unwrap(), "{name} is emptied");
-    }
     // One key per record that holds a row: the root, the thirty, and the one
     // the test wrote.
     assert_eq!(records.len(&r).unwrap(), 32);
@@ -387,11 +385,33 @@ fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
     drop(kv);
     let env = raw_env(dir.path());
     for name in ["op_children", "restorations"] {
-        let db = open_raw(&env, name);
-        let r = env.read_txn().unwrap();
-        assert!(db.is_empty(&r).unwrap(), "{name} is cleared");
+        assert!(!has_table(&env, name), "{name} is removed");
     }
 }
+
+/// Whether the store has a table named `name` (without creating it).
+fn has_table(env: &heed::Env, name: &str) -> bool {
+    let r = env.read_txn().unwrap();
+    env.open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+        let found = dbo.open_database::<heed::types::Bytes, heed::types::Bytes>(r, Some(name))?;
+        Ok(heed::CommitOrAbort::<_, ()>::Commit(found))
+    })
+    .unwrap()
+    .commit()
+    .unwrap()
+    .is_some()
+}
+
+const OLDER_TABLES: [&str; 8] = [
+    "cells",
+    "field_cells",
+    "row_owner",
+    "by_field",
+    "op_children",
+    "restorations",
+    "ops_by_rev",
+    "revisions",
+];
 
 /// A store that still holds every table of the older layouts opens: the
 /// current tables and the older ones together exceed 32 named databases.
@@ -400,18 +420,29 @@ fn a_store_with_every_older_table_opens() {
     let dir = fixture();
     {
         let env = raw_env(dir.path());
-        for name in [
-            "cells",
-            "field_cells",
-            "row_owner",
-            "by_field",
-            "op_children",
-            "restorations",
-            "ops_by_rev",
-            "revisions",
-        ] {
+        for name in OLDER_TABLES {
             create_raw(&env, name);
         }
     }
     drop(KvStore::open(dir.path()).expect("the store opens"));
+}
+
+/// The tables of the older layouts are removed once a store is converted, not
+/// left empty: each named table counts against `max_dbs` for good. A store
+/// already converted that still holds them loses them at its next open.
+#[test]
+fn the_older_tables_are_removed_when_a_store_opens() {
+    let dir = fixture();
+    drop(KvStore::open(dir.path()).expect("the store converts"));
+    let env = raw_env(dir.path());
+    for name in OLDER_TABLES {
+        assert!(!has_table(&env, name), "{name} is removed");
+    }
+    // A converted store given an empty older table back (the state of a store
+    // converted before this removal existed).
+    create_raw(&env, "cells");
+    drop(env);
+    drop(KvStore::open(dir.path()).expect("the store opens"));
+    let env = raw_env(dir.path());
+    assert!(!has_table(&env, "cells"), "cells is removed at the next open");
 }

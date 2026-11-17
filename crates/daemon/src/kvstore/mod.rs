@@ -727,6 +727,7 @@ impl KvStore {
                 derived = None;
             }
         }
+        store.remove_older_tables().context("remove the tables of the older layouts")?;
         // A store from before the derived key spaces (or of another format of
         // them) gets them derived now: their migration.
         if derived != Some(derived::DERIVED_VERSION) {
@@ -1953,6 +1954,48 @@ impl KvStore {
     /// A new store has nothing to move and only records the layout. Answers
     /// whether the derived key spaces must be derived again: they must when a
     /// metarecord was given an id, which they do not know.
+    /// Removes the tables of the older layouts, emptied by the conversion (or
+    /// by an earlier open): a named table, even empty, counts against
+    /// `max_dbs` and stays in the file's catalog. A store of the current
+    /// layout holds no data in them, so this runs at every open, and does
+    /// nothing when there are none.
+    fn remove_older_tables(&self) -> Result<()> {
+        const OLDER: [&str; 8] = [
+            "cells",
+            "field_cells",
+            "row_owner",
+            "by_field",
+            "op_children",
+            "restorations",
+            "ops_by_rev",
+            "revisions",
+        ];
+        let r = self.env.read_txn()?;
+        let found = self
+            .env
+            .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+                let mut found = Vec::new();
+                for name in OLDER {
+                    found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
+                }
+                let found: [_; 8] = found.try_into().expect("one per name");
+                Ok(CommitOrAbort::<_, ()>::Commit(found))
+            })?
+            .commit()
+            .expect("the databases are committed");
+        if found.iter().all(Option::is_none) {
+            return Ok(());
+        }
+        let mut w = self.env.write_txn()?;
+        for db in found.into_iter().flatten() {
+            // SAFETY: no other copy of these handles exists (they were opened
+            // above for this only), and this transaction has not written them.
+            unsafe { db.remove(&mut w)? };
+        }
+        w.commit()?;
+        Ok(())
+    }
+
     fn migrate_layout(&mut self, from: Option<i64>) -> Result<bool> {
         const BATCH: usize = 10_000;
         // The tables of older layouts, opened (if there) before the write:
