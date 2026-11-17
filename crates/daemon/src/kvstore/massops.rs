@@ -24,7 +24,7 @@
 //! are its own and those of the stubs that name it. The `mass_extra` counter
 //! of `meta` is the operations the stubs hold beyond one each.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{ensure, Context, Result};
 use metafolder_core::metarecord::Value;
@@ -57,6 +57,25 @@ pub(super) enum Who {
     Ids(RoaringBitmap),
     /// Their uuids, in the order their ids had.
     Uuids(Vec<Uuid>),
+}
+
+/// How many records the stubs a memo keeps may name in all: past it, the
+/// history of a record reads the stubs from the log (a uuid costs a few dozen
+/// bytes in the memo, an id far less).
+const STUB_MEMO_RECORDS: usize = 4_000_000;
+
+/// The decoded stubs of the committed store, for the generation they were read
+/// at (doc "Mass operations in the log").
+#[derive(Default)]
+pub(super) struct StubMemo {
+    generation: Option<u64>,
+    stubs: Option<std::sync::Arc<Vec<Memoed>>>,
+}
+
+/// A stub of the memo, with the places of its uuids when it holds them.
+pub(super) struct Memoed {
+    stub: Stub,
+    index: Option<HashMap<Uuid, usize>>,
 }
 
 /// A record of a folded deletion as it is put back: its dense id, its uuid, and
@@ -233,7 +252,13 @@ impl Stub {
 
     /// The operation `id` is, one of the stub's.
     pub(super) fn op(&self, read: &Read, id: i64) -> Result<OpRow> {
-        Ok(OpRow {
+        let entity = self.entity(read, (id - self.first) as usize)?;
+        Ok(self.op_of(id, entity))
+    }
+
+    /// [`Self::op`] when its record is known: nothing is read.
+    fn op_of(&self, id: i64, entity: Uuid) -> OpRow {
+        OpRow {
             id,
             label_id: self.label,
             timestamp: self.timestamp,
@@ -244,11 +269,11 @@ impl Stub {
                 _ => "delete_field",
             }
             .into(),
-            entity_uuid: self.entity(read, (id - self.first) as usize)?,
+            entity_uuid: entity,
             field_name: (!self.delete).then(|| self.field.clone()),
             reverts_op_id: self.reverts.map(|r| r + (id - self.first)),
             origin: self.origin.clone(),
-        })
+        }
     }
 
     /// The rows operation `id` of the stub has after it, or before.
@@ -267,20 +292,6 @@ impl Stub {
                 self.before.iter().filter(|(_, at)| at.contains(k)).map(|(v, _)| row(v)).collect()
             }
         }
-    }
-
-    /// The place of a record among the stub's.
-    pub(super) fn position(&self, read: &Read, uuid: Uuid) -> Result<Option<usize>> {
-        Ok(match &self.who {
-            Who::Uuids(uuids) => uuids.iter().position(|u| *u == uuid),
-            Who::Ids(ids) => {
-                read.count(1)?;
-                match super::derived::id_of(read.t, read.r, uuid.as_bytes())? {
-                    Some(id) if ids.contains(id) => Some(ids.rank(id) as usize - 1),
-                    _ => None,
-                }
-            }
-        })
     }
 }
 
@@ -306,12 +317,35 @@ impl Read<'_> {
     /// The operations of `ids` (ids of the log), in the order given; the
     /// stub read last serves the ids that follow it.
     pub(super) fn ops_resolved(&self, ids: impl Iterator<Item = i64>) -> Result<Vec<OpRow>> {
+        self.ops_resolved_of(ids, None)
+    }
+
+    /// [`Self::ops_resolved`] for operations all of one record, when it is
+    /// known (`entity`): a stub's then reads no uuid, and a stub of the memo
+    /// is not read again.
+    pub(super) fn ops_resolved_of(
+        &self,
+        ids: impl Iterator<Item = i64>,
+        entity: Option<Uuid>,
+    ) -> Result<Vec<OpRow>> {
         let mut out = Vec::new();
         let mut stub: Option<Stub> = None;
+        let memo = if entity.is_some() { self.memoed_stubs()? } else { None };
         for id in ids {
             if let Some(s) = stub.as_ref().filter(|s| s.covers(id)) {
-                out.push(s.op(self, id)?);
+                out.push(match entity {
+                    Some(e) => s.op_of(id, e),
+                    None => s.op(self, id)?,
+                });
                 continue;
+            }
+            if let (Some(memo), Some(e)) = (&memo, entity) {
+                // Newest first: the first stub that begins at or before `id`.
+                let at = memo.partition_point(|m| m.stub.first > id);
+                if let Some(m) = memo.get(at).filter(|m| m.stub.covers(id)) {
+                    out.push(m.stub.op_of(id, e));
+                    continue;
+                }
             }
             self.count(1)?;
             let b = self.t.ops.get(self.r, &be(id))?.map(<[u8]>::to_vec);
@@ -363,34 +397,100 @@ impl Read<'_> {
     }
 
     /// An entity's operations after `after` that are a stub's, ids ascending.
+    /// The stubs are read newest first, down to the first older than `after`;
+    /// a read of the committed store takes them from its memo, decoded once
+    /// for every record asked about until the next write.
     pub(super) fn stub_ops_of(&self, entity: Uuid, after: i64) -> Result<Vec<i64>> {
+        // The record's dense id, which a stub that holds ids names it by: read
+        // once, and only if one does.
+        let mut dense: Option<Option<u32>> = None;
         let mut out = Vec::new();
-        let (lo, hi) = (key(&[ROOT.as_slice(), &be(0)]), key(&[ROOT.as_slice(), &be(i64::MAX)]));
-        let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
-        for e in self.t.ops_by_entity.rev_range(self.r, &range)? {
-            let (k, _) = e?;
-            let first = from_be(&k[16..]);
-            self.count(2)?;
-            let stub = self
-                .t
-                .ops
-                .get(self.r, &be(first))?
-                .map(|v| Stub::decode(first, v))
-                .transpose()?
-                .flatten()
-                .context("a stub listed and not there")?;
-            if stub.last() <= after {
-                break;
-            }
-            if let Some(k) = stub.position(self, entity)? {
-                let id = first + k as i64;
-                if id > after {
-                    out.push(id);
+        let mut place = |stub: &Stub, index: Option<&HashMap<Uuid, usize>>| -> Result<()> {
+            let k = match (&stub.who, index) {
+                (Who::Uuids(_), Some(index)) => index.get(&entity).copied(),
+                (Who::Uuids(uuids), None) => uuids.iter().position(|u| *u == entity),
+                (Who::Ids(ids), _) => {
+                    if dense.is_none() {
+                        self.count(1)?;
+                        dense = Some(super::derived::id_of(self.t, self.r, entity.as_bytes())?);
+                    }
+                    dense
+                        .flatten()
+                        .filter(|id| ids.contains(*id))
+                        .map(|id| ids.rank(id) as usize - 1)
                 }
+            };
+            if let Some(id) = k.map(|k| stub.first + k as i64).filter(|id| *id > after) {
+                out.push(id);
+            }
+            Ok(())
+        };
+        if let Some(memo) = self.memoed_stubs()? {
+            for m in memo.iter() {
+                if m.stub.last() <= after {
+                    break;
+                }
+                place(&m.stub, m.index.as_ref())?;
+            }
+        } else {
+            let (lo, hi) =
+                (key(&[ROOT.as_slice(), &be(0)]), key(&[ROOT.as_slice(), &be(i64::MAX)]));
+            let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
+            for e in self.t.ops_by_entity.rev_range(self.r, &range)? {
+                let stub = self.listed_stub(e?.0)?;
+                if stub.last() <= after {
+                    break;
+                }
+                place(&stub, None)?;
             }
         }
         out.reverse();
         Ok(out)
+    }
+
+    /// The stub a key of `ops_by_entity` under the nil uuid lists.
+    fn listed_stub(&self, k: &[u8]) -> Result<Stub> {
+        let first = from_be(&k[16..]);
+        self.count(2)?;
+        self.t
+            .ops
+            .get(self.r, &be(first))?
+            .map(|v| Stub::decode(first, v))
+            .transpose()?
+            .flatten()
+            .context("a stub listed and not there")
+    }
+
+    /// Every stub of the log, newest first, from the store's memo: decoded at
+    /// the first read after a write, and kept until the next. `None` in a write
+    /// transaction, or when the stubs name more records than the memo keeps.
+    fn memoed_stubs(&self) -> Result<Option<std::sync::Arc<Vec<Memoed>>>> {
+        let Some((memo, generation)) = self.stubs else { return Ok(None) };
+        let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+        if memo.generation == Some(generation) {
+            return Ok(memo.stubs.clone());
+        }
+        let mut stubs = Vec::new();
+        let mut named = 0usize;
+        let mut kept = true;
+        let (lo, hi) = (key(&[ROOT.as_slice(), &be(0)]), key(&[ROOT.as_slice(), &be(i64::MAX)]));
+        let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
+        for e in self.t.ops_by_entity.rev_range(self.r, &range)? {
+            let stub = self.listed_stub(e?.0)?;
+            named += stub.who.len();
+            if named > STUB_MEMO_RECORDS {
+                kept = false;
+                break;
+            }
+            let index = match &stub.who {
+                Who::Uuids(uuids) => Some(uuids.iter().enumerate().map(|(k, u)| (*u, k)).collect()),
+                Who::Ids(_) => None,
+            };
+            stubs.push(Memoed { stub, index });
+        }
+        memo.generation = Some(generation);
+        memo.stubs = kept.then(|| std::sync::Arc::new(stubs));
+        Ok(memo.stubs.clone())
     }
 
     /// The rows `append_field` operation `op_id` added, a stub's included:
@@ -449,90 +549,14 @@ impl Read<'_> {
     }
 
     /// The rows the record of operation `op_id` of a deletion held, which are
-    /// still in its key: the deletion wrote nothing of them.
+    /// still in its key: the deletion wrote nothing of them, and whatever
+    /// would change them copies them into the snapshots first (the fold, a
+    /// write to a record it gave back, a reindex).
     fn deleted_rows(&self, stub: &Stub, op_id: i64) -> Result<Vec<FieldRow>> {
         let Who::Ids(ids) = &stub.who else { return Ok(Vec::new()) };
         let id =
             ids.select((op_id - stub.first) as u32).context("a deletion shorter than its ids")?;
-        let rows = self.record_raw(id)?;
-        if !rows.is_empty() {
-            return Ok(rows);
-        }
-        // The record is gone: it was given back and deleted again — a redo —
-        // by an operation of the chain of reverts, whose own before snapshot
-        // holds what it deleted, which is what this deletion took.
-        let uuid = self.uuid_of_id(id)?;
-        if let Some(chain) = self.revert_chain(uuid, op_id)? {
-            for member in chain.into_iter().rev() {
-                if self.op(member)?.is_some_and(|o| o.op_type == "delete_metarecord") {
-                    return self.snapshot_rows(member);
-                }
-            }
-        }
-        Ok(Vec::new())
-    }
-
-    /// The operations after `op_id` on the record of a pending deletion that
-    /// are its revert, the revert of that, and so on (a chain, oldest first);
-    /// `None` when something else was written to the record since.
-    fn revert_chain(&self, uuid: Uuid, op_id: i64) -> Result<Option<Vec<i64>>> {
-        let mut chain = vec![op_id];
-        for later in self.entity_op_ids_after(uuid, op_id)? {
-            let Some(op) = self.op(later)? else { continue };
-            match op.reverts_op_id {
-                Some(r) if chain.contains(&r) => chain.push(later),
-                _ => return Ok(None),
-            }
-        }
-        chain.remove(0);
-        Ok(Some(chain))
-    }
-
-    /// The record of operation `op_id` of a pending deletion, as `(id, uuid)`.
-    fn deleted_record(&self, stub: &Stub, op_id: i64) -> Result<Option<(u32, Uuid)>> {
-        let Who::Ids(ids) = &stub.who else { return Ok(None) };
-        let Some(id) = ids.select((op_id - stub.first) as u32) else { return Ok(None) };
-        Ok(Some((id, self.uuid_of_id(id)?)))
-    }
-
-    /// Whether the rows operation `op_id` took off its record are known: not
-    /// for a deletion still pending whose record was written to since by
-    /// anything but a revert of that deletion, or of its revert — the record is
-    /// no longer what the deletion took, and the log, which reads it there,
-    /// would say today's rows.
-    pub(super) fn before_known(&self, op_id: i64) -> Result<bool> {
-        let Some(stub) = self.stub_at(op_id)? else { return Ok(true) };
-        if !stub.delete {
-            return Ok(true);
-        }
-        // Rows the fold froze are known; the others are the record's own.
-        let prefix = key(&[&be(op_id), &[0u8]]);
-        if self.t.snaps.prefix_iter(self.r, &prefix)?.next().is_some() {
-            return Ok(true);
-        }
-        let Some((id, uuid)) = self.deleted_record(&stub, op_id)? else { return Ok(true) };
-        // A record a mark still names at this operation — the deletion pending,
-        // or given back and not written to since (any write copies the rows
-        // first) — holds what the deletion took, whatever came after.
-        if self.marked_at(id, op_id)? {
-            return Ok(true);
-        }
-        Ok(self.revert_chain(uuid, op_id)?.is_some())
-    }
-
-    /// Whether the mark of a deletion pending, or of one given back, names
-    /// record `id` as the record of operation `op_id`.
-    fn marked_at(&self, id: u32, op_id: i64) -> Result<bool> {
-        for part in [DELETES_PART, THAWED_PART] {
-            let marks = read_part(self.t, self.r, part)?;
-            self.count(marks.len() as u64 + 1)?;
-            for mark in marks {
-                if mark.ids.contains(id) && mark.op as i64 + mark.ids.rank(id) as i64 - 1 == op_id {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        self.record_raw(id)
     }
 
     /// A record's operations after `after`, ascending: its own, and those of

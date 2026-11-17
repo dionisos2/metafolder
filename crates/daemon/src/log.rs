@@ -1247,9 +1247,8 @@ impl<'c> Writer<'c> {
                 return self.in_request_order(uuids, &changed);
             }
         }
-        let one = value.clone();
-        self.mass(MassKind::Add, name, vec![value], uuids, move |w, uuid| {
-            Ok(w.append_field(uuid, name, one.clone())?.created())
+        self.one_by_one(uuids, move |w, uuid| {
+            Ok(w.append_field(uuid, name, value.clone())?.created())
         })
     }
 
@@ -1264,9 +1263,7 @@ impl<'c> Writer<'c> {
                 return self.in_request_order(uuids, &changed);
             }
         }
-        self.mass(MassKind::Remove, name, vec![value.clone()], uuids, |w, uuid| {
-            Ok(w.delete_fields_valued(uuid, name, value)? > 0)
-        })
+        self.one_by_one(uuids, |w, uuid| Ok(w.delete_fields_valued(uuid, name, value)? > 0))
     }
 
     /// Replaces the rows of `name` by `values` on every one of `uuids`, which
@@ -1289,7 +1286,7 @@ impl<'c> Writer<'c> {
                 }
             }
         }
-        self.mass(MassKind::Replace, name, kept, uuids, move |w, uuid| {
+        self.one_by_one(uuids, move |w, uuid| {
             w.set_field_multi(uuid, name, values.clone())?;
             Ok(true)
         })
@@ -1303,9 +1300,7 @@ impl<'c> Writer<'c> {
                 return self.in_request_order(uuids, &changed);
             }
         }
-        self.mass(MassKind::Replace, name, Vec::new(), uuids, |w, uuid| {
-            Ok(w.delete_fields_named(uuid, name)? > 0)
-        })
+        self.one_by_one(uuids, |w, uuid| Ok(w.delete_fields_named(uuid, name)? > 0))
     }
 
     /// Adds `value` to `name` on the records `ids` (live ones) that lack it:
@@ -1539,26 +1534,19 @@ impl<'c> Writer<'c> {
         Ok(Some(done.changed))
     }
 
-    /// One operation on a field of many records: `one` writes each record's
-    /// rows and its log entry, as a write to it alone would, while the store
-    /// indexes the lot as one event when it can ([`WriteTxn::mass_begin`]).
-    fn mass(
+    /// A write to many records the store does not do in bulk: `one` writes
+    /// each record's rows and its log entry, as a write to it alone does. The
+    /// records it changed.
+    fn one_by_one(
         &mut self,
-        kind: MassKind,
-        name: &str,
-        values: Vec<Value>,
         uuids: &[Uuid],
         mut one: impl FnMut(&mut Self, Uuid) -> Result<bool>,
     ) -> Result<Vec<Uuid>> {
-        let massed = self.tx.mass_begin(name, kind, &values)?;
         let mut changed = Vec::new();
         for &uuid in uuids {
             if one(self, uuid)? {
                 changed.push(uuid);
             }
-        }
-        if massed {
-            self.tx.mass_end(name, kind, values, uuids)?;
         }
         Ok(changed)
     }

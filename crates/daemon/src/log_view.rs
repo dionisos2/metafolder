@@ -241,10 +241,7 @@ pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<ser
         "reverts_op_id": op.reverts_op_id,
     });
     if include_snapshots {
-        // A deletion whose rows were lost says so, instead of the rows of today.
-        let known = log.before_known(op.id)?;
-        value["before_known"] = json!(known);
-        value["snapshots_before"] = if known { snapshots_json(log, op.id)? } else { json!([]) };
+        value["snapshots_before"] = snapshots_json(log, op.id)?;
     }
     Ok(value)
 }

@@ -487,10 +487,6 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
     for op in resp["operations"].as_array().into_iter().flatten() {
         println!();
         println!("  {}", fmt_op_line(op));
-        if op["before_known"] == false {
-            println!("    before:  unknown (the record was written to after the deletion)");
-            continue;
-        }
         // The log keeps the rows an operation took off, not the ones it left.
         // For field-scoped ops (set_field, file_*) the field name precedes
         // them to make multi-field writes readable.

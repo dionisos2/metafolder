@@ -253,30 +253,6 @@ describe('log panel: going into a label', () => {
     expect(p.api.daemon.call).toHaveBeenCalledWith('GET', '/repos/r/revert/plan?target_op_ids=12');
   });
 
-  test('a deletion whose rows are lost says so, instead of showing rows', async () => {
-    const p = await mountPanel();
-    const real = p.api.daemon.call.getMockImplementation()!;
-    p.api.daemon.call.mockImplementation(async (method: string, url: string) => {
-      const answer = (await real(method, url)) as { operations?: Record<string, unknown>[] };
-      if (/\?op=10$/.test(url)) {
-        answer.operations![0] = {
-          ...answer.operations![0],
-          op_type: 'delete_metarecord',
-          field_name: null,
-          before_known: false,
-          snapshots_before: [],
-        };
-      }
-      return answer as never;
-    });
-    for (const name of ['run', 'answer', 'mf tag add', 'op 10']) {
-      p.rowWith(name).querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
-      await settle();
-    }
-    expect(p.detail()).toEqual([]);
-    expect(p.shadow.getElementById('op-detail')!.textContent).toContain('no longer known');
-  });
-
   test('cursor:descend goes into the selected row; cursor:parent comes back onto it', async () => {
     const p = await mountPanel();
     await p.run('cursor:last'); // #1 run

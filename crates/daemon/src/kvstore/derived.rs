@@ -1027,10 +1027,6 @@ impl KvTxn<'_> {
         delta: i64,
         count_before: u64,
     ) -> Result<()> {
-        // A write to many records: its event derives for all of them.
-        if self.mass.borrow().as_deref() == Some(field) {
-            return Ok(());
-        }
         let id = self.id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
         // A field with events pending takes this row as one more, of one
         // id: what is stored is behind, and is not written past them.

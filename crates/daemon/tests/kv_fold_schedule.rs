@@ -102,9 +102,6 @@ impl Side {
             w.create_metarecord_with_uuid(
                 u,
                 vec![
-                    // Never written: no record is ever empty, which the log of
-                    // a folded deletion cannot tell from one whose rows it lost.
-                    Field::new("key", Value::Int(i as i64)),
                     Field::new("tag", s(TAGS[i % 2])),
                     Field::new("rank", Value::Int(i as i64 % 3)),
                 ],
@@ -191,8 +188,7 @@ impl Side {
                 }
                 Step::Create(u) => {
                     if !w.store().exists(*u)? {
-                        let fields =
-                            vec![Field::new("key", Value::Int(-1)), Field::new("tag", s("a"))];
+                        let fields = vec![Field::new("tag", s("a"))];
                         w.create_metarecord_with_uuid(*u, fields)?;
                     }
                 }
@@ -236,13 +232,8 @@ impl Side {
                 .map(|r| format!("{}={:?}", r.name, r.value))
                 .collect();
             log.push(format!(
-                "{} {} {} {:?} {:?} before={before:?} known={}",
-                op.id,
-                op.op_type,
-                op.entity_uuid,
-                op.field_name,
-                op.reverts_op_id,
-                self.store.before_known(op.id).unwrap()
+                "{} {} {} {:?} {:?} before={before:?}",
+                op.id, op.op_type, op.entity_uuid, op.field_name, op.reverts_op_id,
             ));
         }
         (records, log)

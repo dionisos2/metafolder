@@ -31,7 +31,7 @@ with the same key go in it; a read opens nothing. A key that is not 32 hex digit
 |`limit` |— |at most this many operations, the newest |
 |`labels` |— |at most this many labels (each operation counted in its innermost one), the newest — whole unless `limit` cuts the oldest |
 |`since`, `until` |— |only operations written within (Unix ms) |
-|`include_snapshots` |`false` |each operation with `snapshots_before` (the rows it took off; the log keeps no state a write left, so there is no `snapshots_after` since API 28), and `before_known` (`false` — `snapshots_before` then empty — for a deletion whose rows are lost, [[Mass operations in the log]]) |
+|`include_snapshots` |`false` |each operation with `snapshots_before` (the rows it took off; the log keeps no state a write left, so there is no `snapshots_after` since API 28) |
 
 ```
 {"head": 3, "first": 1,

@@ -381,12 +381,6 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// Whether a write to many records of `field` is open: its rows are not
-    /// written into the records.
-    pub(super) fn in_mass(&self, field: &str) -> bool {
-        self.mass.borrow().as_deref() == Some(field)
-    }
-
     /// The entries of `part`, as the transaction has them.
     fn part_entries(&self, part: u32) -> Result<Vec<Listed>> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

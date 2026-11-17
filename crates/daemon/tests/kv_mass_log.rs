@@ -538,3 +538,35 @@ fn a_replacement_of_long_texts_is_undone_whole() {
     store.fold().unwrap();
     assert!(store.check_derived().unwrap().is_empty());
 }
+
+/// The history of a record reads each newer stub once for all the records it is
+/// asked about, not once per record: what a revert plan asks of each of its
+/// operations (`changed_since` reads what came after it on its record), over a
+/// mass write followed by others.
+#[test]
+fn the_stubs_after_an_operation_are_read_once_for_a_whole_plan() {
+    use metafolder_daemon::revert;
+    fn plan_reads(later: usize) -> u64 {
+        let (mut store, _dir) = open();
+        let uuids = records(&mut store, 400);
+        let ids = store.dense_ids(&uuids).unwrap();
+        let (label, _) = labelled(&mut store, |w| w.mass_add_ids("tag", s("x"), &ids).unwrap());
+        for j in 0..later {
+            write(&mut store, |w| w.mass_add_ids("tag", s(&format!("y{j}")), &ids).unwrap());
+        }
+        // What the writes left pending is not what is measured.
+        store.fold().unwrap();
+        let ops = revert::label_ops(&store, label).unwrap();
+        assert_eq!(ops.len(), 400);
+        let before = store.reads();
+        for op in &ops {
+            let after = store.entity_ops_after(op.entity_uuid, op.id).unwrap();
+            assert_eq!(after.len(), later, "{op:?}");
+            assert!(after.iter().all(|o| o.entity_uuid == op.entity_uuid));
+        }
+        store.reads() - before
+    }
+    let (none, some) = (plan_reads(0), plan_reads(20));
+    // Each of the 20 stubs read about once, not 400 times.
+    assert!(some <= none + 20 * 4, "{none} keys with no stub after, {some} with 20");
+}

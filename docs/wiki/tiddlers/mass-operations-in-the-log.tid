@@ -38,7 +38,12 @@ of records it changed.
 A metarecord's operations after an id are its own and, for each stub newer than the
 id, its place among the stub's records: a search over the stubs after the id,
 not over every record's keys. A stub is read once for the operations it holds, which
-`ops_of` and the backward read keep.
+`ops_of` and the backward read keep. A read of the committed store takes the stubs
+from a memo, decoded at the first read after a write and kept until the next: a revert
+plan, which asks the history of each of its operations' records, decodes each newer
+stub once in all, not once per operation (`tests/kv_mass_log.rs` counts it). Past four
+million records named by the stubs, the memo is not kept, and each read decodes them
+again.
 
 !! A replacement
 
@@ -102,7 +107,7 @@ The records are alive again and may be written to, while the log reads the rows 
 * an entry of a write to many records that names it (`append_entries`);
 * the fold of a deletion that takes it out of the store again (`fold_one_delete`), and the reindex, which numbers the ids the marks name (all of them).
 
-So the rows a deletion took are never unknown for a deletion given back since November 2026: `before_known` ([[Log endpoints]]) is `false` only for one given back and written to by an older daemon — a record a mark still names at the operation, its deletion's while pending or the giving back's, holds the rows whatever was written to the log since (deleted again, say) — and reverting a deletion puts back what it took, not what the record holds now. The idle fold leaves the marks alone — undoing a deletion at once is the common case, and a copy of every record at idle time would be paid for nothing — and `pending_mass` does not count them: they wait for a write, not for a fold.
+So the rows a deletion took are always known: the record holds them until something would change them, which copies them first. Reverting a deletion puts back what it took, not what the record holds now; the log once said, in a field `before_known`, which deletions had lost their rows, and there are none any more. The idle fold leaves the marks alone — undoing a deletion at once is the common case, and a copy of every record at idle time would be paid for nothing — and `pending_mass` does not count them: they wait for a write, not for a fold.
 
 The trash first asks, once, which of its records hold a link to a duplicate group (the
 holders of the field, among its ids), and only those leave their group one by one
@@ -135,6 +140,7 @@ them (the question is not restricted to the changed records).
 
 !! What is not here yet
 
-* the history of a metarecord is a search over the stubs after an id: a summary per
-  block of operations is the next step if the number of stubs asks for it;
+* the history of a metarecord is a search over the stubs after an id (decoded once,
+  but looked at for each record): a summary per block of operations is the next step
+  if the number of stubs asks for it;
 `tests/kv_mass_log.rs` holds the reads of a stub to those of the operations it stands for.

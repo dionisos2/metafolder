@@ -476,14 +476,6 @@ pub trait Log {
     /// What the operation added to its entity's version (doc "Metarecord
     /// version"): subtracted, it takes the version back before the operation.
     fn version_delta(&self, op_id: i64) -> Result<u64>;
-    /// Whether the rows the operation took off its record (its before
-    /// snapshot) are known. Not when the operation is a deletion whose record
-    /// the store still holds and which was written to since — by anything but
-    /// the revert of that deletion: the record no longer holds what it
-    /// deleted, and what it held is lost.
-    fn before_known(&self, _op_id: i64) -> Result<bool> {
-        Ok(true)
-    }
     /// The oldest operation still in the log, `None` on an empty log.
     fn first_op(&self) -> Result<Option<i64>>;
     /// The operations at or before `from`, newest first — all of them, or the
@@ -947,25 +939,6 @@ pub trait WriteTxn: Store {
     /// can give back: it has a dense id, and nothing reserved it.
     fn was_deleted(&self, _uuid: Uuid) -> Result<bool> {
         Ok(false)
-    }
-    /// Opens a write of `values` to many records of `field` (doc "Mass writes
-    /// in the store"): until [`Self::mass_end`], the rows written to that
-    /// field are not indexed one by one. `false` when the store indexes this
-    /// one row by row after all — nothing is opened, and no `mass_end` is
-    /// owed.
-    fn mass_begin(&self, _field: &str, _kind: MassKind, _values: &[Value]) -> Result<bool> {
-        Ok(false)
-    }
-    /// Closes the write [`Self::mass_begin`] opened: `uuids` are the records
-    /// it was asked on, whether each changed or not.
-    fn mass_end(
-        &self,
-        _field: &str,
-        _kind: MassKind,
-        _values: Vec<Value>,
-        _uuids: &[Uuid],
-    ) -> Result<()> {
-        Ok(())
     }
     /// A write of `value` to, or off, `field` of many records, logged as one
     /// entry (doc "Mass operations in the log"): the records that change get

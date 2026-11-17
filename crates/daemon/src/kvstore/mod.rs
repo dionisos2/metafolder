@@ -251,6 +251,12 @@ pub struct KvStore {
     /// The keys the last committed write transaction wrote, per table — what
     /// the write cost assertions count ([`KvStore::last_write_keys`]).
     written: std::sync::Mutex<[u64; table::TABLES]>,
+    /// How many write transactions committed: what a memo of the committed
+    /// store is valid for.
+    generation: std::sync::atomic::AtomicU64,
+    /// The stubs of the log, decoded once for every read of a record's history
+    /// until the next write (doc "Mass operations in the log").
+    stub_memo: std::sync::Mutex<massops::StubMemo>,
     /// Where the copy is, shared with whoever reports it, so that reading it
     /// never waits on the store.
     resident: memory::ResidencyHandle,
@@ -698,6 +704,8 @@ impl KvStore {
             kept: Default::default(),
             thawed: Default::default(),
             written: Default::default(),
+            generation: Default::default(),
+            stub_memo: Default::default(),
             memory: None,
             resident: Default::default(),
             durable,
@@ -782,6 +790,9 @@ struct Read<'a> {
     kept: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
+    /// The store's memo of decoded stubs, and the generation the read sees;
+    /// `None` in a write transaction, whose writes the memo does not know.
+    stubs: Option<(&'a std::sync::Mutex<massops::StubMemo>, u64)>,
 }
 
 impl Read<'_> {
@@ -1419,10 +1430,6 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.version_delta(op_id))
             }
-            fn before_known(&self, op_id: i64) -> Result<bool> {
-                let $me = self;
-                $with(&mut |$read: &Read| $read.before_known(op_id))
-            }
             fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
@@ -1531,7 +1538,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let ids = $read.entity_op_ids_after(entity, after)?;
-                    $read.ops_of(ids.into_iter())
+                    $read.ops_resolved_of(ids.into_iter(), Some(entity))
                 })
             }
             fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>> {
@@ -1571,6 +1578,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         deletes: me.deletes_pending(),
         kept: me.kept_stored(),
         universe: Default::default(),
+        stubs: Some((&me.stub_memo, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
     })
 });
 
@@ -1673,6 +1681,7 @@ impl KvTxn<'_> {
             deletes: self.deletes_pending(),
             kept: self.kept_stored(),
             universe: Default::default(),
+            stubs: None,
         })
     }
 }
@@ -1699,6 +1708,8 @@ pub struct KvTxn<'e> {
     reads: &'e std::sync::atomic::AtomicU64,
     /// Where the store keeps what its last write wrote.
     written: &'e std::sync::Mutex<[u64; table::TABLES]>,
+    /// The store's count of committed writes, which this one adds to.
+    generation: &'e std::sync::atomic::AtomicU64,
     /// The universe's chunks the transaction read without changing them
     /// (a changed one is in `sets`).
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
@@ -1706,9 +1717,6 @@ pub struct KvTxn<'e> {
     /// the fields whose state it changed, written at commit.
     grams: RefCell<HashMap<String, derived::GramState>>,
     grams_changed: RefCell<std::collections::HashSet<String>>,
-    /// The field a write to many records is being written on: its rows
-    /// derive nothing, the event that ends it does (`derived::events`).
-    mass: RefCell<Option<String>>,
     /// How many events each field has pending, as read or changed.
     events: RefCell<HashMap<String, usize>>,
     /// The store's flag that some part has entries pending: a write to many
@@ -2224,10 +2232,10 @@ impl<'e> KvTxn<'e> {
             kept: TxnFlag::of(&store.kept),
             thawed: TxnFlag::of(&store.thawed),
             written: &store.written,
+            generation: &store.generation,
             universe: RefCell::new(HashMap::new()),
             grams: RefCell::new(HashMap::new()),
             grams_changed: RefCell::new(Default::default()),
-            mass: RefCell::new(None),
             events: RefCell::new(HashMap::new()),
         })
     }
@@ -2259,6 +2267,7 @@ impl<'e> KvTxn<'e> {
         for flag in [&self.mass_lists, &self.deletes, &self.kept, &self.thawed] {
             flag.publish();
         }
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }
@@ -2358,6 +2367,7 @@ impl KvTxn<'_> {
                     deletes: false,
                     kept: false,
                     universe: Default::default(),
+                    stubs: None,
                 };
                 let Some(meta) = self.t.labels.get(&txn, &be(label))? else { break };
                 let meta = dec_label(meta)?;
@@ -2477,24 +2487,6 @@ impl WriteTxn for KvTxn<'_> {
         self.uuids_of_ids(ids)
     }
 
-    fn mass_begin(&self, field: &str, kind: MassKind, values: &[Value]) -> Result<bool> {
-        if !self.mass_eligible(field, kind, values)? {
-            return Ok(false);
-        }
-        KvTxn::mass_begin(self, field);
-        Ok(true)
-    }
-
-    fn mass_end(
-        &self,
-        field: &str,
-        kind: MassKind,
-        values: Vec<Value>,
-        uuids: &[Uuid],
-    ) -> Result<()> {
-        KvTxn::mass_end(self, field, kind, values, uuids)
-    }
-
     fn create_metarecord(&self, uuid: Uuid) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         if self.t.metarecords.get(&w, uuid.as_bytes())?.is_some() {
@@ -2546,11 +2538,6 @@ impl WriteTxn for KvTxn<'_> {
         }
         let id =
             self.dense_id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
-        // A write to many records: the record is not written, the entry that
-        // ends the write is (doc "Mass writes in the store").
-        if self.in_mass(name) {
-            return self.count_type(name, value, 1);
-        }
         let loaded = self.load_record(id)?;
         let before = loaded.plain_rows();
         // The two uniqueness rules of the data model, with the messages
@@ -2596,9 +2583,6 @@ impl WriteTxn for KvTxn<'_> {
         else {
             return Ok(());
         };
-        if self.in_mass(name) {
-            return self.count_type(name, value, -1);
-        }
         let op = self.write_number(&loaded)?;
         let mut rows = loaded.rows.clone();
         let (row, _) = rows.remove(at);
@@ -2618,12 +2602,6 @@ impl WriteTxn for KvTxn<'_> {
         let gone: Vec<FieldRow> =
             loaded.rows.iter().filter(|(r, _)| wanted(r)).map(|(r, _)| r.clone()).collect();
         if gone.is_empty() {
-            return Ok(());
-        }
-        if name.is_some_and(|n| self.in_mass(n)) {
-            for row in &gone {
-                self.count_type(&row.name, &row.value, -1)?;
-            }
             return Ok(());
         }
         let op = self.write_number(&loaded)?;

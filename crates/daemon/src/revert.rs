@@ -375,14 +375,6 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                 writer.delete_metarecord(op.entity_uuid)?
             }
             "delete_metarecord" => {
-                // What it deleted may be lost: a record given back and written to since.
-                if !writer.store().before_known(op.id)? {
-                    anyhow::bail!(
-                        "the rows operation {} deleted are no longer known: the record was \
-                         written to after it",
-                        op.id
-                    );
-                }
                 if writer.store().exists(op.entity_uuid)? {
                     return Err(crate::error::DomainError::Conflict(format!(
                         "metarecord {} exists again: undoing its deletion (operation {}) \

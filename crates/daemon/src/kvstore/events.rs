@@ -28,7 +28,6 @@ use anyhow::{bail, ensure, Context, Result};
 use heed::RoTxn;
 use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
-use uuid::Uuid;
 
 use super::super::{get_value, name_key, put_value, In, KvStore, KvTxn, Out, Tables};
 use super::{
@@ -220,30 +219,8 @@ impl KvTxn<'_> {
         Ok(values.iter().all(plain) && (kind == Kind::Replace || values.len() == 1))
     }
 
-    /// From here to [`Self::mass_end`], the rows written to `field` derive
-    /// nothing: the event does, for all of them.
-    pub(in super::super) fn mass_begin(&self, field: &str) {
-        *self.mass.borrow_mut() = Some(field.to_string());
-    }
-
-    /// The rows of a write to many records of `field` are written: what they
-    /// derive, as one event on `ids` and a few set operations.
-    pub(in super::super) fn mass_end(
-        &self,
-        field: &str,
-        kind: Kind,
-        values: Vec<Value>,
-        uuids: &[Uuid],
-    ) -> Result<()> {
-        *self.mass.borrow_mut() = None;
-        let mut ids = RoaringBitmap::new();
-        for u in uuids {
-            ids.insert(self.id(u.as_bytes())?.with_context(|| format!("no dense id for {u}"))?);
-        }
-        self.mass_end_ids(field, kind, values, ids)
-    }
-
-    /// [`Self::mass_end`] for the ids of the records.
+    /// The rows of a write to many records of `field`, `ids`, are written:
+    /// what they derive, as one event on `ids` and a few set operations.
     pub(in super::super) fn mass_end_ids(
         &self,
         field: &str,

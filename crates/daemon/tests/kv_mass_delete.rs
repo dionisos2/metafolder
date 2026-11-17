@@ -348,7 +348,7 @@ fn undoing_a_folded_mass_delete_keeps_the_dense_ids() {
         assert_eq!(Rows::rows(&store, u).unwrap().len(), 2);
     }
     // The rows the deletion took are still the log's to say.
-    assert!(store.before_known(ops[0].id).unwrap());
+    assert_eq!(store.snapshots(ops[0].id).unwrap().len(), 2);
     while store.fold_step().unwrap() {}
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
     sound(&store);
@@ -473,7 +473,6 @@ fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pend
         assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
     }
     for op in &ops[..30] {
-        assert!(store.before_known(op.id).unwrap());
         assert!(!store.snapshots(op.id).unwrap().is_empty(), "{op:?}");
     }
 }
@@ -497,7 +496,6 @@ fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
     let ops = revert::label_ops(&store, label).unwrap();
-    assert!(ops.iter().all(|o| store.before_known(o.id).unwrap()), "known while pending");
 
     let mut w = Writer::begin(&mut store, None).unwrap();
     revert::apply(&mut w, &ops).unwrap();
@@ -521,7 +519,7 @@ fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
         rows
     };
     for op in &ops {
-        assert!(store.before_known(op.id).unwrap(), "{op:?}");
+        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
     }
     let op = ops.iter().find(|o| o.entity_uuid == touched).unwrap();
     assert_eq!(
@@ -568,7 +566,6 @@ fn a_write_to_many_records_keeps_the_rows_a_deletion_took() {
     write(&mut store, |w| w.mass_add_ids("tag", s("jazz"), &some).unwrap());
     assert_eq!(store.last_write_keys().get("snaps"), Some(&20), "{:?}", store.last_write_keys());
     for op in &ops {
-        assert!(store.before_known(op.id).unwrap(), "{op:?}");
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
         let rows = store.snapshots(op.id).unwrap();
         let tags: Vec<_> = rows.iter().filter(|r| r.name == "tag").map(|r| &r.value).collect();
@@ -603,7 +600,6 @@ fn a_deletion_given_back_and_made_again_keeps_the_rows_of_the_first() {
     while store.fold_step().unwrap() {}
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 0);
     for op in ops.iter().chain(&again) {
-        assert!(store.before_known(op.id).unwrap(), "{op:?}");
         let rows = store.snapshots(op.id).unwrap();
         assert_eq!(rows.len(), 2, "{op:?}");
     }
@@ -632,7 +628,6 @@ fn a_reindex_keeps_the_rows_of_the_records_a_deletion_gave_back() {
     });
     store.reindex().unwrap();
     for op in &ops {
-        assert!(store.before_known(op.id).unwrap(), "{op:?}");
         let rows = store.snapshots(op.id).unwrap();
         assert_eq!(rows.len(), 2, "{op:?}");
         let tag = rows.iter().find(|r| r.name == "tag").unwrap();
@@ -1094,7 +1089,7 @@ fn undoing_a_folded_deletion_keeps_a_later_write_over_a_pending_mass_write() {
 /// write changes them, the rows the first one took are still the records' own,
 /// so the log knows them — before the second deletion is folded as after.
 #[test]
-fn a_deletion_given_back_then_deleted_again_keeps_its_rows_known() {
+fn a_deletion_given_back_then_deleted_again_keeps_its_rows() {
     use metafolder_daemon::revert;
     for fold in [false, true] {
         let (mut store, _dir) = open();
@@ -1114,7 +1109,6 @@ fn a_deletion_given_back_then_deleted_again_keeps_its_rows_known() {
             while store.fold_step().unwrap() {}
         }
         for op in &first {
-            assert!(store.before_known(op.id).unwrap(), "fold: {fold}, operation {}", op.id);
             assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "fold: {fold}");
         }
     }
