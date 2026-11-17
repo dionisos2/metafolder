@@ -50,6 +50,36 @@ fn s(text: &str) -> Value {
 
 const TAGS: [&str; 4] = ["a", "b", "c", "d"];
 
+/// The first records are folders at the root of a forest (`loc`), the others
+/// files placed under them.
+const FOLDERS: usize = 4;
+
+/// The position of record `u` under `parent`, named after it: never taken by
+/// another.
+fn place(parent: Option<Uuid>, u: Uuid) -> Field {
+    let name =
+        metafolder_core::metarecord::TreeName::from(format!("n{}", u.as_u128() % 100_000).as_str());
+    Field::new("loc", Value::TreeRef { parent, name })
+}
+
+/// The live records placed under `folder`.
+fn children(
+    store: &dyn metafolder_daemon::store::Store,
+    folder: Uuid,
+    uuids: &[Uuid],
+) -> Vec<Uuid> {
+    uuids
+        .iter()
+        .copied()
+        .filter(|&u| {
+            store.rows(u).unwrap().iter().any(|r| {
+                r.name == "loc"
+                    && matches!(&r.value, Value::TreeRef { parent: Some(p), .. } if *p == folder)
+            })
+        })
+        .collect()
+}
+
 /// One step of a case, drawn once and played on both stores.
 #[derive(Clone, Debug)]
 enum Step {
@@ -57,6 +87,8 @@ enum Step {
     MassRemove(Vec<Uuid>, &'static str),
     MassSet(Vec<Uuid>, i64),
     MassUnset(Vec<Uuid>),
+    /// Points a reference of the records at another record.
+    MassRef(Vec<Uuid>, Uuid),
     MassDelete(Vec<Uuid>),
     Append(Uuid, &'static str),
     Remove(Uuid, &'static str),
@@ -65,6 +97,11 @@ enum Step {
     Create(Uuid),
     /// Undoes the write of the `n`-th label taken so far.
     Undo(usize),
+    /// Deletes a folder with every record under it: a deletion of many records
+    /// that takes a folder whole.
+    DeleteFolder(Uuid),
+    /// Moves a file under a folder.
+    Move(Uuid, Uuid),
 }
 
 impl Step {
@@ -75,6 +112,7 @@ impl Step {
             | Step::MassRemove(u, _)
             | Step::MassSet(u, _)
             | Step::MassUnset(u)
+            | Step::MassRef(u, _)
             | Step::MassDelete(u) => u,
             _ => &[],
         }
@@ -90,6 +128,7 @@ struct Side {
     /// Writes to many records made as a write to each, as before they were
     /// one entry: the oracle of what they do to the records.
     one_by_one: bool,
+    uuids: Vec<Uuid>,
     _dir: TempDir,
 }
 
@@ -99,9 +138,11 @@ impl Side {
         let mut store = KvStore::open_unsynced(dir.path()).unwrap();
         let mut w = Writer::begin(&mut store, None).unwrap();
         for (i, &u) in uuids.iter().enumerate() {
+            let parent = (i >= FOLDERS).then(|| uuids[i % FOLDERS]);
             w.create_metarecord_with_uuid(
                 u,
                 vec![
+                    place(parent, u),
                     Field::new("tag", s(TAGS[i % 2])),
                     Field::new("rank", Value::Int(i as i64 % 3)),
                 ],
@@ -109,7 +150,7 @@ impl Side {
             .unwrap();
         }
         w.commit().unwrap();
-        Side { store, labels: Vec::new(), one_by_one, _dir: dir }
+        Side { store, labels: Vec::new(), one_by_one, uuids: uuids.to_vec(), _dir: dir }
     }
 
     /// Plays `step`; whether it was written (an undo may be refused). An
@@ -142,6 +183,13 @@ impl Side {
                 }
                 Step::MassUnset(_) if one_by_one => {
                     each(&mut w, &mut |w, u| w.delete_fields_named(u, "rank").map(|_| ()))?;
+                }
+                Step::MassRef(_, to) if one_by_one => {
+                    each(&mut w, &mut |w, u| w.set_field_multi(u, "by", vec![Value::Ref(*to)]))?;
+                }
+                Step::MassRef(u, to) => {
+                    let ids = ids(&w, u);
+                    w.mass_set_ids("by", vec![Value::Ref(*to)], &ids)?;
                 }
                 Step::MassDelete(_) if one_by_one => {
                     each(&mut w, &mut |w, u| w.delete_metarecord(u))?;
@@ -188,13 +236,33 @@ impl Side {
                 }
                 Step::Create(u) => {
                     if !w.store().exists(*u)? {
-                        let fields = vec![Field::new("tag", s("a"))];
+                        let fields = vec![place(None, *u), Field::new("tag", s("a"))];
                         w.create_metarecord_with_uuid(*u, fields)?;
                     }
                 }
                 Step::Undo(n) => {
                     let ops = revert::label_ops(w.store(), self.labels[*n])?;
                     revert::apply(&mut w, &ops)?;
+                }
+                Step::DeleteFolder(f) => {
+                    if w.store().exists(*f)? {
+                        let mut all = children(w.store(), *f, &self.uuids);
+                        all.push(*f);
+                        if one_by_one {
+                            for u in all {
+                                w.delete_metarecord(u)?;
+                            }
+                        } else {
+                            let ids = ids(&w, &all);
+                            w.mass_delete_ids(&ids)?;
+                        }
+                    }
+                }
+                Step::Move(u, f) => {
+                    if w.store().exists(*u)? {
+                        let Field { value, .. } = place(Some(*f), *u);
+                        w.set_field_multi(*u, "loc", vec![value])?;
+                    }
                 }
             }
             Ok(())
@@ -250,6 +318,14 @@ fn draw(rng: &mut Rng, uuids: &[Uuid], labels: usize) -> Step {
     // Writes to one record often, so that some are newer than the entries a
     // write to many left; undos of the newest label most, which the one-pass
     // paths of an undo require.
+    let folder = uuids[rng.below(FOLDERS)];
+    let file = uuids[FOLDERS + rng.below(uuids.len() - FOLDERS)];
+    match rng.below(21) {
+        16 => return Step::DeleteFolder(folder),
+        17 | 18 => return Step::Move(file, folder),
+        19 | 20 => return Step::MassRef(many, one),
+        _ => {}
+    }
     match rng.below(16) {
         0 => Step::MassAdd(many, tag),
         1 => Step::MassRemove(many, tag),
@@ -270,7 +346,7 @@ fn draw(rng: &mut Rng, uuids: &[Uuid], labels: usize) -> Step {
 fn run_case(seed: u64, steps: usize) {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let uuids: Vec<Uuid> =
-        (0..24u128).map(|i| Uuid::from_u128(seed as u128 * 1000 + i + 1)).collect();
+        (0..28u128).map(|i| Uuid::from_u128(seed as u128 * 1000 + i + 1)).collect();
     // `whole` folds everything after each step; `steps` a few lists, at random.
     let mut whole = Side::new(&uuids, false);
     let mut lazy = Side::new(&uuids, false);
@@ -282,6 +358,13 @@ fn run_case(seed: u64, steps: usize) {
         let abort = rng.below(8) == 0;
         let (a, b, c) =
             (whole.play(&step, abort), lazy.play(&step, abort), oracle.play(&step, abort));
+        if std::env::var_os("FOLD_SCHEDULE_TRACE").is_some() {
+            eprintln!(
+                "TRACE {} {:?}",
+                a.is_ok(),
+                a.as_ref().err().map(|e| e.chars().take(90).collect::<String>())
+            );
+        } // TRACE
         assert_eq!(a.is_ok(), b.is_ok(), "seed {seed}, step {at}: {a:?} / {b:?}\n{played:#?}");
         assert_eq!(
             a.is_ok(),

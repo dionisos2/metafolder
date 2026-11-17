@@ -232,6 +232,13 @@ impl KvTxn<'_> {
         if ids.is_empty() {
             return Ok(());
         }
+        // A target no metarecord has gets its id now, as a write to one
+        // record gives it: the event names it by that id until the fold.
+        for value in &values {
+            if let Value::Ref(target) = value {
+                self.target_id(target.as_bytes())?;
+            }
+        }
         let event = Event::new(kind, values, ids);
         match kind {
             Kind::Add | Kind::Remove => {
@@ -413,15 +420,22 @@ impl KvTxn<'_> {
                         self.hist_bump(field, &key, -(gone.len() as i64))?;
                     }
                     // Whatever the records pointed at, they no longer do.
+                    // The targets stored, and those this transaction filed —
+                    // an earlier event of this fold — not in the table yet.
                     let referrers = [&[REFERRERS][..], &name_key(field)].concat();
-                    let mut targets: Vec<Vec<u8>> = Vec::new();
+                    let mut targets: BTreeSet<Vec<u8>> = BTreeSet::new();
                     for entry in t.sets.prefix_iter(&self.txn.borrow(), &referrers)? {
                         let k = entry?.0;
                         if k.len() == referrers.len() + 6 {
-                            targets.push(k[..k.len() - 2].to_vec());
+                            targets.insert(k[..k.len() - 2].to_vec());
                         }
                     }
-                    targets.dedup();
+                    let whole = [&[SETS][..], &referrers[..]].concat();
+                    for k in self.sets.borrow().keys() {
+                        if k.starts_with(&whole) && k.len() == whole.len() + 6 {
+                            targets.insert(k[1..k.len() - 2].to_vec());
+                        }
+                    }
                     for target in targets {
                         self.chunk_apply(SETS, &target, &e.ids, false)?;
                     }

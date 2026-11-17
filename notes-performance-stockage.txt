@@ -100,6 +100,14 @@ dans `main` n'a pas été demandée : c'est à l'utilisateur de la décider.
    - un prune d'une suppression rendue puis écrite laissait ses snapshots
      orphelins (cut_stub ne les ôtait que si in_snaps) ;
    - added() d'une op set_field de stub rendait les valeurs posées.
+   SUITE (17 nov., même revue, générateur étendu aux dossiers, déplacements et
+   références) — CORRIGÉ : un repli d'un remplacement de référence ne retirait
+   pas les records des cibles qu'un événement antérieur du même repli avait
+   créées (cibles lues dans la table seule) ; une écriture de masse d'une
+   référence vers un uuid sans id dense (supprimé puis réindexé, ou inconnu)
+   ne lui réservait pas d'id avant le repli ; rendre une suppression en
+   attente mettait la cible d'une référence ORDINAIRE dans `parents` (et
+   refusait le chemin rapide si cette cible était supprimée).
    Test différentiel tests/kv_fold_schedule.rs : trois stores (repli entier à
    chaque pas / repli d'une liste au hasard / masse faite record par record),
    écritures abandonnées comprises ; FOLD_SCHEDULE_SEEDS=300 en release.

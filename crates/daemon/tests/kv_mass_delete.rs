@@ -1204,3 +1204,79 @@ fn a_failed_revert_leaves_the_pending_deletions_deleted() {
     assert_eq!(Rows::metarecord_count(&store).unwrap(), count);
     sound(&store);
 }
+
+/// Records holding an ordinary reference are given back in one pass, whether
+/// the record they point at is alive or not: a reference is no position, its
+/// target no parent.
+#[test]
+fn giving_back_records_that_hold_a_reference_makes_no_parent_of_its_target() {
+    use metafolder_daemon::revert;
+    for target_alive in [true, false] {
+        let (mut store, _dir) = open();
+        let target =
+            write(&mut store, |w| w.create_metarecord(vec![tree(None, "t")]).unwrap().uuid);
+        let xs: Vec<Uuid> = write(&mut store, |w| {
+            (0..20)
+                .map(|i| {
+                    w.create_metarecord(vec![
+                        Field::new("rank", Value::Int(i)),
+                        Field::new("by", Value::Ref(target)),
+                    ])
+                    .unwrap()
+                    .uuid
+                })
+                .collect()
+        });
+        if !target_alive {
+            write(&mut store, |w| w.delete_metarecord(target).unwrap());
+        }
+        let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+        let label = w.label_id();
+        let ids = w.dense_ids(&xs).unwrap();
+        w.mass_delete_ids(&ids).unwrap();
+        w.commit().unwrap();
+        let ops = revert::label_ops(&store, label).unwrap();
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        revert::apply(&mut w, &ops).unwrap();
+        w.commit().unwrap();
+        let written = store.last_write_keys();
+        assert_eq!(written.get("records"), None, "alive: {target_alive}, in one pass: {written:?}");
+        for &x in &xs {
+            assert!(Rows::exists(&store, x).unwrap());
+        }
+        sound(&store);
+    }
+}
+
+/// Every record holding a position deleted at once, then given back: the field
+/// has no type counted any more, and its folders are parents again all the same.
+#[test]
+fn giving_back_every_holder_of_a_position_makes_the_folders_parents_again() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let all: Vec<Uuid> = write(&mut store, |w| {
+        let mut out = Vec::new();
+        for f in 0..3 {
+            let folder = w.create_metarecord(vec![tree(None, &format!("f{f}"))]).unwrap().uuid;
+            out.push(folder);
+            for k in 0..8 {
+                out.push(
+                    w.create_metarecord(vec![tree(Some(folder), &format!("k{k}"))]).unwrap().uuid,
+                );
+            }
+        }
+        out
+    });
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&all).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), 0);
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), all.len());
+    sound(&store);
+}

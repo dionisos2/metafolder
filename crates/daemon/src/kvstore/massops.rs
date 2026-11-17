@@ -1015,8 +1015,20 @@ impl KvTxn<'_> {
             counts.push((field, types, back));
         }
         let alive = &universe | &ids;
+        // The parents of the positions given back: an ordinary reference is
+        // no position, and its target no parent, alive or not.
         let mut parents: Vec<(String, u32)> = Vec::new();
-        for field in self.fields_with_sets(REFERRERS)? {
+        // A field all of whose rows were deleted has no type left: the rows
+        // given back told it above.
+        let (typed, mut positional) = self.fields_held()?;
+        for (field, types, _) in &counts {
+            let placed =
+                types.iter().any(|t| matches!(t.as_slice(), b"tree_ref" | b"hierarchy_ref"));
+            if placed && !typed.contains(field) {
+                positional.push(field.clone());
+            }
+        }
+        for field in positional {
             let prefix = set_prefix(REFERRERS, Some(&field));
             let mut groups: BTreeMap<u32, RoaringBitmap> = BTreeMap::new();
             {

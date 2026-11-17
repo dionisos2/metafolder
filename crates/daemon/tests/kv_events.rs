@@ -268,3 +268,56 @@ fn a_sorted_page_on_a_field_with_pending_events_reads_the_page() {
         assert!(pending < 1_000, "ascending {ascending}: {pending} keys for a page of 50");
     }
 }
+
+/// A replacement of a reference, folded with the add that came before it in the
+/// same fold: the records leave the referrers of the target the add gave them,
+/// though that target had none stored before the fold.
+#[test]
+fn a_folded_replacement_of_a_reference_leaves_the_targets_an_earlier_event_filed() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 30);
+    let (first, second) = (uuids[0], uuids[1]);
+    let ids = store.dense_ids(&uuids[2..]).unwrap();
+    write(&mut store, |w| w.mass_add_ids("by", Value::Ref(first), &ids).unwrap());
+    write(&mut store, |w| w.mass_set_ids("by", vec![Value::Ref(second)], &ids).unwrap());
+    check(&store);
+    store.fold().unwrap();
+    check(&store);
+}
+
+/// A reference to a record deleted and gone at a reindex names a target with no
+/// metarecord: its dense id is reserved, whether the references were written
+/// before the reindex or after, one by one or to many records.
+#[test]
+fn a_reference_to_a_record_a_reindex_dropped_has_a_reserved_id() {
+    for (before, mass) in [(true, true), (false, true), (true, false), (false, false)] {
+        let (mut store, _dir) = open();
+        let uuids = records(&mut store, 30);
+        let gone = uuids[0];
+        let ids = store.dense_ids(&uuids[2..]).unwrap();
+        let point = |store: &mut KvStore| {
+            write(store, |w| {
+                if mass {
+                    w.mass_set_ids("by", vec![Value::Ref(gone)], &ids).unwrap();
+                } else {
+                    for &u in &uuids[2..] {
+                        w.set_field_multi(u, "by", vec![Value::Ref(gone)]).unwrap();
+                    }
+                }
+            })
+        };
+        if before {
+            point(&mut store);
+        }
+        write(&mut store, |w| w.delete_metarecord(gone).unwrap());
+        store.reindex().unwrap();
+        if !before {
+            point(&mut store);
+        }
+        let diff = store.check_derived().unwrap();
+        assert!(diff.is_empty(), "before: {before}, mass: {mass}: {diff:#?}");
+        store.fold().unwrap();
+        let diff = store.check_derived().unwrap();
+        assert!(diff.is_empty(), "before: {before}, mass: {mass}, folded: {diff:#?}");
+    }
+}
