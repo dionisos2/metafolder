@@ -43,7 +43,6 @@ time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 toml_datetime = { version = "1", features = ["serde"] }
 toml_parser = { version = "1" }
 toml_writer = { version = "1" }
-tracing = { version = "0.1", features = ["log"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 winnow = { version = "1" }
@@ -70,7 +69,7 @@ simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 stable_deref_trait = { version = "1" }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit"] }
-syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "full", "visit", "visit-mut"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "full", "visit"] }
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 toml_datetime = { version = "1", features = ["serde"] }
 toml_parser = { version = "1" }

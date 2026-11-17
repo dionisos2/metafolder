@@ -18,17 +18,29 @@ same(mfr_meta_artist, mfr_path = "/music/a.flac")
 The parsers are ''pure Rust and memory-safe'', in the daemon process:
 
 * audio — `lofty`: ID3v2/ID3v1, Vorbis comments (FLAC, Ogg, Opus), MP4/M4A atoms, tags ''and'' stream properties (duration, bitrate, sample rate, channels);
-* images — `nom-exif`: the EXIF/TIFF tags of JPEG, TIFF and common RAW formats — capture date, make and model, orientation, GPS, dimensions;
-* video containers (Matroska, MP4) — best effort: title, and dimensions and duration where cheap.
+* images — `kamadak-exif`: the EXIF tags of JPEG, TIFF and the RAW formats built on it, HEIF, PNG and WebP — capture date (an instant when its offset is recorded, else text), make and model, orientation, GPS, dimensions;
+* video containers (Matroska, MP4) — not read yet: the shipped map's `@width`/`@height` sources wait for a backend that gives them.
 
 ''Why no sandbox here'', when the GUI confines every media decoder
 ([[Sandboxing the media decoders]]): a memory-safe parser fed a crafted file can at worst
 panic or return wrong values, never execute code, unlike the C decoders behind `ffmpeg`
 or the WebView. So each backend runs under `catch_unwind` — a panic is a warning naming
-the file, its partial output dropped (without it, one image whose EXIF makes `nom-exif`
+the file, its partial output dropped (without it, one image whose EXIF made the former parser, `nom-exif`,
 hit an `assert!` on file-controlled sizes failed every reconcile of the repository) — and
-its allocations are bounded (lofty's allocation limit; for `nom-exif`, the file's real
-length). A richer `exiftool`/`ffprobe` backend would need that sandbox in the daemon
+its allocations are bounded (lofty's allocation limit; for `kamadak-exif`, the file's real
+length). A failed allocation is the one way out of that net: it aborts the whole daemon.
+`tests/metadata_exif.rs` therefore measures what thousands of damaged images, and one
+crafted to repeat its IFD pointers (GHSA-53gf-vqf6-qvp8, fixed in kamadak-exif 0.6.2),
+make the parser hold.
+
+''Why `kamadak-exif`'' (November 2026, replacing `nom-exif`, which requires the
+unmaintained `chrono`): of the pure-Rust readers that read HEIF, it has the least code
+(about 6,600 lines) and a single dependency; its two advisories are fixed.
+`little_exif` is fuzzed and has no `unsafe` but is built to write EXIF and pulls in
+decompression and XML; `rexif` reads neither HEIF nor PNG. No upstream fuzzing, hence the
+damaged-image test above.
+
+A richer `exiftool`/`ffprobe` backend would need that sandbox in the daemon
 first, and is out of scope until then.
 
 What is extracted is up to each repository ([[The metadata map]]); when it happens:

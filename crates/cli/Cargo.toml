@@ -19,9 +19,8 @@ ureq = { version = "3", default-features = false, features = ["json"] }
 # Reading the GUI's config.toml to discover its port (doc "mf gui").
 toml = "1.0"
 
-# The local time zone `mf slow` shows its times in (doc "mf slow list");
-# already built for the daemon (nom-exif), with the same features.
-# The local time zone (`TZ`, else /etc/localtime), for `mf slow`.
+# The local time zone (`TZ`, else /etc/localtime) `mf slow` shows its times
+# in (doc "mf slow list").
 jiff = "1"
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 

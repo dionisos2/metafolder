@@ -4,19 +4,20 @@
 //! artist/album/title, an image's capture date/camera/GPS — into reserved
 //! `mfr_meta_*` fields, driven by the per-repo [`MetadataMap`].
 //!
-//! The parsers are **pure-Rust and memory-safe** (`lofty` for audio, `nom-exif`
-//! for images): a crafted file can at worst make a parser return an error or
+//! The parsers are **pure-Rust and memory-safe** (`lofty` for audio,
+//! `kamadak-exif` for images): a crafted file can at worst make a parser return an error or
 //! wrong values (which we treat as "no metadata"), never the passive
 //! code-execution vector that the C media decoders behind `ffmpeg` / the WebView
 //! are. That is precisely why this needs no subprocess sandbox in the daemon.
 //!
 //! Memory-safe is not the same as well-behaved, though, and the two remaining
-//! ways a crafted file bites are bounded here: a *panic* (`nom-exif` asserts on
-//! sizes the file controls) is caught per backend ([`guarded`]), and an
-//! *allocation* sized by the file is capped by lofty's global allocation
-//! limit (16 MiB by default) and, for nom-exif, by what the file really holds
-//! (it reads incrementally: a box *claiming* 2 GiB in a small file ends at the
-//! end of the file, not in a 2 GiB buffer).
+//! ways a crafted file bites are bounded here: a *panic* is caught per backend
+//! ([`guarded`]), and an *allocation* sized by the file is capped by lofty's
+//! global allocation limit (16 MiB by default) and, for kamadak-exif, by what
+//! the file really holds (a segment or box *claiming* 2 GiB in a small file ends
+//! at the end of the file, not in a 2 GiB buffer). A failed allocation aborts
+//! the daemon, past any `catch_unwind`: `tests/metadata_exif.rs` measures what
+//! damaged and crafted images make the parser hold.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -103,8 +104,8 @@ fn collect_sources(abs: &Path) -> HashMap<String, SourceValue> {
 }
 
 /// Runs one backend, turning a panic into "no metadata". Memory-safe is not
-/// panic-free: `nom-exif` `assert!`s on box sizes a crafted file controls, and
-/// a panic here would fail the whole reconcile — on every run, since the file
+/// panic-free: a parser may `assert!` on sizes a crafted file controls, and a
+/// panic here would fail the whole reconcile — on every run, since the file
 /// stays in the tree. What a panicked backend had collected is dropped (it
 /// stopped half-way); the file's path is reported.
 fn guarded(
@@ -172,41 +173,95 @@ fn collect_audio(abs: &Path, out: &mut HashMap<String, SourceValue>) {
     }
 }
 
-/// Image EXIF via `nom-exif`. Dates are kept as exact instants; GPS is exposed
-/// as signed decimal degrees under `GPSLatitude`/`GPSLongitude`.
+/// Image EXIF via `kamadak-exif` (JPEG, TIFF and the RAW formats built on it,
+/// HEIF, PNG, WebP). A capture date with its offset is kept as an exact
+/// instant, one without as text; GPS is exposed as signed decimal degrees under
+/// `GPSLatitude`/`GPSLongitude`.
 fn collect_exif(abs: &Path, out: &mut HashMap<String, SourceValue>) {
-    use nom_exif::{EntryValue, ExifTag};
+    use exif::{In, Tag, Value as V};
 
-    let Ok(exif) = nom_exif::read_exif(abs) else {
+    let Ok(file) = std::fs::File::open(abs) else {
         return;
     };
-    const TAGS: &[(ExifTag, &str)] = &[
-        (ExifTag::DateTimeOriginal, "DateTimeOriginal"),
-        (ExifTag::Make, "Make"),
-        (ExifTag::Model, "Model"),
-        (ExifTag::Orientation, "Orientation"),
-        (ExifTag::ImageWidth, "ImageWidth"),
-        (ExifTag::ImageHeight, "ImageHeight"),
-    ];
-    for (tag, name) in TAGS {
-        if let Some(v) = exif.get(*tag) {
-            let sv = match v {
-                // Keep the exact instant; its `Display` is rfc3339-with-offset,
-                // which the text date parser cannot read back.
-                EntryValue::DateTime(dt) => SourceValue::DateTimeMs(dt.timestamp_millis()),
-                other => SourceValue::Text(other.to_string()),
-            };
-            out.insert((*name).to_string(), sv);
+    let Ok(exif) = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file))
+    else {
+        return;
+    };
+    let field = |tag| exif.get_field(tag, In::PRIMARY).map(|f| &f.value);
+    let ascii = |tag| match field(tag)? {
+        V::Ascii(parts) => parts.first().map(|p| p.as_slice()),
+        _ => None,
+    };
+
+    for (tag, name) in [(Tag::Make, "Make"), (Tag::Model, "Model")] {
+        if let Some(bytes) = ascii(tag) {
+            let s = String::from_utf8_lossy(bytes);
+            let s = s.trim_end_matches(['\0', ' ']);
+            if !s.is_empty() {
+                out.insert(name.to_string(), SourceValue::Text(s.to_string()));
+            }
         }
     }
-    if let Some(gps) = exif.gps_info() {
-        if let Some(lat) = gps.latitude_decimal() {
-            out.insert("GPSLatitude".to_string(), SourceValue::Float(lat));
-        }
-        if let Some(lon) = gps.longitude_decimal() {
-            out.insert("GPSLongitude".to_string(), SourceValue::Float(lon));
+    for (tag, name) in [
+        (Tag::Orientation, "Orientation"),
+        (Tag::ImageWidth, "ImageWidth"),
+        (Tag::ImageLength, "ImageHeight"),
+    ] {
+        if let Some(n) = field(tag).and_then(|v| v.get_uint(0)) {
+            out.insert(name.to_string(), SourceValue::Text(n.to_string()));
         }
     }
+    if let Some(sv) = ascii(Tag::DateTimeOriginal)
+        .and_then(|raw| capture_date(raw, ascii(Tag::OffsetTimeOriginal)))
+    {
+        out.insert("DateTimeOriginal".to_string(), sv);
+    }
+    for (tag, sign_tag, negative, name) in [
+        (Tag::GPSLatitude, Tag::GPSLatitudeRef, b'S', "GPSLatitude"),
+        (Tag::GPSLongitude, Tag::GPSLongitudeRef, b'W', "GPSLongitude"),
+    ] {
+        let (Some(V::Rational(dms)), Some(sign)) = (field(tag), ascii(sign_tag)) else {
+            continue;
+        };
+        let Some(deg) = dms
+            .iter()
+            .zip([1.0, 60.0, 3600.0])
+            .map(|(r, div)| (r.denom != 0).then(|| r.to_f64() / div))
+            .sum::<Option<f64>>()
+        else {
+            continue;
+        };
+        let deg = if sign.first() == Some(&negative) { -deg } else { deg };
+        out.insert(name.to_string(), SourceValue::Float(deg));
+    }
+}
+
+/// An EXIF capture date: an instant when `offset` names its time zone, the
+/// text `YYYY-MM-DD HH:MM:SS` when it does not (a wall clock time names no
+/// instant), nothing when it is blank or not a date.
+fn capture_date(raw: &[u8], offset: Option<&[u8]>) -> Option<SourceValue> {
+    let mut dt = exif::DateTime::from_ascii(raw).ok()?;
+    let valid = (1..=12).contains(&dt.month)
+        && (1..=31).contains(&dt.day)
+        && dt.hour < 24
+        && dt.minute < 60
+        && dt.second < 61;
+    if !valid {
+        return None;
+    }
+    if offset.is_some_and(|o| dt.parse_offset(o).is_ok()) {
+        let days = date::days_from_civil(dt.year.into(), dt.month.into(), dt.day.into());
+        let secs = days * 86_400
+            + i64::from(dt.hour) * 3600
+            + i64::from(dt.minute) * 60
+            + i64::from(dt.second)
+            - i64::from(dt.offset?) * 60;
+        return Some(SourceValue::DateTimeMs(secs * 1000));
+    }
+    Some(SourceValue::Text(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+    )))
 }
 
 #[cfg(test)]
@@ -217,7 +272,7 @@ mod tests {
         MetadataMap::parse(toml).unwrap()
     }
 
-    /// A parser that panics on a crafted file (nom-exif `assert!`s on box
+    /// A parser that panics on a crafted file (one that `assert!`s on box
     /// sizes) must cost that file its metadata, not the whole reconcile — else
     /// one file in the tree makes every reconcile of the repository fail.
     #[test]
