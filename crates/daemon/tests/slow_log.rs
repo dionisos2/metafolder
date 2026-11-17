@@ -389,6 +389,36 @@ async fn test_a_field_write_reports_the_phases_of_a_write() {
 
 #[tokio::test]
 #[ignore = "timing: its outcome depends on the clock see the note Tests that fail under load"]
+async fn test_a_batch_write_says_which_fields_it_wrote() {
+    // A batch of several writes is one entry: without its ops, a reader
+    // cannot tell which field cost the time.
+    let f = fixture("batch", 1).await;
+    let (status, body) = f
+        .while_busy(
+            "POST",
+            &format!("/repos/{}/query/fields/batch", f.repo),
+            Some(json!({"ops": [
+                {"op": "create", "fields": [{"name": "title", "value": {"type": "string", "value": "x"}}]},
+                {"op": "set", "query": {"type": "is_present", "field": "mfr_path"},
+                 "name": "rating", "value": {"type": "int", "value": 5}},
+            ]})),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let entry = f
+        .entries()
+        .into_iter()
+        .find(|e| e.op.ends_with("/query/fields/batch"))
+        .expect("the batch must be logged");
+    // The query of the set is resolved before the creation: the root only.
+    assert_eq!(context(&entry, "ops"), Some("create: 1, set rating: 1"), "{entry:?}");
+    assert_eq!(context(&entry, "updated"), Some("2"), "{entry:?}");
+}
+
+#[tokio::test]
+#[ignore = "timing: its outcome depends on the clock see the note Tests that fail under load"]
 async fn test_the_endpoint_serves_the_log_newest_first_and_can_empty_it() {
     let f = fixture("endpoint", 1).await;
     let repo_state = f.state.ready_repo(f.repo.parse().unwrap()).unwrap();

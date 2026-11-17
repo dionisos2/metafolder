@@ -697,6 +697,8 @@ pub(super) async fn batch_writes(
             Ok(())
         };
         let mut results = Vec::with_capacity(ready.len());
+        // What each op wrote, for the slow log: verb, field, records changed.
+        let mut summary: Vec<(&'static str, Option<String>, u64)> = Vec::with_capacity(ready.len());
         for op in ready {
             match op {
                 Ready::Create(uuid, fields) => {
@@ -716,32 +718,43 @@ pub(super) async fn batch_writes(
                         touch(created.uuid, name);
                     }
                     results.push(json!({ "uuid": hex(created.uuid) }));
+                    summary.push(("create", None, 1));
                     continue;
                 }
                 Ready::Set(ids, name, rows) => {
                     // One write to many records (doc "Mass operations in the log").
                     let changed = writer.mass_set_ids(&name, rows, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
+                    summary.push(("set", Some(name.clone()), changed.len()));
                     touch_ids(&writer, &changed, &name, &mut touch)?;
                 }
                 Ready::Add(ids, name, value) => {
                     let changed = writer.mass_add_ids(&name, value, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
+                    summary.push(("add", Some(name.clone()), changed.len()));
                     touch_ids(&writer, &changed, &name, &mut touch)?;
                 }
                 Ready::Remove(ids, name, value) => {
                     let changed = writer.mass_remove_ids(&name, &value, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
+                    summary.push(("remove", Some(name.clone()), changed.len()));
                     touch_ids(&writer, &changed, &name, &mut touch)?;
                 }
                 Ready::Unset(ids, name) => {
                     let changed = writer.mass_unset_ids(&name, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
+                    summary.push(("unset", Some(name.clone()), changed.len()));
                     touch_ids(&writer, &changed, &name, &mut touch)?;
                 }
             }
         }
         drop(writing);
+        let ops: Vec<_> = summary.iter().map(|(v, f, n)| (*v, f.as_deref(), *n)).collect();
+        slowlog::note(
+            "ops",
+            batch_summary(&ops).chars().take(slowlog::MAX_QUERY_CHARS).collect::<String>(),
+        );
+        slowlog::note("updated", summary.iter().map(|(_, _, n)| n).sum::<u64>().to_string());
         for (uuid, names) in &touched {
             slowlog::timed("validate.schema", || {
                 validate_schema(repo_state, writer.store(), *uuid, names)
@@ -854,5 +867,60 @@ fn note_query(body: &QueryBody) {
     }
     if body.count {
         slowlog::note("count", "true");
+    }
+}
+
+/// What a batch wrote, for its slow-log entry: each op as its verb and field
+/// and the number of records it changed, consecutive ops alike merged
+/// (`add tag ×6: 120000`), so an entry says which field cost the time.
+fn batch_summary(ops: &[(&str, Option<&str>, u64)]) -> String {
+    // (verb, field, ops merged, records changed)
+    let mut runs: Vec<(&str, Option<&str>, u64, u64)> = Vec::new();
+    for &(verb, field, changed) in ops {
+        match runs.last_mut() {
+            Some(run) if run.0 == verb && run.1 == field => {
+                run.2 += 1;
+                run.3 += changed;
+            }
+            _ => runs.push((verb, field, 1, changed)),
+        }
+    }
+    let parts: Vec<String> = runs
+        .into_iter()
+        .map(|(verb, field, n, changed)| {
+            let mut part = verb.to_string();
+            if let Some(field) = field {
+                part.push(' ');
+                part.push_str(field);
+            }
+            if n > 1 {
+                part.push_str(&format!(" ×{n}"));
+            }
+            format!("{part}: {changed}")
+        })
+        .collect();
+    parts.join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::batch_summary;
+
+    #[test]
+    fn test_a_batch_summary_names_each_op_with_its_field_and_count() {
+        let ops = [
+            ("create", None, 1),
+            ("create", None, 1),
+            ("add", Some("tag"), 10),
+            ("add", Some("tag"), 5),
+            ("set", Some("rating"), 3),
+            ("add", Some("tag"), 0),
+        ];
+        assert_eq!(batch_summary(&ops), "create ×2: 2, add tag ×2: 15, set rating: 3, add tag: 0");
+    }
+
+    #[test]
+    fn test_a_batch_summary_of_no_op_is_empty() {
+        assert_eq!(batch_summary(&[]), "");
     }
 }

@@ -23,7 +23,7 @@ One JSON object per line, written when the operation ends:
 |`reads` |the keys the store read during the operation (absent when none, as on the GUI's entries) |
 |`op_id` |the id correlating a GUI entry with the daemon's for the same request, when the client sent one |
 |`phases` |the breakdown, below |
-|`context` |free-form pairs, in order: the query, the number of results, the field written, the events of a flush. A query is kept whole (up to 64 KiB) with its `sort`, `limit` and `count`, so the entry can be replayed |
+|`context` |free-form pairs, in order: the query, the number of results, the field written, the events of a flush. A batch (`POST /query/fields/batch`) names its ops under `ops` — each verb and field with the records it changed, consecutive ones alike merged (`create ×2: 2, add tag ×6: 120000`) — and their total under `updated`, so the field that cost the time reads off the entry. A query is kept whole (up to 64 KiB) with its `sort`, `limit` and `count`, so the entry can be replayed |
 
 An entry's ''id'' (`b57e137d`) is not stored: it is 8 hex digits derived from its
 `source`, `at_ms`, `op` and `ms` (FNV-1a, `slowlog::Entry::id`), so every entry ever
