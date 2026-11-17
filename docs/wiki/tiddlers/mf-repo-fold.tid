@@ -1,0 +1,10 @@
+title: mf repo fold
+tags: [[CLI command]]
+kind: reference
+summary: Fold now what writes to many records left pending
+
+
+Folds at once what the writes to many records left pending, one list at a time, and
+prints how many lists it folded (`0` when nothing was pending): what the daemon does
+by itself after thirty seconds without activity ([[Folding in idle time]]), through
+`POST /repos/:repo/fold`. [[mf repo wear]] says what is pending.
