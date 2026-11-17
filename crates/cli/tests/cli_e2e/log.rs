@@ -50,6 +50,36 @@ fn test_log_show_displays_what_the_operation_replaced() {
     assert!(parsed["label"]["is_head"].as_bool().unwrap());
 }
 
+/// A label with no operation of its own says so, rather than stopping after
+/// its header as if something had failed.
+#[test]
+fn test_log_show_says_when_a_label_holds_no_operation() {
+    let (repo, _root) = init_repo("log_show_empty");
+    let out = mf(&["-u", &repo, "label", "begin", "run"]);
+    assert_ok(&out);
+    let context = out.stdout.trim().to_string();
+    let (_, run) = context.split_once(':').expect("<repo>:<id>");
+
+    let out = mf(&["-u", &repo, "log", "show", run]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("(empty: no operation)"), "stdout: {}", out.stdout);
+
+    // Its writes are in the labels of the commands run inside it.
+    let envs = [("METAFOLDER_LABEL", context.as_str())];
+    assert_ok(&mf_full(&["-u", &repo, "metarecord", "add", "rating:int=3"], None, &envs, true));
+    let child = mf(&["-u", &repo, "log", "show", "HEAD", "--raw"]);
+    let child: serde_json::Value = serde_json::from_str(&child.stdout).unwrap();
+    let child = child["label"]["id"].as_i64().unwrap();
+
+    let out = mf(&["-u", &repo, "log", "show", run]);
+    assert_ok(&out);
+    assert!(
+        out.stdout.contains(&format!("(no operation of its own: see its sub-label {child})")),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
 #[test]
 fn test_log_show_rejects_bad_target() {
     let (repo, _root) = init_repo("log_show_bad");

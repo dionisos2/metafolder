@@ -484,7 +484,12 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
         println!("  in label {aid}  {}", ancestor["name"].as_str().unwrap_or(""));
     }
 
-    for op in resp["operations"].as_array().into_iter().flatten() {
+    let operations = resp["operations"].as_array().map_or(&[][..], Vec::as_slice);
+    if operations.is_empty() {
+        // A header alone would read as a failure: say why nothing follows.
+        println!("  {}", fmt_no_operation(label["children"].as_array()));
+    }
+    for op in operations {
         println!();
         println!("  {}", fmt_op_line(op));
         // The log keeps the rows an operation took off, not the ones it left.
@@ -494,6 +499,21 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
         println!("    {prefix}before:  {}", fmt_snapshots(op["snapshots_before"].as_array()));
     }
     Ok(0)
+}
+
+/// What `mf log show` prints for a label with no operation of its own: empty,
+/// or its writes are in its sub-labels (a context `mf label begin` opened).
+fn fmt_no_operation(children: Option<&Vec<Json>>) -> String {
+    let ids: Vec<String> = children
+        .into_iter()
+        .flatten()
+        .map(|c| c.as_i64().or_else(|| c["id"].as_i64()).unwrap_or(0).to_string())
+        .collect();
+    match ids.len() {
+        0 => "(empty: no operation)".to_string(),
+        1 => format!("(no operation of its own: see its sub-label {})", ids[0]),
+        _ => format!("(no operation of its own: see its sub-labels {})", ids.join(", ")),
+    }
 }
 
 /// Formats a list of snapshot rows as a comma-separated value list. For
