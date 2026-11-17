@@ -17,7 +17,7 @@ fn test_repo_check_reports_damage_and_reindex_repairs_it() {
         // SAFETY: the repository is unloaded (see above), so nothing else
         // maps the file; no WRITEMAP.
         let env =
-            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(&kv) }.unwrap();
+            unsafe { heed::EnvOpenOptions::new().max_dbs(64).map_size(1 << 30).open(&kv) }.unwrap();
         let r = env.read_txn().unwrap();
         let sets = env
             .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {

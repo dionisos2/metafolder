@@ -392,3 +392,26 @@ fn a_store_of_the_tree_layout_opens_with_an_empty_log() {
         assert!(db.is_empty(&r).unwrap(), "{name} is cleared");
     }
 }
+
+/// A store that still holds every table of the older layouts opens: the
+/// current tables and the older ones together exceed 32 named databases.
+#[test]
+fn a_store_with_every_older_table_opens() {
+    let dir = fixture();
+    {
+        let env = raw_env(dir.path());
+        for name in [
+            "cells",
+            "field_cells",
+            "row_owner",
+            "by_field",
+            "op_children",
+            "restorations",
+            "ops_by_rev",
+            "revisions",
+        ] {
+            create_raw(&env, name);
+        }
+    }
+    drop(KvStore::open(dir.path()).expect("the store opens"));
+}

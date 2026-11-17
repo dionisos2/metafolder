@@ -62,7 +62,7 @@ pub fn uuids(src: &KvSource, bm: &RoaringBitmap) -> Vec<Uuid> {
 pub fn raw_env(dir: &std::path::Path) -> heed::Env {
     // SAFETY: the test opens the file once, with no `KvStore` on it, and
     // without WRITEMAP: nothing else maps it meanwhile.
-    unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir).unwrap() }
+    unsafe { heed::EnvOpenOptions::new().max_dbs(64).map_size(1 << 30).open(dir).unwrap() }
 }
 
 /// One of a store's raw tables, as a test damages or downgrades it.

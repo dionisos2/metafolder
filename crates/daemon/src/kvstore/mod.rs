@@ -747,7 +747,7 @@ fn open_env(dir: &Path, map_size: usize, durable: bool) -> Result<Env<WithoutTls
         let held = std::fs::metadata(dir.join("data.mdb")).map_or(0, |m| m.len() as usize);
         let map_size = page_multiple(map_size.max(held.saturating_mul(2)));
         let mut options = EnvOpenOptions::new().read_txn_without_tls();
-        options.map_size(map_size).max_dbs(32);
+        options.map_size(map_size).max_dbs(64);
         if !durable {
             // SAFETY: NO_SYNC trades durability for speed, which is the
             // caller's stated choice (`open_unsynced`, or a copy in memory,
