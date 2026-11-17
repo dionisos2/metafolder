@@ -397,7 +397,10 @@ impl Read<'_> {
     /// none for any other operation.
     pub(super) fn added_rows(&self, op_id: i64) -> Result<Vec<FieldRow>> {
         if let Some(stub) = self.stub_at(op_id)? {
-            return Ok(if stub.delete { Vec::new() } else { stub.snapshot(op_id, true) });
+            // An `append_field`'s, as an ordinary operation's: a replacement
+            // keeps its "before" only.
+            let append = !stub.delete && stub.kind == Kind::Add;
+            return Ok(if append { stub.snapshot(op_id, true) } else { Vec::new() });
         }
         let mut out = Vec::new();
         let prefix = key(&[&be(op_id), &[1u8]]);
@@ -507,8 +510,29 @@ impl Read<'_> {
         if self.t.snaps.prefix_iter(self.r, &prefix)?.next().is_some() {
             return Ok(true);
         }
-        let Some((_, uuid)) = self.deleted_record(&stub, op_id)? else { return Ok(true) };
+        let Some((id, uuid)) = self.deleted_record(&stub, op_id)? else { return Ok(true) };
+        // A record a mark still names at this operation — the deletion pending,
+        // or given back and not written to since (any write copies the rows
+        // first) — holds what the deletion took, whatever came after.
+        if self.marked_at(id, op_id)? {
+            return Ok(true);
+        }
         Ok(self.revert_chain(uuid, op_id)?.is_some())
+    }
+
+    /// Whether the mark of a deletion pending, or of one given back, names
+    /// record `id` as the record of operation `op_id`.
+    fn marked_at(&self, id: u32, op_id: i64) -> Result<bool> {
+        for part in [DELETES_PART, THAWED_PART] {
+            let marks = read_part(self.t, self.r, part)?;
+            self.count(marks.len() as u64 + 1)?;
+            for mark in marks {
+                if mark.ids.contains(id) && mark.op as i64 + mark.ids.rank(id) as i64 - 1 == op_id {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// A record's operations after `after`, ascending: its own, and those of
@@ -791,8 +815,8 @@ impl KvTxn<'_> {
             &entry_key(DELETES_PART, entry.op),
             &entry.encode(),
         )?;
-        self.mass_lists.store(true, std::sync::atomic::Ordering::Relaxed);
-        self.deletes.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.mass_lists.set(true);
+        self.deletes.set(true);
         Ok(Some(MassApplied { changed, last_op: last, touches_watch }))
     }
 
@@ -997,7 +1021,9 @@ impl KvTxn<'_> {
         }
         // What is read is settled: the writes.
         for (id, uuid, rows) in revived.iter().flatten() {
-            self.put_record(*id, rows)?;
+            // Not as plain rows: entries of a write to many records may still
+            // name the id, older than the rows the deletion took.
+            self.put_given_back(*id, rows)?;
             self.t.metarecords.put(&mut self.txn.borrow_mut(), uuid.as_bytes(), &[])?;
             for row in rows {
                 self.add_hist(&row.name, &row.value)?;
@@ -1031,7 +1057,7 @@ impl KvTxn<'_> {
             ids: ids.clone(),
         };
         self.t.mass.put(&mut w, &entry_key(THAWED_PART, given_back.op), &given_back.encode())?;
-        self.thawed.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.thawed.set(true);
         self.t.mass.delete(&mut w, &entry_key(DELETES_PART, mark.op))?;
         let ranks: Vec<u32> = mark.ids.iter().collect();
         let (lo, hi) = ((first_op - mark.op as i64) as usize, (last_op - mark.op as i64) as usize);
@@ -1163,7 +1189,7 @@ impl KvTxn<'_> {
             }
         };
         let Some((entry_key_bytes, listed)) = found else {
-            self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
+            self.deletes.set(false);
             return Ok(false);
         };
         // A record about to leave the store may be one an earlier deletion
@@ -1280,7 +1306,7 @@ impl KvTxn<'_> {
             waiting |= flush(&mut run, start, &mut w)?;
         }
         if !waiting {
-            self.thawed.store(false, std::sync::atomic::Ordering::Relaxed);
+            self.thawed.set(false);
         }
         Ok(())
     }
@@ -1364,16 +1390,20 @@ impl KvTxn<'_> {
     fn cut_stub(&self, stub: &Stub, k: usize) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        if stub.delete && stub.in_snaps {
-            for id in stub.first..stub.first + k as i64 {
-                let doomed: Vec<Vec<u8>> = t
-                    .snaps
-                    .prefix_iter(&w, &be(id))?
-                    .map(|e| e.map(|(key, _)| key.to_vec()))
-                    .collect::<std::result::Result<_, _>>()?;
-                for key in doomed {
-                    t.snaps.delete(&mut w, &key)?;
-                }
+        // A deletion's rows are in the snapshots once the fold froze them, or
+        // once a record it gave back was written to (`in_snaps` says only the
+        // first): one pass over the keys of the operations cut, which follow
+        // each other.
+        if stub.delete {
+            let (lo, hi) = (be(stub.first), be(stub.first + k as i64));
+            let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Excluded(&hi[..]));
+            let doomed: Vec<Vec<u8>> = t
+                .snaps
+                .range(&w, &range)?
+                .map(|e| e.map(|(key, _)| key.to_vec()))
+                .collect::<std::result::Result<_, _>>()?;
+            for key in doomed {
+                t.snaps.delete(&mut w, &key)?;
             }
         }
         if let Some(target) = stub.reverts {

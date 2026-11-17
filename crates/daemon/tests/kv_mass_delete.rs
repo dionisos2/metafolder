@@ -1034,3 +1034,179 @@ fn reverting_the_same_deletion_again_after_its_redo_brings_the_records_back() {
     }
     sound(&store);
 }
+
+/// A record a write to one record changed after a write to many is read with
+/// the later write winning. Folding a deletion of it, then undoing that, must
+/// not let the older entry, still pending on the record's part, win again: the
+/// record is put back as the deletion took it.
+#[test]
+fn undoing_a_folded_deletion_keeps_a_later_write_over_a_pending_mass_write() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let all = store.dense_ids(&uuids).unwrap();
+    // A write to many records, left pending on the part…
+    write(&mut store, |w| {
+        w.mass_add_ids("tag", s("red"), &all).unwrap();
+        w.mass_set_ids("rank", vec![Value::Int(99)], &all).unwrap();
+    });
+    // …then a write to one record that undoes it for that record.
+    write(&mut store, |w| {
+        w.delete_fields_valued(uuids[0], "tag", &s("red")).unwrap();
+        w.set_field_multi(uuids[0], "rank", vec![Value::Int(5)]).unwrap();
+    });
+    let rows_of = |store: &KvStore, u: Uuid| {
+        let mut rows: Vec<String> = Rows::rows(store, u)
+            .unwrap()
+            .iter()
+            .map(|r| format!("{}={:?}", r.name, r.value))
+            .collect();
+        rows.sort();
+        rows
+    };
+    let start: Vec<_> = uuids.iter().map(|&u| rows_of(&store, u)).collect();
+    assert!(!start[0].iter().any(|r| r.contains("red")), "{:?}", start[0]);
+
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    w.mass_delete_ids(&all).unwrap();
+    w.commit().unwrap();
+    // One step of the idle fold: the deletion, which goes first; the part's
+    // entries are still pending (the user came back to work).
+    assert!(store.fold_step().unwrap());
+    assert!(store.wear().unwrap().mass_entries > 0, "the part is still pending");
+
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+
+    let after: Vec<_> = uuids.iter().map(|&u| rows_of(&store, u)).collect();
+    assert_eq!(after[0], start[0], "the record given back is the one deleted");
+    assert_eq!(after, start);
+    while store.fold_step().unwrap() {}
+    let again: Vec<_> = uuids.iter().map(|&u| rows_of(&store, u)).collect();
+    assert_eq!(again, start, "after the fold");
+    sound(&store);
+}
+
+/// Records a deletion gave back, deleted again by another deletion: until a
+/// write changes them, the rows the first one took are still the records' own,
+/// so the log knows them — before the second deletion is folded as after.
+#[test]
+fn a_deletion_given_back_then_deleted_again_keeps_its_rows_known() {
+    use metafolder_daemon::revert;
+    for fold in [false, true] {
+        let (mut store, _dir) = open();
+        let uuids = records(&mut store, 30);
+        let all = store.dense_ids(&uuids).unwrap();
+        let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+        let label = w.label_id();
+        w.mass_delete_ids(&all).unwrap();
+        w.commit().unwrap();
+        let first = revert::label_ops(&store, label).unwrap();
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        revert::apply(&mut w, &first).unwrap();
+        w.commit().unwrap();
+        // Deleted again, by a deletion that is no redo of the first.
+        write(&mut store, |w| w.mass_delete_ids(&all).unwrap());
+        if fold {
+            while store.fold_step().unwrap() {}
+        }
+        for op in &first {
+            assert!(store.before_known(op.id).unwrap(), "fold: {fold}, operation {}", op.id);
+            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "fold: {fold}");
+        }
+    }
+}
+
+/// A prune takes the oldest operations of a deletion with whatever the log kept
+/// of them: the rows the fold froze, and those copied when a record given back
+/// was written to.
+#[test]
+fn a_prune_takes_the_rows_kept_of_the_deletions_it_removes() {
+    use metafolder_daemon::revert;
+    for given_back in [false, true] {
+        let (mut store, _dir) = open();
+        let uuids = records(&mut store, 30);
+        let all = store.dense_ids(&uuids).unwrap();
+        let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+        let label = w.label_id();
+        w.mass_delete_ids(&all).unwrap();
+        w.commit().unwrap();
+        let ops = revert::label_ops(&store, label).unwrap();
+        if given_back {
+            // Given back, then written to: the rows the deletion took are copied.
+            let mut w = Writer::begin(&mut store, None).unwrap();
+            revert::apply(&mut w, &ops).unwrap();
+            w.commit().unwrap();
+            write(&mut store, |w| {
+                for &u in &uuids {
+                    w.append_field(u, "tag", s("red")).unwrap();
+                }
+            });
+        } else {
+            while store.fold_step().unwrap() {}
+        }
+        for op in &ops {
+            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "given back: {given_back}");
+        }
+        let target = ops[10].id;
+        metafolder_daemon::log::prune(&mut store, target).unwrap();
+        for op in &ops[..10] {
+            assert!(
+                store.snapshots(op.id).unwrap().is_empty(),
+                "given back: {given_back}, operation {} pruned",
+                op.id
+            );
+        }
+        for op in &ops[10..] {
+            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "given back: {given_back}");
+        }
+        sound(&store);
+    }
+}
+
+/// A write that fails is as if it never was, to the store's flags too: a revert
+/// that folded the deletions pending before it failed leaves them pending,
+/// and their records deleted.
+#[test]
+fn a_failed_revert_leaves_the_pending_deletions_deleted() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let author =
+        write(&mut store, |w| w.create_metarecord(vec![tree(None, "author")]).unwrap().uuid);
+    let xs: Vec<Uuid> = write(&mut store, |w| {
+        (0..20)
+            .map(|i| {
+                w.create_metarecord(vec![
+                    tree(None, &format!("x{i}")),
+                    Field::new("by", Value::Ref(author)),
+                ])
+                .unwrap()
+                .uuid
+            })
+            .collect()
+    });
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&xs).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    // The record they point at goes too, and the first one's place is taken.
+    delete(&mut store, &[author]);
+    write(&mut store, |w| w.create_metarecord(vec![tree(None, "x0")]).unwrap());
+    let count = Rows::metarecord_count(&store).unwrap();
+
+    let ops = revert::label_ops(&store, label).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    assert!(revert::apply(&mut w, &ops).is_err(), "x0's place is taken");
+    drop(w);
+
+    assert!(!Rows::exists(&store, author).unwrap(), "still deleted");
+    for &x in &xs {
+        assert!(!Rows::exists(&store, x).unwrap(), "still deleted");
+    }
+    assert_eq!(Rows::metarecord_count(&store).unwrap(), count);
+    sound(&store);
+}

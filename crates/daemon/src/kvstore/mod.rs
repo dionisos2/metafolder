@@ -1713,13 +1713,44 @@ pub struct KvTxn<'e> {
     events: RefCell<HashMap<String, usize>>,
     /// The store's flag that some part has entries pending: a write to many
     /// records raises it.
-    mass_lists: &'e std::sync::atomic::AtomicBool,
+    mass_lists: TxnFlag<'e>,
     /// The store's flag that a deletion of many records is pending.
-    deletes: &'e std::sync::atomic::AtomicBool,
+    deletes: TxnFlag<'e>,
     /// The store's flag that the record of a deleted metarecord is stored.
-    kept: &'e std::sync::atomic::AtomicBool,
+    kept: TxnFlag<'e>,
     /// The store's flag that records given back hold the log's before.
-    thawed: &'e std::sync::atomic::AtomicBool,
+    thawed: TxnFlag<'e>,
+}
+
+/// A flag of the store as a write transaction sees it. The flags say what the
+/// committed store holds, which reads rely on (a deletion pending is sifted
+/// through the universe only while its flag is up): what the transaction sets
+/// reaches the store when it commits, and is forgotten if it does not.
+struct TxnFlag<'e> {
+    now: std::cell::Cell<bool>,
+    store: &'e std::sync::atomic::AtomicBool,
+}
+
+impl<'e> TxnFlag<'e> {
+    fn of(store: &'e std::sync::atomic::AtomicBool) -> Self {
+        TxnFlag {
+            now: std::cell::Cell::new(store.load(std::sync::atomic::Ordering::Relaxed)),
+            store,
+        }
+    }
+
+    fn get(&self) -> bool {
+        self.now.get()
+    }
+
+    fn set(&self, up: bool) {
+        self.now.set(up);
+    }
+
+    /// The transaction committed: the store holds what it says.
+    fn publish(&self) {
+        self.store.store(self.now.get(), std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
@@ -2188,10 +2219,10 @@ impl<'e> KvTxn<'e> {
             cached_chunks: RefCell::new(HashMap::new()),
             chunks_existing: RefCell::new(Default::default()),
             reads: &store.reads,
-            mass_lists: &store.mass,
-            deletes: &store.deletes,
-            kept: &store.kept,
-            thawed: &store.thawed,
+            mass_lists: TxnFlag::of(&store.mass),
+            deletes: TxnFlag::of(&store.deletes),
+            kept: TxnFlag::of(&store.kept),
+            thawed: TxnFlag::of(&store.thawed),
             written: &store.written,
             universe: RefCell::new(HashMap::new()),
             grams: RefCell::new(HashMap::new()),
@@ -2225,6 +2256,9 @@ impl<'e> KvTxn<'e> {
         // held to its own threshold in the slow-operation log.
         metafolder_core::slowlog::mark_write();
         *self.written.lock().unwrap_or_else(|e| e.into_inner()) = written;
+        for flag in [&self.mass_lists, &self.deletes, &self.kept, &self.thawed] {
+            flag.publish();
+        }
         Ok(())
     }
 }

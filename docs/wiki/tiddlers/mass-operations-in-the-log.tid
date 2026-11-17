@@ -92,7 +92,7 @@ An undo of a deletion still pending does not recreate the records one by one: th
 * the state is the one the deletion left: every operation written since is itself in the revert, and ahead of it;
 * no record is alive already, no parent of a given-back record is gone, and every field they hold still has a type counted.
 
-A deletion the fold has already written out of the store is given back in one pass too, from the rows the fold froze in the snapshots: the same `mass_undelete_log` writes each record under its own dense id again (the ids and uuids tables were never emptied, and the index entries filed under the id were never dropped), puts its key back in `metarecords`, gives its rows back to the histograms and its positions to the forest, then does what the pending case does. Besides the three conditions above, each record must be as the fold left it — its id still its uuid's, no metarecord under the uuid — and no position it held taken by a live record since. A reindex numbers the ids again and turns the stub into one that holds uuids: its ids mean nothing, and the records go one by one.
+A deletion the fold has already written out of the store is given back in one pass too, from the rows the fold froze in the snapshots: the same `mass_undelete_log` writes each record under its own dense id again (the ids and uuids tables were never emptied, and the index entries filed under the id were never dropped), puts its key back in `metarecords` — its rows newer than every entry a write to many records may still have pending on its part, which would otherwise apply to them again (`put_given_back`, as a restoration one by one writes it) — gives its rows back to the histograms and its positions to the forest, then does what the pending case does. Besides the three conditions above, each record must be as the fold left it — its id still its uuid's, no metarecord under the uuid — and no position it held taken by a live record since. A reindex numbers the ids again and turns the stub into one that holds uuids: its ids mean nothing, and the records go one by one.
 
 Anything else — a few records, a write in between, a taken position, a reindex since — goes one by one as before. Undoing the undo is then an ordinary deletion of each record.
 
@@ -102,7 +102,7 @@ The records are alive again and may be written to, while the log reads the rows 
 * an entry of a write to many records that names it (`append_entries`);
 * the fold of a deletion that takes it out of the store again (`fold_one_delete`), and the reindex, which numbers the ids the marks name (all of them).
 
-So the rows a deletion took are never unknown for a deletion given back since November 2026: `before_known` ([[Log endpoints]]) is `false` only for one given back and written to by an older daemon, and reverting a deletion puts back what it took, not what the record holds now. The idle fold leaves the marks alone — undoing a deletion at once is the common case, and a copy of every record at idle time would be paid for nothing — and `pending_mass` does not count them: they wait for a write, not for a fold.
+So the rows a deletion took are never unknown for a deletion given back since November 2026: `before_known` ([[Log endpoints]]) is `false` only for one given back and written to by an older daemon — a record a mark still names at the operation, its deletion's while pending or the giving back's, holds the rows whatever was written to the log since (deleted again, say) — and reverting a deletion puts back what it took, not what the record holds now. The idle fold leaves the marks alone — undoing a deletion at once is the common case, and a copy of every record at idle time would be paid for nothing — and `pending_mass` does not count them: they wait for a write, not for a fold.
 
 The trash first asks, once, which of its records hold a link to a duplicate group (the
 holders of the field, among its ids), and only those leave their group one by one
@@ -119,7 +119,8 @@ record stays, as after any deletion, until a reindex ([[Deleting a metarecord in
 
 A prune that names an id inside a stub cuts it: the older operations go, the stub
 begins at the id (a stub's operations are removed oldest first, never from its
-middle). Retention counts a stub as one operation of its class and takes it whole
+middle). A deletion's operations go with the rows the log kept of them, frozen by the
+fold or copied when a record given back was written to. Retention counts a stub as one operation of its class and takes it whole
 when it is among the oldest. A mass write is one unit of history, as it is one
 command; the bound on the log is the bound on its entries.
 

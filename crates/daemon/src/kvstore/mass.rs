@@ -355,20 +355,20 @@ impl Loaded {
 
 impl KvTxn<'_> {
     pub(super) fn mass_pending(&self) -> bool {
-        self.mass_lists.load(std::sync::atomic::Ordering::Relaxed)
+        self.mass_lists.get()
     }
 
     /// Whether records given back wait for their rows to be copied.
     pub(super) fn thawed_pending(&self) -> bool {
-        self.thawed.load(std::sync::atomic::Ordering::Relaxed)
+        self.thawed.get()
     }
 
     pub(super) fn deletes_pending(&self) -> bool {
-        self.deletes.load(std::sync::atomic::Ordering::Relaxed)
+        self.deletes.get()
     }
 
     pub(super) fn kept_stored(&self) -> bool {
-        self.kept.load(std::sync::atomic::Ordering::Relaxed)
+        self.kept.get()
     }
 
     /// Notes that the record of a deleted metarecord stays in the store until
@@ -376,7 +376,7 @@ impl KvTxn<'_> {
     pub(super) fn keep_records(&self) -> Result<()> {
         if !self.kept_stored() {
             self.meta_put("kept", 1)?;
-            self.kept.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.kept.set(true);
         }
         Ok(())
     }
@@ -499,7 +499,7 @@ impl KvTxn<'_> {
             };
             self.t.mass.put(&mut self.txn.borrow_mut(), &entry_key(part, op), &entry.encode())?;
         }
-        self.mass_lists.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.mass_lists.set(true);
         Ok(())
     }
 

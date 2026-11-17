@@ -924,28 +924,7 @@ impl KvTxn<'_> {
                 while self.fold_one_delete()? {}
             }
         }
-        // The entries still naming the id are older than this write: they
-        // change none of its rows, and add none to a field it lacks.
-        let entries = if self.mass_pending() { self.load_record(id)?.entries } else { Vec::new() };
-        if entries.is_empty() {
-            let mut w = self.txn.borrow_mut();
-            if rows.is_empty() {
-                self.t.records.delete(&mut w, &id.to_be_bytes())?;
-            } else {
-                let record = super::mass::Record::plain(rows.to_vec());
-                self.t.records.put(&mut w, &id.to_be_bytes(), &record.encode())?;
-            }
-        } else {
-            let n = self.next("mass_op")? as u64;
-            let fields: BTreeSet<&str> = entries.iter().map(|e| e.field.as_str()).collect();
-            let record = super::mass::Record {
-                ops: vec![n; rows.len()],
-                rows: rows.to_vec(),
-                tombs: Vec::new(),
-                cleared: fields.into_iter().map(|f| (f.to_string(), n)).collect(),
-            };
-            self.t.records.put(&mut self.txn.borrow_mut(), &id.to_be_bytes(), &record.encode())?;
-        }
+        self.put_given_back(id, rows)?;
         self.t.metarecords.put(&mut self.txn.borrow_mut(), uuid.as_bytes(), &[])?;
         for row in rows {
             self.count_type(&row.name, &row.value, 1)?;
@@ -969,6 +948,35 @@ impl KvTxn<'_> {
             }
         }
         Ok(Some(rows.to_vec()))
+    }
+
+    /// Writes the rows of a record given back under its id. The entries of a
+    /// write to many records still naming the id are older than this write:
+    /// they change none of its rows, and add none to a field it lacks — the
+    /// record says so, or they would apply to the rows again on reading.
+    pub(super) fn put_given_back(&self, id: u32, rows: &[crate::rows::FieldRow]) -> Result<()> {
+        let entries = if self.mass_pending() { self.load_record(id)?.entries } else { Vec::new() };
+        let mut w = self.txn.borrow_mut();
+        if entries.is_empty() {
+            if rows.is_empty() {
+                self.t.records.delete(&mut w, &id.to_be_bytes())?;
+            } else {
+                let record = super::mass::Record::plain(rows.to_vec());
+                self.t.records.put(&mut w, &id.to_be_bytes(), &record.encode())?;
+            }
+            return Ok(());
+        }
+        drop(w);
+        let n = self.next("mass_op")? as u64;
+        let fields: BTreeSet<&str> = entries.iter().map(|e| e.field.as_str()).collect();
+        let record = super::mass::Record {
+            ops: vec![n; rows.len()],
+            rows: rows.to_vec(),
+            tombs: Vec::new(),
+            cleared: fields.into_iter().map(|f| (f.to_string(), n)).collect(),
+        };
+        self.t.records.put(&mut self.txn.borrow_mut(), &id.to_be_bytes(), &record.encode())?;
+        Ok(())
     }
 
     /// The histogram forgets a row of a metarecord that was deleted: what the

@@ -465,3 +465,76 @@ fn a_replacement_knows_what_the_same_write_put_before_it() {
     let diff = store.check_derived().unwrap();
     assert!(diff.is_empty(), "{diff:?}");
 }
+
+/// A prune in the middle of a replacement, or of a stub a reindex turned into
+/// uuids, leaves each operation kept with its own record and what it replaced.
+#[test]
+fn pruning_into_a_replacement_keeps_each_operation_what_it_replaced() {
+    for reindex in [false, true] {
+        let (mut store, _dir) = open();
+        let uuids = records(&mut store, 40);
+        let head = store.head().unwrap().unwrap();
+        write(&mut store, |w| w.mass_set("tag", vec![s("red")], &uuids).unwrap());
+        if reindex {
+            store.reindex().unwrap();
+        }
+        let ops = store.ops_after(head).unwrap();
+        assert_eq!(ops.len(), 40);
+        let before: Vec<_> =
+            ops.iter().map(|o| (o.entity_uuid, store.snapshots(o.id).unwrap())).collect();
+        metafolder_daemon::log::prune(&mut store, ops[13].id).unwrap();
+        let left = store.ops_after(head).unwrap();
+        assert_eq!(left.len(), 27, "reindex: {reindex}");
+        for (op, (uuid, rows)) in left.iter().zip(&before[13..]) {
+            assert_eq!(op.entity_uuid, *uuid, "reindex: {reindex}");
+            assert_eq!(&store.snapshots(op.id).unwrap(), rows, "reindex: {reindex}, {op:?}");
+            assert_eq!(store.added(op.id).unwrap().len(), 0);
+        }
+    }
+}
+
+/// A replacement takes off long texts as well as short ones (their keys are
+/// hashed, and they are filed apart): the log says it took them, and an undo
+/// gives them back.
+#[test]
+fn a_replacement_of_long_texts_is_undone_whole() {
+    use metafolder_daemon::revert;
+    use metafolder_daemon::store::Rows;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 30);
+    let long = "x".repeat(2000);
+    write(&mut store, |w| {
+        for (i, &u) in uuids.iter().enumerate() {
+            let text = if i % 3 == 0 { format!("{long}{i}") } else { format!("short {i}") };
+            w.append_field(u, "note", s(&text)).unwrap();
+        }
+    });
+    let notes = |store: &KvStore| -> Vec<Vec<Value>> {
+        uuids
+            .iter()
+            .map(|&u| {
+                Rows::rows(store, u)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|r| r.name == "note")
+                    .map(|r| r.value)
+                    .collect()
+            })
+            .collect()
+    };
+    let start = notes(&store);
+    let (label, _) = labelled(&mut store, |w| w.mass_set("note", vec![s("same")], &uuids).unwrap());
+    let ops = revert::label_ops(&store, label).unwrap();
+    assert_eq!(ops.len(), 30);
+    for (op, before) in ops.iter().zip(&start) {
+        let held: Vec<Value> =
+            store.snapshots(op.id).unwrap().into_iter().map(|r| r.value).collect();
+        assert_eq!(&held, before, "{op:?}");
+    }
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(notes(&store), start);
+    store.fold().unwrap();
+    assert!(store.check_derived().unwrap().is_empty());
+}
