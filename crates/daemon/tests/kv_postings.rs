@@ -248,7 +248,6 @@ fn a_value_held_once_is_a_posting() {
         .uuid;
     w.commit().unwrap();
     let written = store.last_write_keys();
-    assert_eq!(written.get("parts"), None, "no key in `parts`: {written:?}");
     assert!(written.get("sets").copied().unwrap_or(0) > 0, "{written:?}");
     check(&store);
     assert_eq!(holders(&store, "unique").0, 1);
@@ -271,7 +270,7 @@ fn a_value_held_once_is_a_posting() {
 /// gone, the postings are all there.
 #[test]
 fn a_store_with_a_value_partition_is_derived_again_when_it_opens() {
-    use common::kv::{open_raw, raw_env};
+    use common::kv::{create_raw, open_raw, raw_env};
     let dir = TempDir::new("kv-postings-format");
     {
         let mut store = KvStore::open(dir.path()).unwrap();
@@ -284,7 +283,7 @@ fn a_store_with_a_value_partition_is_derived_again_when_it_opens() {
     {
         let env = raw_env(dir.path());
         let meta = open_raw(&env, "meta");
-        let parts = open_raw(&env, "parts");
+        let parts = create_raw(&env, "parts");
         let mut w = env.write_txn().unwrap();
         meta.put(&mut w, b"derived", &10i64.to_be_bytes()).unwrap();
         // What the old format wrote for a value: field · partition 0 · key · id.

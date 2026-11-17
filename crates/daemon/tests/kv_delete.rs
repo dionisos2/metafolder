@@ -122,7 +122,7 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
     let mut r = repo();
     delete(&mut r.store, r.others[1]);
     let written = r.store.last_write_keys();
-    for table in ["forest", "ids", "uuids", "parts", "kids", "grams"] {
+    for table in ["forest", "ids", "uuids", "kids", "grams"] {
         assert_eq!(written.get(table), None, "a deletion wrote to {table}: {written:?}");
     }
     assert_eq!(written.get("records"), None, "the record keeps its key: {written:?}");
@@ -210,8 +210,6 @@ fn a_folder_whose_last_child_is_deleted_is_no_longer_a_parent() {
     assert!(r.store.children("loc", r.folder).unwrap().is_empty());
     // The folder itself, now childless, goes the short way too.
     delete(&mut r.store, r.folder);
-    let written = r.store.last_write_keys();
-    assert_eq!(written.get("parts"), None, "{written:?}");
     every_answer(&r.store);
     check(&r.store);
 }

@@ -37,7 +37,7 @@ pub(super) struct Wtxn<'e> {
 }
 
 /// How many tables the store has.
-pub(super) const TABLES: usize = 25;
+pub(super) const TABLES: usize = 24;
 
 impl<'e> Wtxn<'e> {
     /// `journaled`: whether the changes are noted, to be replayed elsewhere.

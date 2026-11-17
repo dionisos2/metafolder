@@ -65,7 +65,6 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`ids` |uuid |dense id (u32) |
 |`uuids` |dense id |uuid |
 |`sets` |kind · [field] · [key] · chunk |a roaring bitmap of dense ids |
-|`parts` |— |no longer written: a position's name is a posting, and a store of an older format is derived again when it opens (the table stays, empty) |
 |`kids` |parent's dense id · field · dense id |rows (count) |
 |`grams` |`0` · field · trigram · text key |empty: a distinct text holding the trigram |
 |`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |

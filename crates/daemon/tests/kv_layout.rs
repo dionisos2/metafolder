@@ -402,7 +402,8 @@ fn has_table(env: &heed::Env, name: &str) -> bool {
     .is_some()
 }
 
-const OLDER_TABLES: [&str; 8] = [
+const OLDER_TABLES: [&str; 9] = [
+    "parts",
     "cells",
     "field_cells",
     "row_owner",
@@ -425,6 +426,16 @@ fn a_store_with_every_older_table_opens() {
         }
     }
     drop(KvStore::open(dir.path()).expect("the store opens"));
+}
+
+/// A store of the current layout has no `parts` table: its keys went into the
+/// postings, and an empty table would still count against `max_dbs`.
+#[test]
+fn a_new_store_has_no_parts_table() {
+    let dir = TempDir::new("kv-no-parts");
+    drop(KvStore::open(dir.path()).unwrap());
+    let env = raw_env(dir.path());
+    assert!(!has_table(&env, "parts"));
 }
 
 /// The tables of the older layouts are removed once a store is converted, not

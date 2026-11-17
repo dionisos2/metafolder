@@ -7,7 +7,6 @@
 //! | ids   | uuid                                 | dense id (u32)           |
 //! | uuids | dense id                             | uuid                     |
 //! | sets  | kind · [field] · [key] · chunk       | a roaring bitmap         |
-//! | parts | field · partition · key · dense id   | rows (count), names only |
 //! | kids  | parent id · field · dense id         | rows (count)             |
 //! | grams | 0 · field · trigram · text key       | (empty)                  |
 //! | grams | 1 · field · trigram · chunk          | a roaring bitmap         |
@@ -1447,7 +1446,7 @@ impl KvTxn<'_> {
         self.events.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams, t.hist, t.events] {
+        for db in [t.ids, t.uuids, t.sets, t.kids, t.grams, t.hist, t.events] {
             db.clear(&mut w)?;
         }
         Ok(())
@@ -2110,25 +2109,6 @@ impl KvStore {
                 }
             }
         }
-        for entry in t.parts.iter(r)? {
-            let (k, v) = entry?;
-            let (name, rest) = unesc(k)?;
-            let entry = Entry {
-                space: PART,
-                tag: rest[0],
-                field: std::str::from_utf8(&name).context("a field name")?,
-                key: &rest[1..rest.len() - 4],
-                id: dense(&rest[rest.len() - 4..]),
-                count: from_be(v),
-            };
-            let replayed = pending.get(entry.field).filter(|_| entry.tag == VALUE);
-            if replayed.is_some_and(|(e, _)| !events::replay_one(e, entry.key, entry.id, true)) {
-                continue;
-            }
-            if !sifted(entry.id) {
-                sink(Side::Got, entry)?;
-            }
-        }
         // What the events add and nothing stores yet, under the values they
         // name.
         for (field, (list, by_target)) in &pending {
@@ -2636,20 +2616,6 @@ mod tests {
         assert!(has(&diff, "gram missing: "), "{}", some(&diff));
         assert!(!has(&diff, "gram unexpected: "), "{}", some(&diff));
         assert!(diff.iter().all(|l| l.starts_with("gram ")), "only the trigrams differ: {diff:?}");
-    }
-
-    #[test]
-    fn test_a_partition_entry_nothing_derives_is_named() {
-        let (store, _dir) = populated();
-        let id = &1u32.to_be_bytes()[..];
-        let bogus = [&name_key("title")[..], &[VALUE], &value_key(&Value::Bool(true)).unwrap(), id]
-            .concat();
-        tamper(&store, |t, w| {
-            t.parts.put(w, &bogus, &be(1)).unwrap();
-        });
-        let diff = store.check_derived().unwrap();
-        assert!(has(&diff, "part unexpected: "), "{}", some(&diff));
-        assert!(!has(&diff, "part missing: "), "{}", some(&diff));
     }
 
     #[test]

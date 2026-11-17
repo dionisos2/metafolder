@@ -101,7 +101,6 @@ struct Tables {
     ids: Db,
     uuids: Db,
     sets: Db,
-    parts: Db,
     kids: Db,
     grams: Db,
     hist: Db,
@@ -130,7 +129,6 @@ const NAMES: [&str; table::TABLES] = [
     "ids",
     "uuids",
     "sets",
-    "parts",
     "kids",
     "grams",
     "hist",
@@ -155,7 +153,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [meta, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, parts, kids, grams, hist, events, label_reverts] =
+        let [meta, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, kids, grams, hist, events, label_reverts] =
             dbs;
         Ok(Tables {
             meta,
@@ -177,7 +175,6 @@ impl Tables {
             ids,
             uuids,
             sets,
-            parts,
             kids,
             grams,
             hist,
@@ -208,7 +205,6 @@ impl Tables {
             self.ids,
             self.uuids,
             self.sets,
-            self.parts,
             self.kids,
             self.grams,
             self.hist,
@@ -1954,13 +1950,15 @@ impl KvStore {
     /// A new store has nothing to move and only records the layout. Answers
     /// whether the derived key spaces must be derived again: they must when a
     /// metarecord was given an id, which they do not know.
-    /// Removes the tables of the older layouts, emptied by the conversion (or
+    /// Removes the tables of the older layouts (and `parts`, which the postings
+    /// replaced), emptied by the conversion (or
     /// by an earlier open): a named table, even empty, counts against
     /// `max_dbs` and stays in the file's catalog. A store of the current
     /// layout holds no data in them, so this runs at every open, and does
     /// nothing when there are none.
     fn remove_older_tables(&self) -> Result<()> {
-        const OLDER: [&str; 8] = [
+        const OLDER: [&str; 9] = [
+            "parts",
             "cells",
             "field_cells",
             "row_owner",
@@ -1978,7 +1976,7 @@ impl KvStore {
                 for name in OLDER {
                     found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
                 }
-                let found: [_; 8] = found.try_into().expect("one per name");
+                let found: [_; 9] = found.try_into().expect("one per name");
                 Ok(CommitOrAbort::<_, ()>::Commit(found))
             })?
             .commit()

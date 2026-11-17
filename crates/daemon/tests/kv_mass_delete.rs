@@ -287,7 +287,7 @@ fn undoing_a_pending_mass_delete_only_gives_the_universe_back() {
     w.commit().unwrap();
 
     let written = store.last_write_keys();
-    for table in ["records", "ids", "uuids", "metarecords", "parts", "kids", "forest", "snaps"] {
+    for table in ["records", "ids", "uuids", "metarecords", "kids", "forest", "snaps"] {
         assert_eq!(written.get(table), None, "{table} untouched: {written:?}");
     }
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
