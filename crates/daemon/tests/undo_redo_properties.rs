@@ -90,6 +90,59 @@ async fn fixture(prefix: &str, n: usize) -> Fix {
     fx
 }
 
+/// A repository of `n` records built once, unloaded and kept on disk: each case
+/// of a test starts from a copy of it instead of creating its records again,
+/// which was most of the time the suite took.
+struct Template {
+    root: TempDir,
+    repo: String,
+    uuids: Vec<String>,
+}
+
+async fn template(prefix: &str, n: usize) -> Template {
+    let fx = fixture(prefix, n).await;
+    let Fix { app, repo, uuids, _root } = fx;
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+    assert_eq!(status, StatusCode::OK, "unload failed: {body}");
+    Template { root: _root, repo, uuids }
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+impl Template {
+    /// A repository of its own, a copy of the template, loaded and ready.
+    async fn instance(&self) -> Fix {
+        let root = TempDir::new("undo_props_copy");
+        copy_dir(&self.root, &root);
+        let app = routes::build(Arc::new(common::watching_state()));
+        let (status, body) =
+            request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()})))
+                .await;
+        assert_eq!(status, StatusCode::OK, "load failed: {body}");
+        let repo = body["repo_uuid"].as_str().unwrap().to_string();
+        assert_eq!(repo, self.repo);
+        for _ in 0..1000 {
+            let (_, info) = request(&app, "GET", &format!("/repos/{repo}"), None).await;
+            if info["ready"] == true {
+                return Fix { app, repo, uuids: self.uuids.clone(), _root: root };
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("the copy did not load");
+    }
+}
+
 impl Fix {
     fn url(&self, tail: &str) -> String {
         format!("/repos/{}{tail}", self.repo)
@@ -381,10 +434,11 @@ macro_rules! each_write {
 
 async fn undoing_again(write: Write) {
     for n in SIZES {
+        let tpl = template("undo_again", n).await;
         for between in BETWEENS {
             for mask in 0..4u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, fold mask {mask}");
-                let fx = fixture("undo_again", n).await;
+                let fx = tpl.instance().await;
                 let label = write.apply(&fx).await;
                 maintain(&fx, mask & 1 == 1, false).await;
                 between.apply(&fx, write).await;
@@ -426,10 +480,11 @@ each_write! { undoing_again:
 
 async fn redoing_again(write: Write) {
     for n in SIZES {
+        let tpl = template("redo_again", n).await;
         for between in BETWEENS {
             for mask in 0..4u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, fold mask {mask}");
-                let fx = fixture("redo_again", n).await;
+                let fx = tpl.instance().await;
                 let label = write.apply(&fx).await;
                 between.apply(&fx, write).await;
                 let written = fx.snapshot().await;
@@ -486,10 +541,11 @@ each_write! { redoing_again:
 /// more.
 async fn undo_of_undo(write: Write) {
     for n in SIZES {
+        let tpl = template("undo_of_undo", n).await;
         for between in BETWEENS {
             for mask in 0..8u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, mask {mask:03b}");
-                let fx = fixture("undo_of_undo", n).await;
+                let fx = tpl.instance().await;
                 let label = write.apply(&fx).await;
                 maintain(&fx, mask & 1 == 1, mask & 4 == 4).await;
                 between.apply(&fx, write).await;
@@ -572,10 +628,11 @@ async fn later_writes(fx: &Fix) {
 /// it again changes nothing; redoing it and undoing it again does not either.
 async fn older_write(write: Write) {
     for n in SIZES {
+        let tpl = template("older", n).await;
         for mask in 0..4u8 {
             let case = format!("{write:?}, {n} records, fold mask {mask}");
-            let fx = fixture("older", n).await;
-            let never = fixture("older_never", n).await;
+            let fx = tpl.instance().await;
+            let never = tpl.instance().await;
             later_writes(&never).await;
             let label = write.apply(&fx).await;
             maintain(&fx, mask & 1 == 1, false).await;
@@ -626,6 +683,7 @@ each_write! { older_write:
 #[tokio::test]
 async fn two_writes_are_undone_and_redone_as_a_stack() {
     for n in SIZES {
+        let tpl = template("stack", n).await;
         for (i, first) in WRITES.into_iter().enumerate() {
             for (j, second) in WRITES.into_iter().enumerate() {
                 {
@@ -635,7 +693,7 @@ async fn two_writes_are_undone_and_redone_as_a_stack() {
                     }
                     let fold = (i + j) % 2 == 0;
                     let case = format!("{first:?} then {second:?}, {n} records, fold {fold}");
-                    let fx = fixture("stack", n).await;
+                    let fx = tpl.instance().await;
                     let base = fx.snapshot().await;
                     let a = first.apply(&fx).await;
                     let b = second.apply(&fx).await;

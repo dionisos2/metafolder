@@ -38,8 +38,10 @@ done in one pass (=undelete_pending=).
 Also noted (doc "Storage open questions"): no =Nothing= in a mass add or remove,
 replace and rename not being mass writes, the marks a deleted record loses,
 compressing what the log keeps of a deletion. And the =undo_redo_properties= suite
-takes about 9 minutes: it should be brought under 2 without losing the cases that
-found the bug (fewer fold masks for the larger size, a subset of the pairs).
+took about 9 minutes; each case now starts from a copy of a repository built once
+per test and size (=Template=), which brings it to about 3 minutes on four cores.
+The cases are all kept: if it must go lower, the cost left is the writes of the
+cases themselves, not their set-up.
 Not measured yet: =scripts/dev/bench.sh --quick= after the postings change (every
 value a posting, derived 11 to 14).
 
