@@ -62,6 +62,42 @@ fn place(parent: Option<Uuid>, u: Uuid) -> Field {
     Field::new("loc", Value::TreeRef { parent, name })
 }
 
+/// The position of `u` under `parent` in the hierarchy of kinds, a node of
+/// which may hang under several parents, its name the same under each.
+fn kind(parent: Option<Uuid>, u: Uuid) -> Value {
+    let name =
+        metafolder_core::metarecord::TreeName::from(format!("h{}", u.as_u128() % 100_000).as_str());
+    Value::HierarchyRef { parent, name }
+}
+
+/// The texts a `note` takes: short ones, and long ones (filed apart, and
+/// written to many records one by one).
+fn note(k: usize) -> Value {
+    match k % 3 {
+        0 => s(&format!("{}{k}", "zq".repeat(400))),
+        1 => s(&format!("alpha {k}")),
+        _ => s(&format!("beta {k}")),
+    }
+}
+
+/// What is asked of the stores after each step, each answered by the index
+/// and by the oracle that reads every row, which must agree.
+fn queries(uuids: &[Uuid]) -> Vec<metafolder_core::query::Query> {
+    use metafolder_core::query::{Aspect, FollowTarget, Query};
+    let raw = Aspect::Raw;
+    let under = |u: Uuid| FollowTarget::Condition(Box::new(Query::UuidIn { uuids: vec![u] }));
+    vec![
+        Query::Matches { field: "note".into(), pattern: "alpha".into(), aspect: raw },
+        Query::Matches { field: "note".into(), pattern: "zqzq".into(), aspect: raw },
+        Query::Eq { field: "tag".into(), value: s("a"), aspect: raw },
+        Query::Gt { field: "rank".into(), value: Value::Int(0), aspect: raw },
+        Query::IsUnknown { field: "rank".into() },
+        Query::Follows { field: "by".into(), target: under(uuids[FOLDERS]) },
+        Query::FollowsTransitive { field: "loc".into(), target: under(uuids[0]), inclusive: false },
+        Query::FollowsTransitive { field: "kind".into(), target: under(uuids[1]), inclusive: true },
+    ]
+}
+
 /// The live records placed under `folder`.
 fn children(
     store: &dyn metafolder_daemon::store::Store,
@@ -102,6 +138,11 @@ enum Step {
     DeleteFolder(Uuid),
     /// Moves a file under a folder.
     Move(Uuid, Uuid),
+    /// Replaces the note of the records.
+    MassNote(Vec<Uuid>, usize),
+    /// Hangs a file's kind under one more folder, or takes it from under one.
+    AddKind(Uuid, Uuid),
+    RemoveKind(Uuid, Uuid),
 }
 
 impl Step {
@@ -113,6 +154,7 @@ impl Step {
             | Step::MassSet(u, _)
             | Step::MassUnset(u)
             | Step::MassRef(u, _)
+            | Step::MassNote(u, _)
             | Step::MassDelete(u) => u,
             _ => &[],
         }
@@ -143,6 +185,8 @@ impl Side {
                 u,
                 vec![
                     place(parent, u),
+                    Field::new("kind", kind(parent, u)),
+                    Field::new("note", note(i)),
                     Field::new("tag", s(TAGS[i % 2])),
                     Field::new("rank", Value::Int(i as i64 % 3)),
                 ],
@@ -186,6 +230,23 @@ impl Side {
                 }
                 Step::MassRef(_, to) if one_by_one => {
                     each(&mut w, &mut |w, u| w.set_field_multi(u, "by", vec![Value::Ref(*to)]))?;
+                }
+                Step::MassNote(_, k) if one_by_one => {
+                    each(&mut w, &mut |w, u| w.set_field_multi(u, "note", vec![note(*k)]))?;
+                }
+                Step::MassNote(u, k) => {
+                    let ids = ids(&w, u);
+                    w.mass_set_ids("note", vec![note(*k)], &ids)?;
+                }
+                Step::AddKind(u, f) => {
+                    if w.store().exists(*u)? {
+                        w.append_field(*u, "kind", kind(Some(*f), *u))?;
+                    }
+                }
+                Step::RemoveKind(u, f) => {
+                    if w.store().exists(*u)? {
+                        w.delete_fields_valued(*u, "kind", &kind(Some(*f), *u))?;
+                    }
                 }
                 Step::MassRef(u, to) => {
                     let ids = ids(&w, u);
@@ -320,10 +381,13 @@ fn draw(rng: &mut Rng, uuids: &[Uuid], labels: usize) -> Step {
     // paths of an undo require.
     let folder = uuids[rng.below(FOLDERS)];
     let file = uuids[FOLDERS + rng.below(uuids.len() - FOLDERS)];
-    match rng.below(21) {
+    match rng.below(26) {
         16 => return Step::DeleteFolder(folder),
         17 | 18 => return Step::Move(file, folder),
         19 | 20 => return Step::MassRef(many, one),
+        21 | 22 => return Step::MassNote(many, rng.below(9)),
+        23 | 24 => return Step::AddKind(file, folder),
+        25 => return Step::RemoveKind(file, folder),
         _ => {}
     }
     match rng.below(16) {
@@ -352,19 +416,13 @@ fn run_case(seed: u64, steps: usize) {
     let mut lazy = Side::new(&uuids, false);
     let mut oracle = Side::new(&uuids, true);
     let mut played = Vec::new();
+    let queries = queries(&uuids);
     for at in 0..steps {
         let step = draw(&mut rng, &uuids, whole.labels.len());
         played.push(step.clone());
         let abort = rng.below(8) == 0;
         let (a, b, c) =
             (whole.play(&step, abort), lazy.play(&step, abort), oracle.play(&step, abort));
-        if std::env::var_os("FOLD_SCHEDULE_TRACE").is_some() {
-            eprintln!(
-                "TRACE {} {:?}",
-                a.is_ok(),
-                a.as_ref().err().map(|e| e.chars().take(90).collect::<String>())
-            );
-        } // TRACE
         assert_eq!(a.is_ok(), b.is_ok(), "seed {seed}, step {at}: {a:?} / {b:?}\n{played:#?}");
         assert_eq!(
             a.is_ok(),
@@ -397,6 +455,14 @@ fn run_case(seed: u64, steps: usize) {
         assert_eq!(sa.1.len(), sb.1.len(), "seed {seed}, step {at}: the log's length");
         let diff = lazy.store.check_derived().unwrap();
         assert!(diff.is_empty(), "seed {seed}, step {at}: {diff:#?}\n{played:#?}");
+        for q in &queries {
+            for side in [&whole, &lazy] {
+                let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    common::engines::both(&side.store, q, &[])
+                }));
+                assert!(answer.is_ok(), "seed {seed}, step {at}: {q:?}\n{played:#?}");
+            }
+        }
     }
     whole.store.fold().unwrap();
     lazy.store.fold().unwrap();

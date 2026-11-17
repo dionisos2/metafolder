@@ -19,8 +19,7 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
 - The =undo_redo_properties= suite takes about 3 minutes on four cores; the cost
   left is the writes of its cases, not their set-up.
 - Left by the review of 17 November 2026 (=notes-performance-stockage.txt=, point 5
-  of the REPRISE): =tests/kv_fold_schedule.rs= does not draw positions (folders,
-  =tree_ref=) yet; =nom-exif= (embedded metadata) still pulls in =chrono=, declared
+  of the REPRISE): =nom-exif= (embedded metadata) still pulls in =chrono=, declared
   unmaintained (RUSTSEC-2026-0543) — no version without it, to replace or do without;
   =roaring= 0.12, =phf_shared= 0.14 and =schemars= 1 are a major version ahead.
 
