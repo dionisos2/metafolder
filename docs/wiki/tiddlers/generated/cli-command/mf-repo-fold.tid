@@ -1,0 +1,18 @@
+title: $:/mf/gen/CLI command/mf repo fold
+catalog: CLI command
+target: mf repo fold
+summary: Fold now what writes to many records left pending
+
+!! Reference
+
+```
+Fold now what writes to many records left pending
+
+The daemon folds it by itself after thirty seconds without activity; this does it at once, one list at a time, and prints how many lists it folded (0 when nothing was pending). `mf repo wear` says what is pending.
+
+Usage: mf repo fold
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

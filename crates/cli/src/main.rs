@@ -416,6 +416,12 @@ enum RepoCommand {
     /// The repair for the index problems `mf repo check` reports; nothing can
     /// be lost by it. The repository waits for it to finish.
     Reindex,
+    /// Fold now what writes to many records left pending
+    ///
+    /// The daemon folds it by itself after thirty seconds without activity;
+    /// this does it at once, one list at a time, and prints how many lists it
+    /// folded (0 when nothing was pending). `mf repo wear` says what is pending.
+    Fold,
     /// Rewrite the selected repository's store without its free pages
     ///
     /// A large import or deletion leaves freed pages in the store's file,
@@ -1554,6 +1560,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Root => commands::print_repo_root(ctx),
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),
+            RepoCommand::Fold => commands::fold_repo(ctx),
             RepoCommand::Compact => commands::compact_repo(ctx),
             RepoCommand::Wear { json } => commands::repo_wear(ctx, json),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),

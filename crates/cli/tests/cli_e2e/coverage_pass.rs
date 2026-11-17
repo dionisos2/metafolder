@@ -403,3 +403,40 @@ fn test_repo_wear_says_what_is_pending_and_what_is_dead() {
     assert!(value["pending_bytes"].as_u64().unwrap() > 0, "{}", out.stdout);
     assert!(value["dead_fraction"].is_number(), "{}", out.stdout);
 }
+
+/// `mf repo fold` folds what writes to many records left pending, now instead of
+/// when the repository is quiet (doc "Folding in idle time"): the wear reads zero
+/// pending bytes afterwards, and a second fold finds nothing.
+#[test]
+fn test_repo_fold_folds_what_is_pending() {
+    let (repo, _root) = init_repo("fold");
+    for _ in 0..3 {
+        create_metarecord(&repo, &["note:string=x"]);
+    }
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "note = \"x\"",
+        "field",
+        "set",
+        "tag:string=t",
+    ]));
+    let wear = |repo: &str| -> serde_json::Value {
+        let out = mf(&["-u", repo, "repo", "wear", "--json"]);
+        assert_ok(&out);
+        serde_json::from_str(&out.stdout).expect("json")
+    };
+    assert!(wear(&repo)["pending_bytes"].as_u64().unwrap() > 0);
+
+    let out = mf(&["-u", &repo, "repo", "fold"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("folded "), "{}", out.stdout);
+    assert!(!out.stdout.starts_with("folded 0 "), "{}", out.stdout);
+    assert_eq!(wear(&repo)["pending_bytes"].as_u64().unwrap(), 0);
+
+    let out = mf(&["-u", &repo, "repo", "fold"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("folded 0 "), "{}", out.stdout);
+}

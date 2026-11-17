@@ -42,7 +42,7 @@ before every other list, whatever the sizes: its records are read with the entri
 their parts still applied.
 
 A step is not made while a coordinated revert holds the repository or the root is
-absent. `mf repo reindex` still folds everything at once. A list has ''no limit'': a
+absent. `mf repo fold` folds at once what is pending ([[POST /repos/:repo/fold]]), and `mf repo reindex` folds everything. A list has ''no limit'': a
 write never folds one, so that a fold cannot start while someone works; how long the
 lists have grown is the wear ([[Storage wear]]).
 

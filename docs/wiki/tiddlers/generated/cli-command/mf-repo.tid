@@ -22,6 +22,7 @@ Commands:
   rename         Rename the selected repository and print its UUID
   check          Check that the selected repository's indexes agree with its data
   reindex        Rebuild the selected repository's indexes from its data
+  fold           Fold now what writes to many records left pending
   compact        Rewrite the selected repository's store without its free pages
   wear           Say how worn the selected repository's store is
   backup         Take a backup of the selected repository and print where it went

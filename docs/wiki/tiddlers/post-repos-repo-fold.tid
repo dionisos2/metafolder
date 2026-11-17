@@ -4,7 +4,7 @@ kind: reference
 audience: dev
 summary: Folds what writes left pending now, one list at a time, instead of waiting for the repository to be quiet.
 
-No body; answers `{"folded": n}`, the number of lists folded (`0` when nothing was pending).
+`mf repo fold` calls it and prints `folded N list(s)`. No body; answers `{"folded": n}`, the number of lists folded (`0` when nothing was pending).
 The connection is free between two lists, so what arrives meanwhile waits for one list
 ([[Folding in idle time]]). Not an activity signal of its own kind: like any request it
 counts as activity.

@@ -291,6 +291,14 @@ pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf repo fold`: folds what is pending now (`POST …/fold`, doc "Folding in idle time").
+pub fn fold_repo(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let done = ctx.client.request("POST", &format!("{base}/fold"), &[], None)?;
+    println!("folded {} list(s)", done["folded"].as_u64().unwrap_or(0));
+    Ok(0)
+}
+
 /// `mf repo compact`: prints the store file's size before and after.
 pub fn compact_repo(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
