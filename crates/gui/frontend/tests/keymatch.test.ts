@@ -54,6 +54,12 @@ describe('comboFromEvent', () => {
     expect(comboFromEvent({ key: 'K', shiftKey: true })).toBe('shift+k');
   });
 
+  test('keeps shift on the space bar (shift+space, not space)', () => {
+    // Shift+Space yields key " " — the same character as Space, so the shift
+    // is not baked into it and dropping it would make "shift+space" unreachable.
+    expect(comboFromEvent({ key: ' ', shiftKey: true })).toBe('shift+space');
+  });
+
   test('maps special keys to the Rust-side names', () => {
     expect(comboFromEvent({ key: 'Escape' })).toBe('escape');
     expect(comboFromEvent({ key: 'ArrowLeft' })).toBe('left');

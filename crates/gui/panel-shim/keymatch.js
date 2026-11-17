@@ -72,11 +72,17 @@ export function comboFromEvent(event) {
   // same "f" the unshifted key gives, so dropping the modifier would collapse
   // "shift+f" onto "f" and no shift+<letter> binding could ever fire. A
   // special key (raw.length > 1) and any other modifier (Ctrl+Shift+Z, whose
-  // key is the unhelpful "Z") keep shift for the same reason.
+  // key is the unhelpful "Z") keep shift for the same reason. So does the
+  // space bar: Shift+Space yields the same " " as Space.
   const cased = raw.length === 1 && raw.toLowerCase() !== raw.toUpperCase();
   if (
     event.shiftKey &&
-    (raw.length > 1 || cased || event.ctrlKey || event.altKey || event.metaKey)
+    (raw.length > 1 ||
+      cased ||
+      raw === ' ' ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey)
   )
     parts.push('shift');
   if (event.metaKey) parts.push('meta');
