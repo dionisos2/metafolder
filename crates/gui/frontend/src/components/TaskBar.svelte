@@ -15,6 +15,7 @@
     visibleWorkspaces,
     workspaceById,
   } from '../lib/store.svelte';
+  import { jobs, shownJobs, type Job } from '../lib/jobs';
   import { daemonWork, settledTasks, tasksOfRepos, type WorkingState } from '../lib/working';
 
   interface Task {
@@ -69,13 +70,29 @@
   // write, a query. Nothing shows for the ordinary fast ones; see lib/working.
   let working = $state<WorkingState | null>(null);
 
+  // The shell's own long commands (lib/jobs), shown once past their grace:
+  // re-read on every change and on every poll, which is when the grace of a
+  // job that has not changed runs out.
+  let allJobs = $state<Job[]>([]);
+  let now = $state(Date.now());
+  const shown = $derived(shownJobs(allJobs, visibleWorkspaces(), now));
+
   onMount(() => {
     void poll();
-    const timer = setInterval(poll, POLL_MS);
+    const timer = setInterval(() => {
+      now = Date.now();
+      void poll();
+    }, POLL_MS);
     const stopWatching = daemonWork.subscribe((state) => (working = state));
+    allJobs = jobs.list();
+    const stopJobs = jobs.subscribe((list) => {
+      allJobs = list;
+      now = Date.now();
+    });
     return () => {
       clearInterval(timer);
       stopWatching();
+      stopJobs();
     };
   });
 
@@ -91,7 +108,7 @@
   );
 </script>
 
-{#if tasks.length > 0 || scripts.length > 0 || working !== null}
+{#if tasks.length > 0 || scripts.length > 0 || shown.length > 0 || working !== null}
   <div class="task-bar" data-help-topic="task-bar">
     {#if working !== null}
       <div class="task">
@@ -102,6 +119,16 @@
         {/if}
       </div>
     {/if}
+    {#each shown as j (j.id)}
+      <div class="task">
+        <span class="label">{j.label}{j.phase ? ` · ${j.phase}` : ''}</span>
+        <span class="spinner"></span>
+        {#if j.done != null && j.total != null}
+          <progress class="bar" value={j.done} max={j.total}></progress>
+          <span class="counts">{j.done}/{j.total}</span>
+        {/if}
+      </div>
+    {/each}
     {#each scripts as s (s.task)}
       {@const ind = scriptIndicator(s)}
       <div class="task" class:waiting={s.waiting}>

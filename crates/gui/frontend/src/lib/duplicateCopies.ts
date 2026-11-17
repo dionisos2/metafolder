@@ -5,6 +5,7 @@
 
 import { formatSize, pathBytes, pathOfBytes } from "../../../panel-shim/ui.js";
 import { invoke } from "./ipc";
+import { jobs } from "./jobs";
 import { status } from "./status";
 import { isWirePath, wireText, type WireText } from "./treePath";
 
@@ -92,51 +93,19 @@ export async function trashCopies(
   const q = await userQuery(ws, mode, source);
   if (q === null) return;
   const victims = copiesToTrash(mode, q);
+  const label = `mf:duplicate ${mode}`;
   try {
-    const found: Found[] = [];
-    let cursor: string | null = null;
-    do {
-      const page: Page = await daemon<Page>(
-        "POST",
-        `/repos/${repo}/query`,
-        {
-          query: victims,
-          select: [GROUP, "mfr_size", "mfr_inode"],
-          limit: PAGE,
-          ...(cursor ? { cursor } : {}),
-        },
-      );
-      found.push(...(page.results ?? []));
-      cursor = page.next_cursor ?? null;
-    } while (cursor);
-    if (found.length === 0) {
+    const listed = await jobs.run(ws, label, async (job) => {
+      job.update({ phase: "listing the copies" });
+      return listCopies(repo, victims);
+    });
+    if (listed === null) {
       await status("No duplicate copy to trash", "info");
       return;
     }
-    const paths = await daemon<Record<string, unknown>>(
-      "POST",
-      `/repos/${repo}/query/fields/resolve-tree`,
-      { query: victims },
-    );
-    const repos = await daemon<{ repo_uuid: string; root: string }[]>("GET", "/repos", null);
-    const root = repos.find((r) => r.repo_uuid === repo)?.root;
-    if (!root) throw new Error("the repository root is unknown");
-
-    const groups = new Set<string>();
-    let reclaimable = 0;
-    const copies: { rel: WireText; text: string }[] = [];
-    for (const rec of found) {
-      const rel = (paths[rec.uuid] as unknown[] | undefined)?.find(isWirePath);
-      if (rel === undefined) continue;
-      groups.add(String(fieldOf(rec, GROUP)));
-      // A name sharing its inode frees nothing once trashed.
-      if (fieldOf(rec, "mfr_inode") === undefined) reclaimable += Number(fieldOf(rec, "mfr_size") ?? 0);
-      copies.push({ rel, text: wireText(rel) ?? "" });
-    }
-    copies.sort((a, b) => (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
+    const { root, copies, groups: g, reclaimable } = listed;
 
     const n = copies.length;
-    const g = groups.size;
     const plural = (k: number) => (k === 1 ? "copy" : "copies");
     const question =
       `Send ${n} duplicate ${plural(n)}, in ${g} group${g === 1 ? "" : "s"}, to the trash?\n\n` +
@@ -146,10 +115,14 @@ export async function trashCopies(
 
     let trashed = 0;
     try {
-      for (const c of copies) {
-        await invoke("trash_path", { repo, path: underRoot(root, c.rel) });
-        trashed += 1;
-      }
+      await jobs.run(ws, label, async (job) => {
+        job.update({ phase: "trashing", done: 0, total: n });
+        for (const c of copies) {
+          await invoke("trash_path", { repo, path: underRoot(root, c.rel) });
+          trashed += 1;
+          job.update({ done: trashed });
+        }
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`${message} (after trashing ${trashed} of ${n})`, { cause: error });
@@ -161,4 +134,56 @@ export async function trashCopies(
   } catch (error) {
     await status(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** The copies `victims` selects, sorted by path, with the groups they are in
+ *  and the space trashing them frees; `null` when there is none. */
+async function listCopies(
+  repo: string,
+  victims: unknown,
+): Promise<{
+  root: string;
+  copies: { rel: WireText; text: string }[];
+  groups: number;
+  reclaimable: number;
+} | null> {
+  const found: Found[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: Page = await daemon<Page>(
+      "POST",
+      `/repos/${repo}/query`,
+      {
+        query: victims,
+        select: [GROUP, "mfr_size", "mfr_inode"],
+        limit: PAGE,
+        ...(cursor ? { cursor } : {}),
+      },
+    );
+    found.push(...(page.results ?? []));
+    cursor = page.next_cursor ?? null;
+  } while (cursor);
+  if (found.length === 0) return null;
+  const paths = await daemon<Record<string, unknown>>(
+    "POST",
+    `/repos/${repo}/query/fields/resolve-tree`,
+    { query: victims },
+  );
+  const repos = await daemon<{ repo_uuid: string; root: string }[]>("GET", "/repos", null);
+  const root = repos.find((r) => r.repo_uuid === repo)?.root;
+  if (!root) throw new Error("the repository root is unknown");
+
+  const groups = new Set<string>();
+  let reclaimable = 0;
+  const copies: { rel: WireText; text: string }[] = [];
+  for (const rec of found) {
+    const rel = (paths[rec.uuid] as unknown[] | undefined)?.find(isWirePath);
+    if (rel === undefined) continue;
+    groups.add(String(fieldOf(rec, GROUP)));
+    // A name sharing its inode frees nothing once trashed.
+    if (fieldOf(rec, "mfr_inode") === undefined) reclaimable += Number(fieldOf(rec, "mfr_size") ?? 0);
+    copies.push({ rel, text: wireText(rel) ?? "" });
+  }
+  copies.sort((a, b) => (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
+  return { root, copies, groups: groups.size, reclaimable };
 }

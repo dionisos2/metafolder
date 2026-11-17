@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { argSpecFor, dispatch } from '../src/lib/commands';
 import type { CompletionFn } from '../src/lib/completions';
+import { jobs } from '../src/lib/jobs';
 import { store } from '../src/lib/store.svelte';
 
 const { invoked, state } = vi.hoisted(() => {
@@ -166,6 +167,38 @@ describe('mf:duplicate keep / trash', () => {
 
     expect(queried()).toEqual([]);
     expect(statuses()).toContain('Nothing is checked — no copy to trash.');
+  });
+
+  test('the run shows in the task bar: listing, then trashing with its counts', async () => {
+    const seen: unknown[] = [];
+    const stop = jobs.subscribe((list) =>
+      seen.push(list.map(({ workspace, label, phase, done, total }) => ({ workspace, label, phase, done, total }))),
+    );
+    confirm.mockImplementation(() => {
+      // Nothing claims to be working while the question waits for an answer.
+      expect(jobs.list()).toEqual([]);
+      return true;
+    });
+
+    await dispatch('mf:duplicate keep query');
+    stop();
+
+    const entry = (phase: string, done: number | null, total: number | null) => [
+      { workspace: 'ws-1', label: 'mf:duplicate keep', phase, done, total },
+    ];
+    expect(seen).toContainEqual(entry('listing the copies', null, null));
+    expect(seen).toContainEqual(entry('trashing', 0, 2));
+    expect(seen).toContainEqual(entry('trashing', 1, 2));
+    expect(seen).toContainEqual(entry('trashing', 2, 2));
+    expect(jobs.list()).toEqual([]);
+  });
+
+  test('a failed run leaves no entry behind', async () => {
+    state.trashFails = '/root/a/y.txt';
+
+    await dispatch('mf:duplicate keep query');
+
+    expect(jobs.list()).toEqual([]);
   });
 
   test('a refused trashing stops the run and says how far it got', async () => {

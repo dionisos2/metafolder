@@ -14,7 +14,9 @@ the GUI halves of <<cmd "mf duplicate keep">> and <<cmd "mf duplicate trash">>
 its effective query, finder and simplified query included — or over the checked
 metarecords. An empty selection is nothing to do; it never falls back on the query.
 The question names every copy, its groups and the space reclaimed, and is always
-asked.
+asked. The run shows in the task bar ([[Status bar and task bar]]): ''listing the
+copies'' with a spinner until the question, then ''trashing'' with a bar and its
+count — the copies go one by one, each too quick to show on its own.
 
 |!Over |!Keep |!Trash |
 |the list's query |<<key "mf:duplicate keep query" "e q k">> |<<key "mf:duplicate trash query" "e q t">> |
