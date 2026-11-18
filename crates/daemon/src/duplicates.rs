@@ -646,7 +646,12 @@ pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Resul
 /// duplicate, so the survivor's own link goes with the group metarecord
 /// (doc "Duplicate groups").
 pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Result<()> {
-    let members = crate::store::Questions::duplicate_group_members(writer.store(), group)?;
+    // The members are the group value's posting, not a read of every
+    // duplicate of the repository.
+    let members = match writer.value_holders(GROUP_FIELD, &Value::Ref(group))? {
+        Some(ids) => writer.uuids_of(&ids)?,
+        None => crate::store::Questions::duplicate_group_members(writer.store(), group)?,
+    };
     if members.len() < 2 {
         for member in members {
             writer.clear_field_as(op, member, GROUP_FIELD)?;

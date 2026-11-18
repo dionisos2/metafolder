@@ -121,6 +121,14 @@ async fn load(label: &str, scale: usize) -> Repo {
 }
 
 impl Repo {
+    /// Writes what writes to many records left pending into the store, as
+    /// the idle fold does (doc "Folding in idle time").
+    fn fold(&self) {
+        let repo = self.state.ready_repo(self.repo).unwrap();
+        let mut conn = repo.conn.lock().unwrap();
+        conn.as_kv_mut().unwrap().fold().unwrap();
+    }
+
     fn reads(&self) -> u64 {
         let repo = self.state.ready_repo(self.repo).unwrap();
         let conn = repo.conn.lock().unwrap();
@@ -259,4 +267,53 @@ async fn adding_a_tag_under_a_schema_on_it_costs_the_same_in_a_larger_repository
         r.cost("POST", "/query/fields/batch", Some(ops)).await.0
     }
     bounded("add a constrained tag", steady!(&small, add_tag), steady!(&large, add_tag));
+}
+
+/// Files every file of `r` in a duplicate group of three, as a scan leaves
+/// them (doc "Duplicate groups"): the group metarecords, and the members'
+/// links to them.
+async fn group_duplicates(r: &Repo) {
+    let q = json!({"query": {"type": "is_present", "field": "rating"}});
+    let (_, files) = r.cost("POST", "/query", Some(q)).await;
+    let files = files.get("results").unwrap_or(&files);
+    let files: Vec<String> =
+        files.as_array().unwrap().iter().map(|u| u.as_str().unwrap().into()).collect();
+    let mut ops = Vec::new();
+    for (k, members) in files.chunks(3).filter(|c| c.len() == 3).enumerate() {
+        let group = Uuid::new_v4().simple().to_string();
+        let int = |n: i64| json!({"type": "int", "value": n});
+        ops.push(json!({"op": "create", "uuid": group, "force": true, "fields": [
+            {"name": "mf_schema", "value": {"type": "string", "value": "duplicate_group"}},
+            {"name": "mfr_content_size", "value": int(10)},
+            {"name": "mfr_content_hash", "value": {"type": "string", "value": format!("h{k}")}},
+            {"name": "mfr_duplicate_count", "value": int(3)},
+            {"name": "mfr_duplicate_reclaimable", "value": int(20)},
+        ]}));
+        ops.push(json!({"op": "add", "force": true,
+            "query": {"type": "uuid_in", "uuids": members},
+            "name": "mfr_duplicate_group", "value": {"type": "ref", "value": group}}));
+    }
+    r.cost("POST", "/query/fields/batch", Some(json!({"ops": ops}))).await;
+    // Written in: a record read costs the writes to many records still
+    // pending in its part (doc "Mass writes in the store"), one per group
+    // here, which is not what is measured.
+    r.fold();
+}
+
+#[tokio::test]
+async fn trashing_a_duplicate_costs_the_same_in_a_larger_repository() {
+    // A member leaving its group recounts the group from its members: they
+    // are the group's, not every duplicate of the repository.
+    let (small, large) = pair().await;
+    group_duplicates(&small).await;
+    group_duplicates(&large).await;
+    async fn trash_one(r: &Repo) -> u64 {
+        let q =
+            json!({"query": {"type": "is_present", "field": "mfr_duplicate_group"}, "limit": 1});
+        let (_, v) = r.cost("POST", "/query", Some(q)).await;
+        let member = v["results"][0].as_str().unwrap().to_string();
+        let body = json!({"uuids": [member], "force": false});
+        r.cost("POST", "/metarecords/trash", Some(body)).await.0
+    }
+    bounded("trash a duplicate", steady!(&small, trash_one), steady!(&large, trash_one));
 }
