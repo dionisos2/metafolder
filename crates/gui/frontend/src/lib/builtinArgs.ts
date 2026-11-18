@@ -3,6 +3,7 @@ import { NEW_KINDS } from "./fileCommands";
 import { GENERIC_COMMANDS, FIND_MODES, SELF, ZOOM_DIRECTIONS, findCandidates, functionProvider } from "./panelFunctions";
 import { activeQuestion, focusedContext, focusedWs, store, workspaceById } from "./store.svelte";
 import { TARGETS } from "./targets";
+import { BAR_NAMES } from "./bars";
 import { type ArgSpec } from "./commandArgs";
 import { invoke } from "./ipc";
 import { neededFunctions, resolvePanel } from "./panelFunctions";
@@ -311,6 +312,14 @@ registerArgs("help:command", [
     name: "command",
     prompt: () => "Help on which command?",
     complete: () => [...new Set(store.commands.map((c) => c.name))].sort(),
+  },
+]);
+
+registerArgs("bar:toggle", [
+  {
+    name: "bar",
+    prompt: () => `Toggle which bar? (${BAR_NAMES.join(" / ")})`,
+    complete: () => [...BAR_NAMES],
   },
 ]);
 

@@ -100,14 +100,17 @@
         {/if}
       </div>
       <div class="bottom">
-        <!-- The bars that come and go float over the bottom of the panels
-             instead of pushing them up: a panel keeps its size whatever shows
-             or hides around it (doc "Status bar and task bar"). -->
+        <!-- The find bar, the task bar and the question bar take their own
+             place: they never cover the panels, and move them only when they
+             have something new or the user asks (doc "Status bar and task
+             bar"). The key-sequence bar lasts an instant and floats over the
+             bottom of the panels, as the command input's candidates do. -->
         <div class="floating">
-          <FindBar />
-          <TaskBar />
-          <PromptBars />
+          <PromptBars keysOnly />
         </div>
+        <FindBar />
+        <TaskBar />
+        <PromptBars questionOnly />
         <CommandInput />
         <StatusBar />
       </div>

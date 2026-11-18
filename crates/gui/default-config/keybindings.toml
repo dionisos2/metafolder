@@ -223,6 +223,10 @@ vars.index = "i"
 "{view} v" = { command = "panel:toggle split" }
 "{view} f" = { command = "panel:toggle fullscreen" }
 "{view} x" = { command = "panel:swap" }
+# The bars that stay once shown (doc "Status bar and task bar"): b the task bar,
+# q the question bar.
+"{view} b" = { command = "bar:toggle tasks" }
+"{view} q" = { command = "bar:toggle question" }
 
 # t then a letter: a panel type, here by default.
 "{panels} l" = { command = "panel:open here metarecord-list" }

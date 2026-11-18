@@ -21,22 +21,36 @@ it. The durations a message carries — `status-message-ms`, `status-error-ms` i
 [[GUI configuration]], `timeout_ms` of `POST /gui/message` — no longer hide
 anything.
 
-Two bars can appear above it, so that a status message never covers them: the
+Two bars sit above it, so that a status message never covers them: the
 continuations of a key sequence being typed, and the question a running script is
 asking, with the keys it accepts.
 
-!! Bars that float over the panels
+!! Bars that stay once shown
 
-Above the [[command input|The command input]], whatever comes and goes — the find
-bar, the task bar, these two bars, and the command input's candidates — ''floats over
-the bottom of the panels'' instead of pushing them up. A panel keeps its size whatever
-shows or hides around it: a script's question disappears and comes back between two
-answers, a task bar entry comes and goes with every task, and each made every panel
-jump. The price is that a bar covers the last rows of the panels while it is shown.
+Above the [[command input|The command input]], the find bar, the task bar (below) and
+the question bar ''take their own place'': they push the panels up, and
+never cover them. A bar that covered the last rows of the panels could hide exactly
+what one needed to read — the row a script asks about, the end of a list.
+
+Showing a bar takes height from every panel, and a panel that jumps mid-read is the
+other trap: a script's question goes and comes between two answers, a task bar entry
+with every task. So the task bar and the question bar move only when there is
+something new to read, or when you ask:
+
+* a bar ''appears with its first entry'' — a task, a question — and ''stays once its entries are gone'', as one dimmed line (''no task running'', ''no question asked''): the panels keep their size from one task, one question to the next;
+* <<key "bar:toggle tasks" "v b">> and <<key "bar:toggle question" "v q">> (`bar:toggle tasks|question`), or the bar's ''×'', hide it, and show it again;
+* ''every new entry shows a hidden bar again'' — a task, a script, a slow call, a question that was not in it at the last look (user decision, November 2026). What only changes — a task's progress, an entry leaving — does not.
+
+A hidden question bar does not suspend the question: its keys still answer it, as the
+task bar's ''your answer'' says.
+
+The find bar shows while a search is open, which you open and close yourself. Only
+what lasts an instant floats over the bottom of the panels instead: the
+continuations of a key sequence, and the command input's candidates. (`lib/bars.ts`.)
 
 !! The task bar
 
-Above the command input, and only while there is something in it, the task bar shows
+Above the command input, from its first entry on (see above), the task bar shows
 what is in flight for the workspaces on screen: a daemon task shows for the
 repositories those workspaces have open, a script for the workspaces it owns.
 

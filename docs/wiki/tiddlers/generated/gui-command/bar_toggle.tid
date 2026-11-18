@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/bar:toggle
+catalog: GUI command
+target: bar:toggle
+summary: Hide the task bar or the question bar, or show it again
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``v b`` → ``bar:toggle tasks``
+* ``v q`` → ``bar:toggle question``

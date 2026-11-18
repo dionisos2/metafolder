@@ -16,6 +16,8 @@
     workspaceById,
   } from '../lib/store.svelte';
   import { jobs, shownJobs, type Job } from '../lib/jobs';
+  import { bars } from '../lib/bars';
+  import { dispatch } from '../lib/commands';
   import { daemonWork, settledTasks, tasksOfRepos, type WorkingState } from '../lib/working';
 
   interface Task {
@@ -106,10 +108,30 @@
   const scripts = $derived(
     store.ui.scriptTasks.filter((s) => ownedByVisible(s.workspaces, visibleWorkspaces())),
   );
+
+  // The bar takes its own place above the command input: shown from its first
+  // entry on, kept once empty, hidden by the user, shown again by a new entry
+  // (lib/bars, doc "Status bar and task bar").
+  let shownBar = $state(bars.shown('tasks'));
+  onMount(() => bars.subscribe((state) => (shownBar = state.tasks)));
+  $effect(() => {
+    bars.note('tasks', [
+      ...(working !== null ? ['call'] : []),
+      ...shown.map((j) => `job:${j.id}`),
+      ...scripts.map((s) => `script:${s.task}`),
+      ...tasks.map((t) => `task:${t.id}`),
+    ]);
+  });
+  const empty = $derived(
+    tasks.length === 0 && scripts.length === 0 && shown.length === 0 && working === null,
+  );
 </script>
 
-{#if tasks.length > 0 || scripts.length > 0 || shown.length > 0 || working !== null}
+{#if shownBar}
   <div class="task-bar" data-help-topic="task-bar">
+    {#if empty}
+      <span class="label">no task running</span>
+    {/if}
     {#if working !== null}
       <div class="task">
         <span class="label">{working.label}</span>
@@ -162,6 +184,15 @@
         {/if}
       </div>
     {/each}
+    <button
+      class="hide"
+      title="Hide the task bar (bar:toggle tasks)"
+      onclick={(event) => {
+        // Hand the focus straight back, or the button would keep the keys.
+        (event.currentTarget as HTMLElement).blur();
+        void dispatch('bar:toggle tasks');
+      }}>×</button
+    >
   </div>
 {/if}
 
@@ -176,6 +207,18 @@
     background: var(--mf-bg-raised, #26262e);
     border-top: 1px solid var(--mf-accent, #4c56c4);
     font-size: 0.85em;
+  }
+  .hide {
+    margin-left: auto;
+    padding: 0 4px;
+    border: none;
+    background: none;
+    color: var(--mf-fg-dim, #8a8a96);
+    font: inherit;
+    cursor: pointer;
+  }
+  .hide:hover {
+    color: var(--mf-fg, #d8d8e0);
   }
   .task {
     display: inline-flex;

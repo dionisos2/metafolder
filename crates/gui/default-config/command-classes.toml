@@ -31,6 +31,7 @@
 "find:next" = "A"
 "find:prev" = "A"
 "find:close" = "B"
+"bar:toggle" = "B"
 "hints:open" = "A"
 "quit" = "C"
 "view:refresh" = "B"

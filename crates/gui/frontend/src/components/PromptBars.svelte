@@ -1,15 +1,29 @@
 <script lang="ts">
-  // The two bars that come and go above the command line: the continuations of
-  // a key sequence being typed, and a running script's question. They float over
-  // the bottom of the panels rather than push them up, so that the panels keep
-  // their size while they come and go (doc "Status bar and task bar").
+  // The two bars above the command line: the continuations of a key sequence
+  // being typed, which floats over the bottom of the panels for the instant it
+  // lasts, and a running script's question, which takes its own place and stays
+  // once shown, until the user hides it (doc "Status bar and task bar"). App
+  // mounts this twice, one bar each (`keysOnly`, `questionOnly`).
+  import { onMount } from 'svelte';
   import { activeQuestion, store } from '../lib/store.svelte';
   import { dispatch } from '../lib/commands';
+  import { bars } from '../lib/bars';
+
+  const { keysOnly = false, questionOnly = false }: { keysOnly?: boolean; questionOnly?: boolean } =
+    $props();
   // A script's question belongs to the workspace it is asked in: switching to
   // another tab shows that tab's question, or none, instead of leaving it on
   // screen over unrelated panels (doc "Script sessions"). A wait owned by
   // nobody is always shown.
   const question = $derived(activeQuestion());
+
+  // Shown from the first question on, kept once answered, hidden by the user,
+  // shown again by every new question (lib/bars).
+  let shownBar = $state(bars.shown('question'));
+  onMount(() => bars.subscribe((state) => (shownBar = state.question)));
+  $effect(() => {
+    if (!keysOnly) bars.note('question', question ? [String(question.id)] : []);
+  });
 
   // Pending key sequence: one entry per continuation, sorted by keys. A
   // continuation bound to the same command in two scopes (a global binding and
@@ -31,7 +45,7 @@
   });
 </script>
 
-{#if keyHints}
+{#if keyHints && !questionOnly}
   <div class="key-hints" data-help-topic="keybindings">
     <span class="prefix">{keyHints.prefix}</span>
     {#each keyHints.hints as hint (`${hint.keys}\n${hint.invocation}`)}
@@ -43,8 +57,11 @@
 
 <!-- A running script's question (POST /gui/input) lives here, not on the
      status line, so an error message can never hide it. -->
-{#if question}
+{#if shownBar && !keysOnly}
   <div class="input-wait" data-help-topic="scripting">
+    {#if !question}
+      <span class="hint dim">no question asked</span>
+    {:else}
     <span class="question">{question.prompt}</span>
     {#each question.keys as key (key)}
       <span class="keycap" class:off={!store.ui.scriptKeys}>{key}</span>
@@ -66,6 +83,17 @@
       script keys
     </label>
     <span class="hint dim">escape gives the keys back, shift+escape stops the script, ctrl+escape kills it</span>
+    {/if}
+    <button
+      class="hide"
+      class:alone={!question}
+      title="Hide the question bar (bar:toggle question)"
+      onclick={(event) => {
+        // Hand the focus straight back, or the button would keep the keys.
+        (event.currentTarget as HTMLElement).blur();
+        void dispatch('bar:toggle question');
+      }}>×</button
+    >
   </div>
 {/if}
 
@@ -144,6 +172,20 @@
     color: var(--mf-fg-dim, #8a8a96);
     font-size: 0.9em;
     cursor: pointer;
+  }
+  .input-wait .hide {
+    padding: 0 4px;
+    border: none;
+    background: none;
+    color: var(--mf-fg-dim, #8a8a96);
+    font: inherit;
+    cursor: pointer;
+  }
+  .input-wait .hide.alone {
+    margin-left: auto;
+  }
+  .input-wait .hide:hover {
+    color: var(--mf-fg, #d8d8e0);
   }
   .input-wait .hint.dim {
     color: var(--mf-fg-dim, #8a8a96);

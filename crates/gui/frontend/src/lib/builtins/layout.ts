@@ -2,6 +2,7 @@
 // the find bar and hints, the value picker's answers, and the window's own
 // (`quit`, `devtools:open`, fullscreen).
 
+import { BAR_NAMES, bars, isBarName } from "../bars";
 import { closeFind, openFind, stepFind } from "../find";
 import { openHints } from "../hints";
 import { invoke } from "../ipc";
@@ -194,6 +195,14 @@ export const layoutBuiltins: Builtins = {
   },
   "hints:open": () => {
     openHints();
+  },
+  "bar:toggle": (args) => {
+    // Hide the task bar or the question bar, or show it again (doc "Status
+    // bar and task bar").
+    const name = args[0] ?? "";
+    if (!isBarName(name))
+      throw new Error(`bar:toggle needs a bar: ${BAR_NAMES.join(" / ")}`);
+    bars.toggle(name);
   },
   "status:clear": (_args, context) => {
     // Dismiss the transient status-bar message (and the last-command echo).

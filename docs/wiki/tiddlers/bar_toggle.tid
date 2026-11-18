@@ -1,0 +1,9 @@
+title: bar:toggle
+tags: [[GUI command]] [[Status bar and task bar]]
+kind: reference
+summary: Hide the task bar or the question bar, or show it again
+
+`bar:toggle tasks` hides the task bar, or shows it again; `bar:toggle question` does
+the same for a script's question bar. A hidden bar comes back by itself with its next
+new entry — a task, a question — and a bar shown with nothing in it is one dimmed
+line. See [[Status bar and task bar]].
