@@ -25,7 +25,7 @@ The first argument says which list, as for the bulk operations
 
 * `selection` — the checked metarecords ([[Cross-panel selection]]), in the order they were checked;
 * `query` — every metarecord the [[metarecord-list panel]] shows, finder included, in its sort order. The list is read once, at the start: a later change of the query does not change what plays.
-* `stop` — ends the slideshow, leaving the file shown on screen.
+* `stop` — ends the slideshow, leaving the file shown on screen (<<key "viewer:play stop" "e p">>).
 
 Two options follow, in any order: `shuffle` plays the list in a random order, and
 `loop` starts it over at the end instead of stopping — with `shuffle`, in a new order

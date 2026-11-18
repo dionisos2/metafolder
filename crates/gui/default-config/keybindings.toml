@@ -636,7 +636,9 @@ vars.index = "i"
 "shift+{item} {delete}" = { command = "item:delete selection" }
 "{item} {item} {delete}" = { command = "item:delete selection" }
 "{item} {query-verb} {delete}" = { command = "item:delete query" }
-# The slideshow (doc "Slideshow"): the checked files, or the query's.
+# The slideshow (doc "Slideshow"): the checked files, or the query's; `e p`
+# alone stops it.
+"{item} {run}" = { command = "viewer:play stop" }
 "shift+{item} {run}" = { command = "viewer:play selection" }
 "{item} {item} {run}" = { command = "viewer:play selection" }
 "{item} {query-verb} {run}" = { command = "viewer:play query" }
