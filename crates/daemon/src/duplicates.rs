@@ -845,7 +845,6 @@ fn write_class_groups(
 
 /// Removes what the scan disproved: the group link of a record the scan did not
 /// place in a group, and every group left with fewer than two members.
-#[allow(clippy::too_many_arguments)]
 fn prune_groups(
     writer: &mut Writer,
     grouped: &HashSet<Uuid>,

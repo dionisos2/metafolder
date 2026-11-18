@@ -369,3 +369,47 @@ fn a_write_to_few_records_is_written_into_them() {
     assert_eq!(store.pending_mass().unwrap(), 1, "twenty-one records are");
     check(&store);
 }
+
+/// A `Nothing` and a long text go in bulk too (doc "Mass writes in the
+/// store"): a `Nothing` is the field's `absent` set, a text past its key's
+/// length is a posting under a hashed key. Only the removal of a text too
+/// long for trigrams is written record by record, the long-text set needing
+/// to know whether another long text stays.
+#[test]
+fn a_nothing_and_a_long_text_are_written_in_bulk() {
+    let (mut store, _dir) = open();
+    let all = records(&mut store, 90);
+    store.fold().unwrap();
+    let cut = s(&"k".repeat(300)); // its key cut and hashed
+    let huge = s(&"h".repeat(600)); // too long for trigrams
+    let entries = |store: &KvStore| store.pending_mass().unwrap();
+    for (value, ids) in [(&Value::Nothing, &all[..40]), (&cut, &all[10..50]), (&huge, &all[20..60])]
+    {
+        let before = entries(&store);
+        let changed = write(&mut store, |w| w.mass_add("tag", value.clone(), ids).unwrap());
+        assert_eq!(changed.len(), ids.len());
+        assert_eq!(entries(&store), before + 1, "added in bulk: {value:?}");
+        check(&store);
+    }
+    for (value, ids) in [(&Value::Nothing, &all[..20]), (&cut, &all[10..30])] {
+        let before = entries(&store);
+        let changed = write(&mut store, |w| w.mass_remove("tag", value, ids).unwrap());
+        assert_eq!(changed.len(), ids.len());
+        assert_eq!(entries(&store), before + 1, "removed in bulk: {value:?}");
+        check(&store);
+    }
+    let before = entries(&store);
+    let changed = write(&mut store, |w| w.mass_remove("tag", &huge, &all[20..40]).unwrap());
+    assert_eq!(changed.len(), 20);
+    assert_eq!(entries(&store), before, "a text too long for trigrams leaves one by one");
+    write(&mut store, |w| w.mass_set("tag", vec![huge.clone()], &all[60..80]).unwrap());
+    check(&store);
+    let eq = |value: &Value| Query::Eq {
+        field: "tag".into(),
+        value: value.clone(),
+        aspect: Aspect::Raw,
+    };
+    assert_eq!(common::engines::both(&store, &eq(&cut), &[]).len(), 20);
+    assert_eq!(common::engines::both(&store, &eq(&huge), &[]).len(), 40);
+    settled(&mut store, all[0]);
+}

@@ -31,9 +31,9 @@ use roaring::RoaringBitmap;
 
 use super::super::{get_value, name_key, put_value, In, KvStore, KvTxn, Out, Tables};
 use super::{
-    count_prefix, decode_set, hist_bucket, hist_key, long_prefix, posting_prefix, referrers_prefix,
-    search_text, set_prefix, unesc, value_key, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS,
-    POSTINGS, REFERRERS, SETS, TRIGRAM_MAX,
+    count_prefix, decode_set, hist_bucket, hist_key, posting_prefix, referrers_prefix, search_text,
+    set_prefix, unesc, value_key, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS, POSTINGS,
+    REFERRERS, SETS, TRIGRAM_MAX,
 };
 
 pub(crate) use crate::store::MassKind as Kind;
@@ -194,8 +194,11 @@ impl KvTxn<'_> {
 
     /// Whether a write of `values` to many records of `field` can be one
     /// event: not on a forest, whose positions are written one by one (doc
-    /// "One position per forest"); and, for a value added or removed, a
-    /// value whose key holds it whole.
+    /// "One position per forest"); nor the removal of a text too long for
+    /// trigrams, the long-text set needing to know whether another such text
+    /// stays on the record. A `Nothing` is the field's `absent` set, and a
+    /// text past its key's length a posting under a hashed key, like any
+    /// value.
     pub(in super::super) fn mass_eligible(
         &self,
         field: &str,
@@ -208,13 +211,9 @@ impl KvTxn<'_> {
                 return Ok(false);
             }
         }
-        let plain = |v: &Value| match value_key(v) {
-            None => kind == Kind::Replace,
-            Some(key) => {
-                v.position().is_none()
-                    && !(key[0] == 2 && long_prefix(&key[1..]).is_some())
-                    && search_text(v).is_none_or(|t| t.len() <= TRIGRAM_MAX)
-            }
+        let plain = |v: &Value| {
+            v.position().is_none()
+                && (kind != Kind::Remove || search_text(v).is_none_or(|t| t.len() <= TRIGRAM_MAX))
         };
         Ok(values.iter().all(plain) && (kind == Kind::Replace || values.len() == 1))
     }
@@ -240,6 +239,13 @@ impl KvTxn<'_> {
             }
         }
         let event = Event::new(kind, values, ids);
+        // A `Nothing` added or removed is the field's `absent` set, at once:
+        // no value is counted, and no event is needed to replay it.
+        if kind != Kind::Replace && event.keys.is_empty() {
+            let absent = set_prefix(ABSENT, Some(field));
+            self.chunk_apply(SETS, &absent, &event.ids, kind == Kind::Add)?;
+            return self.append_entries(kind, field, &listed, &event.ids);
+        }
         match kind {
             Kind::Add | Kind::Remove => {
                 let (value, key) = (&event.values[0], &event.keys[0]);
@@ -249,6 +255,9 @@ impl KvTxn<'_> {
                     self.count_step(field, &gain, true)?;
                     self.hist_bump(field, key, gain.len() as i64)?;
                     self.mass_grams(field, value, &gain)?;
+                    if search_text(value).is_some_and(|t| t.len() > TRIGRAM_MAX) {
+                        self.chunk_apply(SETS, &set_prefix(LONG_TEXTS, Some(field)), &gain, true)?;
+                    }
                 } else {
                     let lose = &event.ids & &have;
                     self.count_step(field, &lose, false)?;
@@ -263,7 +272,9 @@ impl KvTxn<'_> {
                 }
                 let unknown = event.values.iter().any(|v| matches!(v, Value::Nothing));
                 self.chunk_apply(SETS, &set_prefix(ABSENT, Some(field)), &event.ids, unknown)?;
-                self.chunk_apply(SETS, &set_prefix(LONG_TEXTS, Some(field)), &event.ids, false)?;
+                let long =
+                    event.values.iter().filter_map(search_text).any(|t| t.len() > TRIGRAM_MAX);
+                self.chunk_apply(SETS, &set_prefix(LONG_TEXTS, Some(field)), &event.ids, long)?;
                 for (value, key) in
                     event.values.iter().filter(|v| value_key(v).is_some()).zip(&event.keys)
                 {
@@ -306,7 +317,10 @@ impl KvTxn<'_> {
     /// the store"): by value, those of a text new to the field; by
     /// metarecord, the ids pending.
     fn mass_grams(&self, field: &str, value: &Value, ids: &RoaringBitmap) -> Result<()> {
-        let Some(text) = search_text(value) else { return Ok(()) };
+        // A text too long has no trigrams: the long-text set holds it.
+        let Some(text) = search_text(value).filter(|t| t.len() <= TRIGRAM_MAX) else {
+            return Ok(());
+        };
         let Some(first) = ids.min() else { return Ok(()) };
         if self.gram_state(field)?.by_ids {
             return self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(field)), ids, true);

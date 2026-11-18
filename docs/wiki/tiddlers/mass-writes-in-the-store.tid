@@ -113,8 +113,15 @@ The log of a write to many records is one entry as well ([[Mass operations in th
 no record is read to write it.
 
 Positions (`tree_ref`, `hierarchy_ref`) are never part of an event: each is written
-on its own ([[One position per forest]]). Nor is a `Nothing` or a text over 512 bytes
-added or removed.
+on its own ([[One position per forest]]). A `Nothing` added or removed is the field's
+`absent` set, changed at once: no value is counted and no event is filed, the entries
+of the parts carrying the rows (user decision, 18 November 2026: nothing called for
+leaving it out). A text past its key's length (256 bytes) is a posting like any value,
+under its cut key and hash ([[Store tables]]). The one write left to go one record at a
+time is the ''removal'' of a text too long for trigrams (over 512 bytes): the long-text
+set says which records hold such a text, and whether another stays on a record cannot
+be known without reading it ([[Text search in the store]]); its addition, and a
+replacement, set it exactly.
 
 `tests/kv_events.rs` holds every reader to the oracle with events pending, after a
 fold and after a reindex.

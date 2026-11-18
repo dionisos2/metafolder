@@ -13,9 +13,9 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   at about 6.3 ms against a recorded 0.56 ms. It is not the dense id work (the same
   at 786dce1e, before it): it comes from the postings changes (derived 11 to 14),
   not yet bisected. The history was not appended with that run.
-- Open questions, none decided (doc "Storage open questions"): no =Nothing= in a
-  mass add or remove, replace and rename not being mass writes, the marks a deleted
-  record loses, compressing what the log keeps of a deletion.
+- Open questions, none decided (doc "Storage open questions"): replace and rename
+  not being mass writes, the marks a deleted record loses, compressing what the log
+  keeps of a deletion.
 - The =undo_redo_properties= suite takes about 3 minutes on four cores; the cost
   left is the writes of its cases, not their set-up.
 - The kinds of the =sets= table (universe, counts, absent, referrers, descendants,
@@ -42,6 +42,5 @@ doc "Platform open questions": Unicode normalisation of names, Windows long
 paths, what a port to macOS or Windows would take.
 
 ** Storage open questions
-doc "Storage open questions": no =Nothing= in a mass add or remove, replace and
-rename as ordinary operations, the marks a record keeps of mass writes, and
+doc "Storage open questions": replace and rename as ordinary operations, the marks a record keeps of mass writes, and
 compressing what the log keeps of a deletion.

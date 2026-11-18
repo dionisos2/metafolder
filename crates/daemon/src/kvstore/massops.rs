@@ -642,8 +642,13 @@ impl KvTxn<'_> {
         let changed = match kind {
             Kind::Add | Kind::Remove => {
                 let value = &values[0];
-                let key = super::derived::value_key(value).context("a value with no key")?;
-                let have = self.effective(field, value, &key)?;
+                // A `Nothing` is held where the field's `absent` set says.
+                let have = match super::derived::value_key(value) {
+                    Some(key) => self.effective(field, value, &key)?,
+                    None => {
+                        self.read_chunked(SETS, &set_prefix(super::derived::ABSENT, Some(field)))?
+                    }
+                };
                 let changed = if kind == Kind::Add { ids - &have } else { ids & &have };
                 // A revert names the operation each of its own reverts, in the
                 // order of the records: it must change exactly those.
