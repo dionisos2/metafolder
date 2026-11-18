@@ -84,10 +84,11 @@ as ever, without a number. A record's value is its rows, then — when it has an
 those numbers and marks, so one written before reads unchanged
 ([[Persisted format changes]]).
 
-The fold (`KvStore::fold`, a reindex, a part past its limit, and the idle fold of
-[[Folding in idle time]], one list at a time) writes the entries into
-the records of their part and empties the list; a metarecord that is gone is not
-written back.
+The fold (`KvStore::fold`, a reindex, and the idle fold of [[Folding in idle time]],
+one list at a time) writes the entries into the records of their part and empties the
+list; a metarecord that is gone is not written back. No list is folded for being long:
+a fold set off by a size would fall in the middle of the user's work, a slowdown at
+random (user decision).
 
 The log of a write to many records is one entry as well ([[Mass operations in the log]]);
 no record is read to write it.
