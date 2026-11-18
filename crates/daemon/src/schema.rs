@@ -401,6 +401,61 @@ pub fn field_candidates(
     Ok(out)
 }
 
+/// The records of `changed` that may break a constraint on `field` once a
+/// write of `written` to them is done (doc "Mass operations in the log"):
+/// asked of the counters and postings the write transaction keeps, no record
+/// read. A value of the wrong type among `written` names every changed record
+/// the constraint targets; a number of rows out of bounds is read off the
+/// counters. A superset: the caller validates what it names, as a write to
+/// one record is. `None` when the store cannot say without reading the
+/// records.
+pub fn breaches(
+    schema: &CompiledSchema,
+    writer: &crate::log::Writer,
+    field: &str,
+    written: &[Value],
+    changed: &roaring::RoaringBitmap,
+) -> Result<Option<roaring::RoaringBitmap>> {
+    let mut out = roaring::RoaringBitmap::new();
+    let Some(constraints) = schema.by_field.get(field) else { return Ok(Some(out)) };
+    if changed.is_empty() {
+        return Ok(Some(out));
+    }
+    for c in constraints {
+        let scope = match &c.targets {
+            None => changed.clone(),
+            Some(types) => {
+                let mut declared = roaring::RoaringBitmap::new();
+                for ty in types {
+                    let value = Value::String(ty.clone());
+                    let Some(ids) = writer.value_holders("mf_schema", &value)? else {
+                        return Ok(None);
+                    };
+                    declared |= ids;
+                }
+                declared & changed
+            }
+        };
+        if scope.is_empty() {
+            continue;
+        }
+        if let Some(expected) = &c.value_type {
+            if written.iter().any(|v| *v != Value::Nothing && value_type_name(v) != expected) {
+                out |= &scope;
+            }
+        }
+        if let Some(max) = c.max {
+            let Some(over) = writer.rows_over(field, max)? else { return Ok(None) };
+            out |= over & &scope;
+        }
+        if c.min > 0 {
+            let Some(enough) = writer.rows_over(field, c.min - 1)? else { return Ok(None) };
+            out |= &scope - enough;
+        }
+    }
+    Ok(Some(out))
+}
+
 /// A superset of the metarecords that could violate any constraint, gathered
 /// with a handful of index-served set queries (a small group per constraint)
 /// instead of a per-record walk of the whole repository. Running

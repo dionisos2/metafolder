@@ -492,9 +492,16 @@ pub(super) async fn batch_set(
     let field = body.name.clone();
     // A whole-field overwrite always rewrites the rows, so every match counts as
     // updated — unlike the append/remove forms, which report what they changed.
-    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
-        Ok(writer.mass_set_ids(&field, rows.clone(), ids)?)
-    })
+    let written = rows.clone();
+    write_matched_ids(
+        &state,
+        repo_uuid,
+        body.name,
+        body.force,
+        body.query,
+        written,
+        move |writer, ids| Ok(writer.mass_set_ids(&field, rows.clone(), ids)?),
+    )
     .await
 }
 
@@ -513,9 +520,16 @@ pub(super) async fn batch_add(
     let field = body.name.clone();
     // A match that already holds the value gains nothing, so it is not counted
     // (doc "No duplicate rows").
-    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
-        Ok(writer.mass_add_ids(&field, value.clone(), ids)?)
-    })
+    let written = vec![value.clone()];
+    write_matched_ids(
+        &state,
+        repo_uuid,
+        body.name,
+        body.force,
+        body.query,
+        written,
+        move |writer, ids| Ok(writer.mass_add_ids(&field, value.clone(), ids)?),
+    )
     .await
 }
 
@@ -532,9 +546,15 @@ pub(super) async fn batch_remove(
     let repo_uuid = parse_uuid(&repo)?;
     let value = single_value(body.value, body.values)?;
     let field = body.name.clone();
-    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
-        Ok(writer.mass_remove_ids(&field, &value, ids)?)
-    })
+    write_matched_ids(
+        &state,
+        repo_uuid,
+        body.name,
+        body.force,
+        body.query,
+        vec![],
+        move |writer, ids| Ok(writer.mass_remove_ids(&field, &value, ids)?),
+    )
     .await
 }
 
@@ -558,9 +578,15 @@ pub(super) async fn batch_unset(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let field = body.name.clone();
-    write_matched_ids(&state, repo_uuid, body.name, body.force, body.query, move |writer, ids| {
-        Ok(writer.mass_unset_ids(&field, ids)?)
-    })
+    write_matched_ids(
+        &state,
+        repo_uuid,
+        body.name,
+        body.force,
+        body.query,
+        vec![],
+        move |writer, ids| Ok(writer.mass_unset_ids(&field, ids)?),
+    )
     .await
 }
 
@@ -684,17 +710,15 @@ pub(super) async fn batch_writes(
                 names.push(name.to_string());
             }
         };
-        // The records an op changed, by id, are named for the schema check
-        // only when a constraint is on the field: reading them is the cost.
-        let touch_ids = |writer: &Writer,
-                         changed: &roaring::RoaringBitmap,
-                         name: &str,
-                         touch: &mut dyn FnMut(Uuid, &str)|
-         -> Result<(), ApiError> {
-            for uuid in schema_suspects(repo_state, writer, changed, name)? {
-                touch(uuid, name);
-            }
-            Ok(())
+        // What the ops wrote to each field, by id: the schema check asks the
+        // counters about them once, after the last op, so a record is judged
+        // by what the batch leaves, not by a step of it.
+        let mut by_field: std::collections::BTreeMap<String, (roaring::RoaringBitmap, Vec<Value>)> =
+            Default::default();
+        let mut wrote = |name: &str, changed: &roaring::RoaringBitmap, values: &[Value]| {
+            let (ids, written) = by_field.entry(name.to_string()).or_default();
+            *ids |= changed;
+            written.extend(values.iter().cloned());
         };
         let mut results = Vec::with_capacity(ready.len());
         // What each op wrote, for the slow log: verb, field, records changed.
@@ -723,29 +747,34 @@ pub(super) async fn batch_writes(
                 }
                 Ready::Set(ids, name, rows) => {
                     // One write to many records (doc "Mass operations in the log").
-                    let changed = writer.mass_set_ids(&name, rows, &ids)?;
+                    let changed = writer.mass_set_ids(&name, rows.clone(), &ids)?;
                     results.push(json!({ "updated": changed.len() }));
                     summary.push(("set", Some(name.clone()), changed.len()));
-                    touch_ids(&writer, &changed, &name, &mut touch)?;
+                    wrote(&name, &changed, &rows);
                 }
                 Ready::Add(ids, name, value) => {
-                    let changed = writer.mass_add_ids(&name, value, &ids)?;
+                    let changed = writer.mass_add_ids(&name, value.clone(), &ids)?;
                     results.push(json!({ "updated": changed.len() }));
                     summary.push(("add", Some(name.clone()), changed.len()));
-                    touch_ids(&writer, &changed, &name, &mut touch)?;
+                    wrote(&name, &changed, std::slice::from_ref(&value));
                 }
                 Ready::Remove(ids, name, value) => {
                     let changed = writer.mass_remove_ids(&name, &value, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
                     summary.push(("remove", Some(name.clone()), changed.len()));
-                    touch_ids(&writer, &changed, &name, &mut touch)?;
+                    wrote(&name, &changed, &[]);
                 }
                 Ready::Unset(ids, name) => {
                     let changed = writer.mass_unset_ids(&name, &ids)?;
                     results.push(json!({ "updated": changed.len() }));
                     summary.push(("unset", Some(name.clone()), changed.len()));
-                    touch_ids(&writer, &changed, &name, &mut touch)?;
+                    wrote(&name, &changed, &[]);
                 }
+            }
+        }
+        for (name, (changed, written)) in &by_field {
+            for uuid in schema_suspects(repo_state, &writer, changed, name, written)? {
+                touch(uuid, name);
             }
         }
         drop(writing);

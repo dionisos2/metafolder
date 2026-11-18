@@ -234,3 +234,29 @@ async fn what_the_gui_reads_on_opening_costs_the_same_in_a_larger_repository() {
     }
     bounded("opening a repository", steady!(&small, opening), steady!(&large, opening));
 }
+
+#[tokio::test]
+async fn adding_a_tag_under_a_schema_on_it_costs_the_same_in_a_larger_repository() {
+    // `tag` is constrained (at least one, of type string, on every record):
+    // nearly every record is a candidate to violate it, and the check after a
+    // write to a few must not read each of them to find the few it wrote.
+    let (small, large) = pair().await;
+    for r in [&small, &large] {
+        let schema = json!({"version": 1, "groups": [{"targets": "*", "constraints": [
+            {"field": "tag", "type": "string", "min": 1}
+        ]}]});
+        let dir = r._root.path().join(".metafolder").join("config");
+        std::fs::write(dir.join("schema.json"), schema.to_string()).unwrap();
+        r.cost("POST", "/schema/reload", None).await;
+    }
+    async fn add_tag(r: &Repo) -> u64 {
+        let sample = r.sample().await;
+        let query = json!({"type": "uuid_in", "uuids": [sample]});
+        let ops = json!({"ops": [
+            {"op": "remove", "query": query, "name": "tag", "value": {"type": "string", "value": "t"}},
+            {"op": "add", "query": query, "name": "tag", "value": {"type": "string", "value": "t"}},
+        ]});
+        r.cost("POST", "/query/fields/batch", Some(ops)).await.0
+    }
+    bounded("add a constrained tag", steady!(&small, add_tag), steady!(&large, add_tag));
+}

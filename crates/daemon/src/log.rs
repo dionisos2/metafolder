@@ -663,6 +663,19 @@ impl<'c> Writer<'c> {
         Ok(self.tx.holder_ids(field)?.map(|holders| &holders & ids))
     }
 
+    /// The ids holding more than `n` rows of `field`, the transaction's writes
+    /// so far counted; `None` when the store cannot say without reading them.
+    pub fn rows_over(&self, field: &str, n: u64) -> Result<Option<RoaringBitmap>> {
+        self.tx.rows_over_ids(field, n)
+    }
+
+    /// The ids holding `value` in `field` (a superset for a long text), the
+    /// transaction's writes so far counted; `None` when the store cannot say
+    /// without reading them.
+    pub fn value_holders(&self, field: &str, value: &Value) -> Result<Option<RoaringBitmap>> {
+        self.tx.value_holder_ids(field, value)
+    }
+
     /// The uuids of dense ids, in the order of the ids.
     pub fn uuids_of(&self, ids: &RoaringBitmap) -> Result<Vec<Uuid>> {
         self.tx.uuids_of(ids)

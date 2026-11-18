@@ -131,12 +131,26 @@ command; the bound on the log is the bound on its entries.
 
 !! The schema check
 
-A write by id is checked against the schema ''once'': the indexes say which records
-could violate a constraint on the field — a row of the wrong type, too many rows, too
-few, none where a type requires one ([[Schema constraints]]) — and those among the records the write
-changed are validated as a write to one record is. A repository with no violation has
-next to no such record, whatever the size of the write; one with many pays for
-them (the question is not restricted to the changed records).
+A write by id is checked against the schema ''once'', after its last operation (the
+last of a batch), and without reading a record: the write transaction keeps the
+counters of each field and the postings of each value up to date as it writes, so the
+records the write changed that may break a constraint on the field ([[Schema
+constraints]]) are set arithmetic on them —
+
+* the type: a value the write puts in the field is of the wrong type — known from the
+  command, not from the records — and every changed record the constraint targets is
+  named;
+* the number of rows: the counters say which records hold more than `max`, or fewer
+  than `min`, rows of the field, `Nothing` included;
+* the targets: a typed constraint looks only at the changed records holding one of
+  its types in `mf_schema`.
+
+Only the records named are read, and validated as a write to one record is. The check
+costs what the write does, whatever the size of the repository, and a repository full
+of violations elsewhere costs it nothing. (It once asked the questions of the schema
+check — `POST /schema/check` — of the write transaction, which answers them by
+reading every row of the field and every record: a few tags added took a second on a
+large repository.) A store without counters validates each changed record.
 
 !! What is not here yet
 

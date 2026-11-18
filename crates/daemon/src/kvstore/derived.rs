@@ -1152,6 +1152,24 @@ impl KvTxn<'_> {
         Ok(out)
     }
 
+    /// The ids holding more than `n` rows of `field` — its values, and the
+    /// `Nothing` row it may hold beside them — as the transaction sees them:
+    /// read off the counts, no record read (the query source's `rows_over`).
+    pub(super) fn rows_over_now(&self, field: &str, n: u64) -> Result<RoaringBitmap> {
+        let mut counts = Vec::with_capacity(COUNT_BITS as usize);
+        for bit in 0..COUNT_BITS {
+            counts.push(self.read_chunked(SETS, &count_prefix(field, bit))?);
+        }
+        let unknown = self.read_chunked(SETS, &set_prefix(ABSENT, Some(field)))?;
+        // With a `Nothing` row, one value less makes as many rows.
+        let mut over = counted_over(&counts, n);
+        over |= match n.checked_sub(1) {
+            Some(less) => counted_over(&counts, less) & &unknown,
+            None => unknown,
+        };
+        Ok(over)
+    }
+
     /// A field's trigram state, as the transaction has it.
     fn gram_state(&self, field: &str) -> Result<GramState> {
         if let Some(state) = self.grams.borrow().get(field) {

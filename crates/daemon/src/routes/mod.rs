@@ -469,36 +469,41 @@ where
 }
 
 /// The records of `changed` that a constraint on `field` could be violated
-/// by: the ones to validate after a write to many records. It is one question
-/// to the indexes ([`crate::schema::field_candidates`]), not a read of each
-/// record, so a batch of ten thousand costs what one of ten does; the records
-/// it names are validated as ever.
+/// by, once `written` is written to them: the ones to validate after a write
+/// to many records. It is a question to the counters the write transaction
+/// keeps ([`crate::schema::breaches`]), not a read of each record nor of the
+/// repository, so a batch of ten thousand costs what one of ten does; the
+/// records it names are validated as ever. A store that cannot say names
+/// every changed record.
 pub(crate) fn schema_suspects(
     repo_state: &RepoState,
     writer: &Writer,
     changed: &roaring::RoaringBitmap,
     field: &str,
+    written: &[Value],
 ) -> Result<Vec<Uuid>, ApiError> {
     let guard = repo_state.schema.lock_recover();
     let Some(schema) = guard.as_ref().filter(|s| s.constrains(field)) else {
         return Ok(Vec::new());
     };
-    let candidates = crate::schema::field_candidates(schema, writer.store(), field, i64::MAX)?;
-    let hit = &writer.dense_ids(&candidates)? & changed;
+    let hit = crate::schema::breaches(schema, writer, field, written, changed)?
+        .unwrap_or_else(|| changed.clone());
     Ok(writer.uuids_of(&hit)?)
 }
 
 /// [`write_matches`] for a write that names the records by dense id, the
 /// bitmap the query ends with (doc "Mass operations in the log"): nothing is
-/// read per record, so a batch of ten thousand costs what one of ten does,
-/// the schema check apart — which reads each record only when a constraint
-/// names the field.
+/// read per record, so a batch of ten thousand costs what one of ten does —
+/// the schema check too, which reads only the records it finds in breach.
+/// `written` is what the write puts in the field, for that check.
+#[allow(clippy::too_many_arguments)]
 async fn write_matched_ids<F>(
     state: &AppState,
     repo_uuid: Uuid,
     name: String,
     force: bool,
     query: MetaQuery,
+    written: Vec<Value>,
     mut write: F,
 ) -> Result<Json<serde_json::Value>, ApiError>
 where
@@ -518,7 +523,7 @@ where
         let writing = slowlog::phase("write.fields");
         let changed = write(&mut writer, &ids)?;
         let updated = changed.len();
-        for uuid in schema_suspects(repo_state, &writer, &changed, &name)? {
+        for uuid in schema_suspects(repo_state, &writer, &changed, &name, &written)? {
             slowlog::timed("validate.schema", || {
                 validate_schema(repo_state, writer.store(), uuid, std::slice::from_ref(&name))
             })?;

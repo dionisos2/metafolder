@@ -2475,6 +2475,21 @@ impl WriteTxn for KvTxn<'_> {
         self.holder_ids_now(field).map(Some)
     }
 
+    fn rows_over_ids(&self, field: &str, n: u64) -> Result<Option<roaring::RoaringBitmap>> {
+        self.rows_over_now(field, n).map(Some)
+    }
+
+    fn value_holder_ids(
+        &self,
+        field: &str,
+        value: &Value,
+    ) -> Result<Option<roaring::RoaringBitmap>> {
+        match derived::value_key(value) {
+            Some(key) => self.effective(field, value, &key).map(Some),
+            None => Ok(None),
+        }
+    }
+
     fn dense_ids(
         &self,
         uuids: &[Uuid],

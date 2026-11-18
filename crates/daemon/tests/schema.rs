@@ -537,6 +537,68 @@ async fn test_a_mass_add_is_held_to_the_schema() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A batch is judged by what it leaves (doc "Mass operations in the log"): a
+/// film's one rating replaced by a removal then an addition is within its
+/// maximum, though the addition alone would not be; a second rating is not.
+#[tokio::test]
+async fn test_a_batch_is_held_to_the_schema_as_it_ends() {
+    let (app, repo, root) = setup_with_schema("batchend", film_schema()).await;
+    for name in ["Alien", "Heat"] {
+        let fields = json!([
+            {"name": "mf_schema", "value": {"type": "string", "value": "film"}},
+            {"name": "name", "value": {"type": "string", "value": name}},
+            {"name": "rating", "value": {"type": "int", "value": 5}}
+        ]);
+        let (status, body) = create(&app, &repo, fields).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let films = json!({"type": "is_present", "field": "mf_schema"});
+    let url = format!("/repos/{repo}/query/fields/batch");
+    let rating = |n: i64| json!({"type": "int", "value": n});
+    // The addition first: the counters are read once the batch is done.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &url,
+        Some(json!({"ops": [
+            {"op": "add", "query": films, "name": "rating", "value": rating(4)},
+            {"op": "remove", "query": films, "name": "rating", "value": rating(5)},
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // A second rating on each film: over the maximum.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &url,
+        Some(json!({"ops": [
+            {"op": "add", "query": films, "name": "rating", "value": rating(3)},
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["violations"][0]["kind"], "max_cardinality");
+    // A record that is no film holds no maximum: two ratings are fine.
+    let (status, body) =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}]))
+            .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let plain = json!({"type": "uuid_in", "uuids": [body["uuid"]]});
+    let (status, body) = request(
+        &app,
+        "POST",
+        &url,
+        Some(json!({"ops": [
+            {"op": "add", "query": plain, "name": "rating", "value": rating(2)},
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["results"][0]["updated"], 1);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── Check and reload ──────────────────────────────────────────────────────────
 
 #[tokio::test]

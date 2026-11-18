@@ -998,6 +998,22 @@ pub trait WriteTxn: Store {
     fn holder_ids(&self, _field: &str) -> Result<Option<roaring::RoaringBitmap>> {
         Ok(None)
     }
+    /// The ids holding more than `n` rows of `field` (a `Nothing` included),
+    /// the transaction's own writes counted; `None` for a store that cannot
+    /// say without reading the records.
+    fn rows_over_ids(&self, _field: &str, _n: u64) -> Result<Option<roaring::RoaringBitmap>> {
+        Ok(None)
+    }
+    /// The ids holding `value` in `field`, the transaction's own writes
+    /// counted — a superset when the value's key is cut (a long text); `None`
+    /// for a store that cannot say without reading the records.
+    fn value_holder_ids(
+        &self,
+        _field: &str,
+        _value: &Value,
+    ) -> Result<Option<roaring::RoaringBitmap>> {
+        Ok(None)
+    }
     /// The dense ids of `uuids`; `None` for a store with none. A uuid that is
     /// no metarecord is refused when `must_exist`, left out otherwise.
     fn dense_ids(
