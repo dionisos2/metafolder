@@ -78,6 +78,7 @@ const ROOT: [u8; 16] = [0; 16];
 
 /// What a write transaction answers to "which ids hold a row of this field".
 type HoldersOf<'a> = dyn Fn(&str) -> Result<roaring::RoaringBitmap> + 'a;
+type ValueHoldersOf<'a> = dyn Fn(&str, &Value) -> Result<roaring::RoaringBitmap> + 'a;
 
 #[derive(Clone, Copy)]
 struct Tables {
@@ -779,6 +780,9 @@ struct Read<'a> {
     /// own changes included); `None` for a read of the committed store, which
     /// reads the field's bitmaps itself ([`Read::holder_ids`]).
     holders: Option<&'a HoldersOf<'a>>,
+    /// The ids holding a value of a field as a write transaction sees them;
+    /// `None` for a read of the committed store ([`Read::value_holder_ids`]).
+    values: Option<&'a ValueHoldersOf<'a>>,
     /// Whether any part has entries pending, which a record is read with
     /// applied ([`mass`]).
     mass: bool,
@@ -903,6 +907,25 @@ impl Read<'_> {
         }
         self.count(1)?;
         Ok(ids)
+    }
+
+    /// The ids holding `value` in `name` ([`Rows::value_holder_ids`]).
+    fn value_holder_ids(&self, name: &str, value: &Value) -> Result<roaring::RoaringBitmap> {
+        if let Some(values) = self.values {
+            return values(name, value);
+        }
+        self.count(1)?;
+        let Some(key) = derived::value_key(value) else {
+            return derived::read_set(self.t, self.r, derived::ABSENT, Some(name));
+        };
+        let stored =
+            derived::read_prefix_set(self.t, self.r, &derived::posting_prefix(name, &key))?;
+        let pending = derived::events::read_events(self.t, self.r, name)?;
+        Ok(if pending.is_empty() {
+            stored
+        } else {
+            derived::events::replay(&pending, &key, stored)
+        })
     }
 
     /// The uuid of a dense id.
@@ -1284,6 +1307,30 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.holders(name))
             }
+            fn holder_ids(&self, name: &str) -> Result<roaring::RoaringBitmap> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.holder_ids(name))
+            }
+            fn value_holder_ids(
+                &self,
+                name: &str,
+                value: &Value,
+            ) -> Result<roaring::RoaringBitmap> {
+                let $me = self;
+                $with(&mut |$read: &Read| $read.value_holder_ids(name, value))
+            }
+            fn uuids_of_ids(&self, ids: &roaring::RoaringBitmap) -> Result<Vec<Uuid>> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    let mut out = Vec::with_capacity(ids.len() as usize);
+                    for id in ids {
+                        if $read.live(id)? {
+                            out.push($read.uuid_of_id(id)?);
+                        }
+                    }
+                    Ok(out)
+                })
+            }
             fn children_page(
                 &self,
                 field: &str,
@@ -1574,6 +1621,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         reads: Some(&me.reads),
         live: None,
         holders: None,
+        values: None,
         mass: me.mass_pending(),
         deletes: me.deletes_pending(),
         kept: me.kept_stored(),
@@ -1671,12 +1719,14 @@ impl KvTxn<'_> {
     fn read_in<T>(&self, txn: &Wtxn<'_>, f: &mut dyn FnMut(&Read) -> Result<T>) -> Result<T> {
         let live = |id: u32| self.live_in(txn, id);
         let holders = |field: &str| self.holder_ids_now(field);
+        let values = |field: &str, value: &Value| self.value_holders_now(field, value);
         f(&Read {
             t: &self.t,
             r: txn,
             reads: Some(self.reads),
             live: Some(&live),
             holders: Some(&holders),
+            values: Some(&values),
             mass: self.mass_pending(),
             deletes: self.deletes_pending(),
             kept: self.kept_stored(),
@@ -2363,6 +2413,7 @@ impl KvTxn<'_> {
                     reads: Some(self.reads),
                     live: None,
                     holders: None,
+                    values: None,
                     mass: false,
                     deletes: false,
                     kept: false,
@@ -2471,23 +2522,8 @@ impl WriteTxn for KvTxn<'_> {
         self.mass_undelete_log(first_op, last_op)
     }
 
-    fn holder_ids(&self, field: &str) -> Result<Option<roaring::RoaringBitmap>> {
-        self.holder_ids_now(field).map(Some)
-    }
-
     fn rows_over_ids(&self, field: &str, n: u64) -> Result<Option<roaring::RoaringBitmap>> {
         self.rows_over_now(field, n).map(Some)
-    }
-
-    fn value_holder_ids(
-        &self,
-        field: &str,
-        value: &Value,
-    ) -> Result<Option<roaring::RoaringBitmap>> {
-        match derived::value_key(value) {
-            Some(key) => self.effective(field, value, &key).map(Some),
-            None => Ok(None),
-        }
     }
 
     fn dense_ids(

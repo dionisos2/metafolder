@@ -37,6 +37,33 @@ pub struct StoredHashes {
     pub stamp: Option<(i64, i64)>,
 }
 
+impl StoredHashes {
+    /// The hashes a metarecord's rows hold, `None` when it holds none.
+    pub fn from_rows(rows: &[FieldRow]) -> Option<StoredHashes> {
+        let text = |name: &str| {
+            rows.iter().find(|r| r.name == name).and_then(|r| match &r.value {
+                metafolder_core::metarecord::Value::String(t) => Some(t.clone()),
+                _ => None,
+            })
+        };
+        // A stamp's mtime is a date: read as the integer it encodes.
+        let int = |name: &str| {
+            rows.iter().find(|r| r.name == name).and_then(|r| encode_value(&r.value).int)
+        };
+        let hashed = rows.iter().any(|r| {
+            matches!(
+                r.name.as_str(),
+                "mfr_partial_hash" | "mfr_full_hash" | "mfr_hash_mtime" | "mfr_hash_size"
+            )
+        });
+        if !hashed {
+            return None;
+        }
+        let stamp = int("mfr_hash_mtime").zip(int("mfr_hash_size"));
+        Some(StoredHashes { partial: text("mfr_partial_hash"), full: text("mfr_full_hash"), stamp })
+    }
+}
+
 /// A `duplicate_group` metarecord as stored: its uuid and the counters the last
 /// scan wrote, so a re-scan can tell an unchanged counter from a changed one
 /// without asking the database again.

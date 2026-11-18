@@ -540,6 +540,19 @@ pub(super) fn read_set(
     Ok(out)
 }
 
+/// The bitmap filed under `prefix` (a set's key without its chunk), as
+/// committed: its chunks unioned.
+pub(super) fn read_prefix_set(t: &Tables, r: &RoTxn<'_>, prefix: &[u8]) -> Result<RoaringBitmap> {
+    let mut out = RoaringBitmap::new();
+    for entry in t.sets.prefix_iter(r, prefix)? {
+        let (k, v) = entry?;
+        if k.len() == prefix.len() + 2 {
+            out |= decode_set(v)?;
+        }
+    }
+    Ok(out)
+}
+
 pub(super) fn id_of(t: &Tables, r: &RoTxn<'_>, uuid: &[u8]) -> Result<Option<u32>> {
     Ok(t.ids.get(r, uuid)?.map(dense))
 }
@@ -1150,6 +1163,15 @@ impl KvTxn<'_> {
         let mut out = self.holders_now(field)?;
         out |= self.read_chunked(SETS, &set_prefix(ABSENT, Some(field)))?;
         Ok(out)
+    }
+
+    /// The ids holding `value` in `field` as the transaction sees them — for
+    /// `Nothing`, the field's `absent` set ([`crate::store::Rows::value_holder_ids`]).
+    pub(super) fn value_holders_now(&self, field: &str, value: &Value) -> Result<RoaringBitmap> {
+        match value_key(value) {
+            Some(key) => self.effective(field, value, &key),
+            None => self.read_chunked(SETS, &set_prefix(ABSENT, Some(field))),
+        }
     }
 
     /// The ids holding more than `n` rows of `field` — its values, and the

@@ -70,6 +70,22 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Rows::holders($conn, name)
             }
+            fn holder_ids(&self, name: &str) -> Result<roaring::RoaringBitmap> {
+                let $me = self;
+                Rows::holder_ids($conn, name)
+            }
+            fn value_holder_ids(
+                &self,
+                name: &str,
+                value: &Value,
+            ) -> Result<roaring::RoaringBitmap> {
+                let $me = self;
+                Rows::value_holder_ids($conn, name, value)
+            }
+            fn uuids_of_ids(&self, ids: &roaring::RoaringBitmap) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Rows::uuids_of_ids($conn, ids)
+            }
             fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>> {
                 let $me = self;
                 Rows::children($conn, field, parent)
@@ -339,6 +355,16 @@ pub trait Rows {
     fn value_types(&self, name: &str) -> Result<Vec<String>>;
     /// The metarecords holding at least one row of a field name.
     fn holders(&self, name: &str) -> Result<Vec<Uuid>>;
+    /// The dense ids holding a row of a field name, a `Nothing` included —
+    /// the field's counters and `absent` set, no record read.
+    fn holder_ids(&self, name: &str) -> Result<roaring::RoaringBitmap>;
+    /// The dense ids holding `value` in `name` — the value's posting, the
+    /// writes to many records still pending replayed over it; for `Nothing`,
+    /// the field's `absent` set (doc "Store tables"). No record read. A
+    /// superset only for a text so long its key is hashed, on a collision.
+    fn value_holder_ids(&self, name: &str, value: &Value) -> Result<roaring::RoaringBitmap>;
+    /// The uuids of the live metarecords among dense ids, in id order.
+    fn uuids_of_ids(&self, ids: &roaring::RoaringBitmap) -> Result<Vec<Uuid>>;
     /// The direct children of `parent` in `field`'s forest, `(uuid, name)`.
     fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>>;
     /// [`Self::children`] with each name as its exact bytes — what a client is
@@ -992,28 +1018,13 @@ pub trait WriteTxn: Store {
     fn mass_undelete(&self, _first_op: i64, _last_op: i64) -> Result<Option<MassApplied>> {
         Ok(None)
     }
-    /// The ids holding a row of `field` (a `Nothing` included), the
-    /// transaction's own writes among them; `None` for a store that cannot say
-    /// without reading the records.
-    fn holder_ids(&self, _field: &str) -> Result<Option<roaring::RoaringBitmap>> {
-        Ok(None)
-    }
     /// The ids holding more than `n` rows of `field` (a `Nothing` included),
     /// the transaction's own writes counted; `None` for a store that cannot
     /// say without reading the records.
     fn rows_over_ids(&self, _field: &str, _n: u64) -> Result<Option<roaring::RoaringBitmap>> {
         Ok(None)
     }
-    /// The ids holding `value` in `field`, the transaction's own writes
-    /// counted — a superset when the value's key is cut (a long text); `None`
-    /// for a store that cannot say without reading the records.
-    fn value_holder_ids(
-        &self,
-        _field: &str,
-        _value: &Value,
-    ) -> Result<Option<roaring::RoaringBitmap>> {
-        Ok(None)
-    }
+
     /// The dense ids of `uuids`; `None` for a store with none. A uuid that is
     /// no metarecord is refused when `must_exist`, left out otherwise.
     fn dense_ids(

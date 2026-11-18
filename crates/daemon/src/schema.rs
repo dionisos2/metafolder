@@ -428,10 +428,7 @@ pub fn breaches(
                 let mut declared = roaring::RoaringBitmap::new();
                 for ty in types {
                     let value = Value::String(ty.clone());
-                    let Some(ids) = writer.value_holders("mf_schema", &value)? else {
-                        return Ok(None);
-                    };
-                    declared |= ids;
+                    declared |= writer.value_holders("mf_schema", &value)?;
                 }
                 declared & changed
             }

@@ -138,10 +138,8 @@ pub(super) async fn trash_delete_endpoint(
         // `leave_group`, so a group never outlives its members (doc
         // "Duplicates"): only the records that hold a link to one need it, and
         // which they are is one question to the field's holders.
-        let leaving = match writer.holders_among(crate::duplicates::GROUP_FIELD, &ids)? {
-            Some(grouped) => writer.uuids_of(&grouped)?,
-            None => uuids.clone(),
-        };
+        let leaving =
+            writer.uuids_of(&writer.holders_among(crate::duplicates::GROUP_FIELD, &ids)?)?;
         for uuid in leaving {
             crate::duplicates::leave_group(&mut writer, crate::log::OpType::SetField, uuid)?;
         }

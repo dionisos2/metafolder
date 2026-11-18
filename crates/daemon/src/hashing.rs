@@ -163,7 +163,15 @@ pub fn hash_query_reported(
             let size = Rows::int_field(&*conn, uuid, "mfr_size")?.unwrap_or(0);
             files.push((uuid, rel, size));
         }
-        let stored = crate::store::Questions::hash_cache(&*conn)?;
+        // The hashes stored for these files only: what a hash of one file
+        // reads does not grow with the repository.
+        let mut stored = HashMap::new();
+        for (uuid, _, _) in &files {
+            if let Some(hashes) = crate::rows::StoredHashes::from_rows(&Rows::rows(&*conn, *uuid)?)
+            {
+                stored.insert(*uuid, hashes);
+            }
+        }
         (files, stored)
     };
 

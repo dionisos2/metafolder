@@ -317,3 +317,29 @@ async fn trashing_a_duplicate_costs_the_same_in_a_larger_repository() {
     }
     bounded("trash a duplicate", steady!(&small, trash_one), steady!(&large, trash_one));
 }
+
+#[tokio::test]
+async fn hashing_one_file_costs_the_same_in_a_larger_repository() {
+    // The hashes stored are read for the files asked, not for every file of
+    // the repository.
+    let (small, large) = pair().await;
+    fn hash(r: &Repo, query: metafolder_core::query::Query) -> u64 {
+        let repo = r.state.ready_repo(r.repo).unwrap();
+        let before = r.reads();
+        let opts = metafolder_daemon::hashing::HashOptions { rehash: false };
+        metafolder_daemon::hashing::hash_query(&repo, &query, &opts).unwrap();
+        r.reads() - before
+    }
+    let every = || metafolder_core::query::Query::IsPresent {
+        field: "rating".into(),
+        aspect: metafolder_core::query::Aspect::Raw,
+    };
+    for r in [&small, &large] {
+        hash(r, every());
+    }
+    async fn one(r: &Repo) -> u64 {
+        let sample: Uuid = r.sample().await.parse().unwrap();
+        hash(r, metafolder_core::query::Query::UuidIn { uuids: vec![sample] })
+    }
+    bounded("hash one file", steady!(&small, one), steady!(&large, one));
+}

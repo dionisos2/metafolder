@@ -681,8 +681,8 @@ impl<'c> Writer<'c> {
 
     /// Those of `ids` that hold a row of `field`, the transaction's writes so
     /// far counted; `None` when the store cannot say without reading them.
-    pub fn holders_among(&self, field: &str, ids: &RoaringBitmap) -> Result<Option<RoaringBitmap>> {
-        Ok(self.tx.holder_ids(field)?.map(|holders| &holders & ids))
+    pub fn holders_among(&self, field: &str, ids: &RoaringBitmap) -> Result<RoaringBitmap> {
+        Ok(crate::store::Rows::holder_ids(&*self.tx, field)? & ids)
     }
 
     /// The ids holding more than `n` rows of `field`, the transaction's writes
@@ -694,8 +694,8 @@ impl<'c> Writer<'c> {
     /// The ids holding `value` in `field` (a superset for a long text), the
     /// transaction's writes so far counted; `None` when the store cannot say
     /// without reading them.
-    pub fn value_holders(&self, field: &str, value: &Value) -> Result<Option<RoaringBitmap>> {
-        self.tx.value_holder_ids(field, value)
+    pub fn value_holders(&self, field: &str, value: &Value) -> Result<RoaringBitmap> {
+        crate::store::Rows::value_holder_ids(&*self.tx, field, value)
     }
 
     /// The uuids of dense ids, in the order of the ids.
@@ -1604,9 +1604,13 @@ impl<'c> Writer<'c> {
         ids: &RoaringBitmap,
     ) -> Result<Option<RoaringBitmap>> {
         Ok(match (kind, values) {
-            (MassKind::Add, [value]) => self.tx.value_holder_ids(name, value)?.map(|h| ids - h),
-            (MassKind::Remove, [value]) => self.tx.value_holder_ids(name, value)?.map(|h| ids & h),
-            (MassKind::Replace, []) => self.tx.holder_ids(name)?.map(|h| ids & h),
+            (MassKind::Add, [value]) => {
+                Some(ids - crate::store::Rows::value_holder_ids(&*self.tx, name, value)?)
+            }
+            (MassKind::Remove, [value]) => {
+                Some(ids & crate::store::Rows::value_holder_ids(&*self.tx, name, value)?)
+            }
+            (MassKind::Replace, []) => Some(ids & crate::store::Rows::holder_ids(&*self.tx, name)?),
             (MassKind::Replace, _) => Some(ids.clone()),
             _ => None,
         })
