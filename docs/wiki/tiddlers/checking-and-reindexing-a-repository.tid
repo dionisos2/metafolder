@@ -14,8 +14,8 @@ A repository's store holds two kinds of data ([[Storage]]):
 
 * the ''primary'' data — the metarecords, their field rows, the operation log. It
   is what you wrote, the source of truth;
-* the ''indexes'' (the code calls them the derived key spaces: ids, sets,
-  partitions, the forest, trigrams, postings) — computed from the primary data,
+* the ''indexes'' (the code calls them the derived key spaces: ids, sets
+  and postings, the forest's bitmaps, trigrams, histograms) — computed from the primary data,
   and used to answer queries quickly.
 
 Every write updates both in one transaction, so they should always agree. If they
@@ -37,14 +37,15 @@ when it is opened ([[Persisted format changes]]).
 `reindex` also renumbers the metarecords in forest order, so a repository whose
 folders were moved around for years gets each subtree's ids consecutive again
 ([[Store tables]]): its folder bitmaps shrink back to a few runs. And it drops what
-the deleted metarecords left in the indexes — a deletion only takes a metarecord out
+the deleted metarecords left in the indexes, and their records — a deletion only takes a metarecord out
 of the set of those that exist ([[Deleting a metarecord in the store]]) —, so after
 deleting much of a repository, a reindex is what makes its queries scan less, and
 what lets a compact give the room back.
 
-It also builds the name trigrams the writes left pending
-([[Text search in the store]]): after a large import, a reindex is for now what makes
-a search on file names read its candidates again instead of scanning every name.
+It also folds everything the writes left pending — the name trigrams among them
+([[Text search in the store]]) —, which the idle fold would otherwise do a list at a
+time once the repository is quiet ([[Folding in idle time]]); `mf repo fold` does it
+without renumbering anything.
 
 !! What check reports, and the repair
 

@@ -17,7 +17,7 @@ them is set arithmetic along the ancestor chain:
 
 * ''a node is created'' under a parent: its id joins each ancestor's descendants — about depth chunk writes;
 * ''a subtree moves'': its ids leave each old ancestor's descendants and join each new one's — about depth operations, ''independent of the subtree's size'' (a move of 750 000 records took 6 ms, measured);
-* ''a rename'' changes no bitmap: only the node's `forest` key moves.
+* ''a rename'' changes none of these bitmaps: the node's `forest` key moves, and its id goes from the old name's posting to the new one's ([[Store tables]]).
 
 The exception is a `hierarchy_ref` node of several parents: when it loses one, its
 descendants are recomputed from its ancestors' children ([[Hierarchy references]]).

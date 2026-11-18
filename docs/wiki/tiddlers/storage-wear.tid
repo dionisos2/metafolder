@@ -22,9 +22,10 @@ values for the field's events, so the cost of reading grows with these. The idle
 !! Ids nobody holds: a reindex cures it
 
 `ids_allocated` is the number of dense ids ever handed out, `ids_live` those of
-metarecords that exist; `dead_ids` is the difference and `dead_fraction` its share. A
-deleted metarecord's id stays in every bitmap until a reindex numbers the metarecords
-again ([[Checking and reindexing a repository]]), so bitmaps hold more ids than they
+metarecords that exist; `dead_ids` is the difference — deleted metarecords, and ids reserved for a uuid
+something points at ([[Store tables]]) — and `dead_fraction` its share. A deleted
+metarecord's id stays in every bitmap, and its record in the store, until a reindex
+numbers the metarecords again ([[Checking and reindexing a repository]]), so bitmaps hold more ids than they
 have holders, and a subtree's ids are scattered over the years.
 
 No threshold is set here: when a fold or a reindex is ''worth'' advising is for the

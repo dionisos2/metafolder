@@ -59,9 +59,10 @@ the by-value entries go at the next fold. A field never turns back.
 
 `KvStore::fold` builds what is pending, and a reindex ends with one, so a reindexed
 repository — one converted from the former format included — has nothing pending.
-''Nothing else folds yet'': until the daemon folds in its quiet moments (planned), a
-field by metarecord searched after a large write — the names after a first
-reconcile — is scanned, until `mf repo reindex`.
+Otherwise the daemon folds once the repository is quiet, one field's pending ids per
+step ([[Folding in idle time]]), and `mf repo fold` at once: until then, a field by
+metarecord searched after a large write — the names after a first reconcile — checks
+its pending ids, or is scanned when they are too many.
 
 `mf repo check` cannot hold the trigrams to a rebuild entry by entry, since stale
 ones are allowed: it verifies that no text lacks one — by value, an entry per trigram

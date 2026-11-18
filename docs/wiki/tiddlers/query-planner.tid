@@ -52,11 +52,11 @@ in each write's own transaction by `KvTxn::derive_row`, rebuilt by `reindex`, co
 by `check` — rather than sampled and refreshed, which would drift and make plans
 depend on when the sample was taken.
 
-* ''A histogram per ordered field'': a count of rows per ''bucket'', a bucket being a prefix of the value key (`kvstore/derived.rs`, `value_key`, `hist_bucket`), so that buckets are contiguous ranges of the partition and a range's estimate is the sum of the buckets it covers, exact but for the one the operand falls in. The prefix width is per type:
+* ''A histogram per ordered field'': a count of rows per ''bucket'', a bucket being a prefix of the value key (`kvstore/derived.rs`, `value_key`, `hist_bucket`), so that buckets are contiguous ranges of the field's value keys and a range's estimate is the sum of the buckets it covers, exact but for the one the operand falls in. The prefix width is per type:
 ** a number is an order-preserving `f64` (`num_key`): its first 16 bits are the sign, the exponent and 4 bits of mantissa — buckets of 1/16 of an octave, log-scaled, which suits sizes and counts; `int` and `float` share the type tag, so one histogram;
 ** a date is milliseconds in an `i64` (`dt_key`): the first 16 bits are 9 000 years wide, so a date bucket keeps the first 34 bits — buckets of 2^30 ms, ≈ 12 days —, the rest of the fifth byte cleared;
 ** a text or a tree name: ''not kept'' (Open below) — its estimate is its field's holders.
-* ''Set sizes'' are known exactly already: a field's holders (`present`), a posting, a subtree's descendants, a candidate set.
+* ''Set sizes'' are known exactly already: a field's holders (the union of its count sets, [[Store tables]]), a posting, a subtree's descendants, a candidate set.
 
 Only the populated buckets are stored, in the table `hist`: a key `field · bucket` →
 count of rows (a record holding a value twice counts twice). A row written or removed
