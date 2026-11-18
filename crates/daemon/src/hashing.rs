@@ -165,13 +165,7 @@ pub fn hash_query_reported(
         }
         // The hashes stored for these files only: what a hash of one file
         // reads does not grow with the repository.
-        let mut stored = HashMap::new();
-        for (uuid, _, _) in &files {
-            if let Some(hashes) = crate::rows::StoredHashes::from_rows(&Rows::rows(&*conn, *uuid)?)
-            {
-                stored.insert(*uuid, hashes);
-            }
-        }
+        let stored = crate::lookup::stored_hashes(&*conn, files.iter().map(|(uuid, _, _)| *uuid))?;
         (files, stored)
     };
 
@@ -349,11 +343,11 @@ pub fn needing_hash(
     cache: &crate::forest::Forest,
     scope: Option<Uuid>,
 ) -> anyhow::Result<Vec<Uuid>> {
-    if !Rows::field_rows(conn, "mf_hash")?.iter().any(|(_, r)| r.value == Value::Bool(true)) {
+    if Rows::value_holder_ids(conn, "mf_hash", &Value::Bool(true))?.is_empty() {
         return Ok(Vec::new());
     }
     let files: Vec<Uuid> = match scope {
-        None => crate::store::Questions::tracked_files_with_size(conn)?
+        None => crate::lookup::tracked_files_with_size(conn)?
             .into_iter()
             .map(|(uuid, _)| uuid)
             .collect(),

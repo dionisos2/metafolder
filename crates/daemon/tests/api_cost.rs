@@ -343,3 +343,21 @@ async fn hashing_one_file_costs_the_same_in_a_larger_repository() {
     }
     bounded("hash one file", steady!(&small, one), steady!(&large, one));
 }
+
+#[tokio::test]
+async fn the_workers_lookups_cost_the_same_in_a_larger_repository() {
+    // The orphans, the watch flags and the mount points are asked of the
+    // postings and the counters: a record is read only if it answers.
+    let (small, large) = pair().await;
+    async fn lookups(r: &Repo) -> u64 {
+        let repo = r.state.ready_repo(r.repo).unwrap();
+        let conn = repo.conn.lock().unwrap();
+        let before = conn.as_kv().unwrap().reads();
+        use metafolder_daemon::lookup;
+        assert!(lookup::holding(&**conn, "mfr_path", &Value::Nothing).unwrap().is_empty());
+        lookup::holding(&**conn, "mfr_watch_exceeded", &Value::Bool(true)).unwrap();
+        assert!(lookup::string_owners(&**conn, "mfr_mount").unwrap().is_empty());
+        conn.as_kv().unwrap().reads() - before
+    }
+    bounded("the workers' lookups", steady!(&small, lookups), steady!(&large, lookups));
+}

@@ -18,6 +18,7 @@ pub mod interrupt;
 pub mod kvstore;
 pub mod log;
 pub mod log_view;
+pub mod lookup;
 pub mod metadata;
 pub mod metadata_map;
 pub mod mount;

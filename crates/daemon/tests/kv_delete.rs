@@ -9,7 +9,7 @@ use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
-use metafolder_daemon::store::{Log, Questions, Rows};
+use metafolder_daemon::store::{Log, Rows};
 use uuid::Uuid;
 
 mod common;
@@ -147,7 +147,6 @@ fn a_deleted_metarecord_is_gone_from_every_answer() {
     assert_eq!(r.store.child_by_bytes("loc", Some(r.folder), b"file0.txt").unwrap(), None);
     assert_eq!(r.store.children_page("loc", r.folder, None, false, 10).unwrap().len(), 2);
     assert!(r.store.forest().unwrap().iter().all(|t| t.uuid != r.file));
-    assert!(r.store.field_rows("tag").unwrap().iter().all(|(u, _)| *u != r.file));
     assert!(!r.store.holders("tag").unwrap().contains(&r.file));
     let mut seen = Vec::new();
     r.store

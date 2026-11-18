@@ -60,7 +60,7 @@ use uuid::Uuid;
 use crate::error::DomainError;
 use crate::log::{OpRow, Retention};
 use crate::rows::{self, FieldRow, RawValue, TreeRow};
-use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Questions, Rows, WriteTxn};
+use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Rows, WriteTxn};
 
 mod derived;
 mod mass;
@@ -946,20 +946,6 @@ impl Read<'_> {
         Ok(out)
     }
 
-    fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
-        let mut out = Vec::new();
-        for id in self.holder_ids(name)? {
-            if !self.live(id)? {
-                continue;
-            }
-            let uuid = self.uuid_of_id(id)?;
-            for row in self.record(id)?.into_iter().filter(|r| r.name == name) {
-                out.push((uuid, row));
-            }
-        }
-        Ok(out)
-    }
-
     fn children(&self, field: &str, parent: &[u8; 16]) -> Result<Vec<(Uuid, Vec<u8>)>> {
         let prefix = key(&[&name_key(field), parent]);
         let mut out = Vec::new();
@@ -1211,7 +1197,7 @@ impl Read<'_> {
     }
 }
 
-/// `Rows`, `Log` and `Questions` for anything that can lend a `Read`.
+/// `Rows` and `Log` for anything that can lend a `Read`.
 macro_rules! kv_reads {
     ($ty:ty, |$me:ident, $read:ident| $with:expr) => {
         impl Rows for $ty {
@@ -1268,10 +1254,6 @@ macro_rules! kv_reads {
                     }
                     Ok(out)
                 })
-            }
-            fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
-                let $me = self;
-                $with(&mut |$read: &Read| $read.field_rows(name))
             }
             fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
                 let $me = self;
@@ -1630,26 +1612,28 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     })
 });
 
-/// A write transaction is answered by `store::derive`: no query source reads
-/// its uncommitted writes.
-impl Questions for KvTxn<'_> {}
-
-/// The schema check's candidates come off the derived key spaces (doc
-/// "Schema"); the other questions are `store::derive`'s.
-impl Questions for KvStore {
-    fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
+/// The schema check's candidate questions (doc "Schema"), off the derived key
+/// spaces: up to `limit` metarecords each.
+impl KvStore {
+    /// Those holding a non-`Nothing` `field` row of another type than
+    /// `allowed`.
+    pub fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
         self.source()?.wrong_type(field, allowed, limit)
     }
-    fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
+    /// Those with more than `max` rows of `field`.
+    pub fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
         self.source()?.count_over(field, max, limit)
     }
-    fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
+    /// Those holding `field`, with fewer than `min` rows.
+    pub fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
         self.source()?.count_under(field, min, limit)
     }
-    fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+    /// Those with no `field` row at all.
+    pub fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
         self.source()?.missing(field, limit)
     }
-    fn typed_missing(&self, types: &[String], field: &str, limit: i64) -> Result<Vec<Uuid>> {
+    /// Those declared one of `types` (`mf_schema`) with no `field` row.
+    pub fn typed_missing(&self, types: &[String], field: &str, limit: i64) -> Result<Vec<Uuid>> {
         self.source()?.typed_missing(types, field, limit)
     }
 }

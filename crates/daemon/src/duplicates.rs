@@ -22,7 +22,7 @@ use metafolder_core::sync::MutexExt;
 use crate::error::ApiError;
 use crate::fingerprint;
 use crate::log::{OpType, Writer};
-use crate::rows::{self, StoredHashes};
+use crate::rows::{self, DuplicateGroup, StoredHashes};
 use crate::state::RepoState;
 use crate::tasks::Reporter;
 
@@ -144,9 +144,7 @@ pub fn scan_reported(
             Some(set)
         }
     };
-    let inodes: HashMap<Uuid, String> =
-        crate::store::Questions::string_owners(&conn, "mfr_inode")?.into_iter().collect();
-    let files = crate::store::Questions::tracked_files_with_size(&conn)?;
+    let files = crate::lookup::tracked_files_with_size(&*conn)?;
 
     // Partition on `(uuid, size)` alone first. A size class of one cannot hold
     // a duplicate, and that is by far the biggest cut of the scan — so nothing
@@ -200,7 +198,9 @@ pub fn scan_reported(
                 uuid,
                 rel,
                 size,
-                inode: inodes.get(&uuid).cloned(),
+                inode: crate::store::Rows::string_fields(&*conn, uuid, "mfr_inode")?
+                    .into_iter()
+                    .next(),
                 in_scope: in_scope(&uuid),
                 partial: None,
                 partial_stamp: None,
@@ -222,7 +222,11 @@ pub fn scan_reported(
     classes.sort_by_key(|(size, _)| std::cmp::Reverse(*size));
 
     // ── Phase 2: partial hashes ─────────────────────────────────────────────
-    let stored = crate::store::Questions::hash_cache(&conn)?;
+    // The hashes stored for the members of the classes, the only files read.
+    let stored = crate::lookup::stored_hashes(
+        &*conn,
+        classes.iter().flat_map(|(_, members)| members.iter().map(|m| m.uuid)),
+    )?;
     // The rest of the scan reads files, not the store: it runs with the store
     // free, and takes it back only to write what it found (`flush`), every
     // `COMMIT_EVERY` and at the end.
@@ -428,8 +432,8 @@ impl Writes<'_> {
         result: &mut ScanResult,
         prune: Option<(Option<&HashSet<Uuid>>, &Reporter)>,
     ) -> Result<(), ApiError> {
-        let mut existing = crate::store::Questions::duplicate_groups(writer.store())?;
-        let mut links = crate::store::Questions::ref_map(writer.store(), GROUP_FIELD)?;
+        let mut existing = groups_by_class(writer.store())?;
+        let mut links = group_links(writer.store())?;
         let root = &self.repo.config.root;
         for (size, mut members) in self.classes.drain(..) {
             let mut kept = Vec::with_capacity(members.len());
@@ -639,6 +643,45 @@ pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Resul
         Some(group) => refresh_group(writer, op, group),
         None => Ok(()),
     }
+}
+
+/// The `duplicate_group` metarecords by `(content size, content hash)`: the
+/// posting of the type, each group read.
+fn groups_by_class(
+    conn: &dyn crate::store::Store,
+) -> anyhow::Result<HashMap<(i64, String), DuplicateGroup>> {
+    let schema = Value::String(GROUP_SCHEMA.to_string());
+    let mut out = HashMap::new();
+    for uuid in crate::lookup::holding(conn, "mf_schema", &schema)? {
+        let rows = crate::store::Rows::rows(conn, uuid)?;
+        let hash = rows.iter().find_map(|r| match &r.value {
+            Value::String(h) if r.name == "mfr_content_hash" => Some(h.clone()),
+            _ => None,
+        });
+        let first = |name: &str| crate::lookup::ints(&rows, name).into_iter().next();
+        let (Some(hash), Some(size)) = (hash, first("mfr_content_size")) else { continue };
+        let group = DuplicateGroup {
+            uuid,
+            count: first("mfr_duplicate_count"),
+            reclaimable: first("mfr_duplicate_reclaimable"),
+        };
+        out.insert((size, hash), group);
+    }
+    Ok(out)
+}
+
+/// Every member's link to its group: the holders of [`GROUP_FIELD`], each
+/// read.
+fn group_links(conn: &dyn crate::store::Store) -> anyhow::Result<HashMap<Uuid, Uuid>> {
+    let mut out = HashMap::new();
+    for uuid in conn.uuids_of_ids(&conn.holder_ids(GROUP_FIELD)?)? {
+        for row in crate::store::Rows::rows_named(conn, uuid, GROUP_FIELD)? {
+            if let Value::Ref(group) = row.value {
+                out.insert(uuid, group);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Recomputes one group's counters from the members that still point at it, and

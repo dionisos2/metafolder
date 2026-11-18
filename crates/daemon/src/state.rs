@@ -673,7 +673,7 @@ impl RepoState {
             }
         }
         self.starved_watches.store(placement.starved > 0, std::sync::atomic::Ordering::Relaxed);
-        let excluded = crate::store::Questions::holding(
+        let excluded = crate::lookup::holding(
             conn,
             crate::eligibility::WATCH_EXCEEDED,
             &metafolder_core::metarecord::Value::Bool(true),

@@ -2,16 +2,15 @@ title: The storage boundary
 tags: Storage
 kind: reference
 audience: dev
-summary: The traits everything above the store speaks — Rows, Log, Questions, WriteTxn, Begin, Database — and the contract test a backend must pass.
+summary: The traits everything above the store speaks — Rows, Log, WriteTxn, Begin, Database — the lookups built on them, and the contract test a backend must pass.
 
 `crates/daemon/src/store.rs` holds the traits every module above the store speaks:
 the event log, revert, the watcher, reconcile, the schema, duplicates, orphans,
 mounts, the query source. `kvstore/` is the one implementation.
 
 |!Trait |!What |
-|`Rows` |the data model's primary state: a metarecord's existence and version, its rows (all, or by name), in no particular order; insert a row, delete the row holding a value under a name; create and delete a metarecord; the forest's positions |
+|`Rows` |the data model's primary state: a metarecord's existence and version, its rows (all, or by name), in no particular order; insert a row, delete the row holding a value under a name; create and delete a metarecord; the forest's positions; and, off the indexes with no record read, the ids holding a field (`holder_ids`) or a value (`value_holder_ids`: its posting, `Nothing`'s `absent` set) |
 |`Log` |writes, operations and their snapshots, one operation by id, the bounded backward reads, HEAD and the first operation, labels, the range deletions of pruning and retention |
-|`Questions` |whole-repository questions — the tracked files with their sizes, the stored hashes, the owners of a string field, the duplicate groups… Each has a default derived from `Rows` alone, correct on any backend, which a backend may override with something faster |
 |`WriteTxn` |one write transaction: one `log::Writer` write |
 |`Begin` |opens a transaction; also `check`, `reindex`, `backup_to`, and the interrupter a task's Stop uses |
 |`Database` |all of it: what a loaded repository holds (`store::Handle`) |
@@ -20,6 +19,20 @@ mounts, the query source. `kvstore/` is the one implementation.
 ([[No duplicate rows]]), and a row is inserted, or deleted, by those. What the store
 keeps to find a row quickly is its own business ([[Store tables]]).
 
+The workers' repository-wide lookups — the holders of a value, the owners of a string
+field, the tracked files with their sizes, the hashed orphans, the stored hashes of
+some files — are `crate::lookup`, built on `value_holder_ids` and `holder_ids`: the
+records that answer come from the indexes, and only they are read. The schema check's
+candidate questions (`wrong_type`, `count_over`, `count_under`, `missing`,
+`typed_missing`) are the key-value store's own, read off its counters and postings.
+
+There used to be a `Questions` trait here, each question with a default derived from
+`Rows` alone by reading every row of a field, or every record — correct on any
+backend, written when SQLite was one. The key-value store overrode only the schema
+check's, and not in a write transaction: a few tags added under a schema on `tag`
+read 2.2 million keys (November 2026). The defaults are gone with SQLite's reason
+for them.
+
 `tests/store_contract.rs` asks every method through the traits only — the file a
-second backend would have to pass — and holds every `Questions` override to its
-default.
+second backend would have to pass — and holds the schema check's questions to a
+derivation from every record's rows.

@@ -11,7 +11,6 @@ use metafolder_daemon::index::{PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
-use metafolder_daemon::store::Questions;
 use uuid::Uuid;
 
 mod common;
@@ -103,7 +102,7 @@ fn every_answer(store: &KvStore, target: Uuid) -> Vec<Vec<Uuid>> {
         }
     }
     for limit in [0, 1, 2] {
-        let mut over = Questions::count_over(store, "tag", limit, 10_000).unwrap();
+        let mut over = store.count_over("tag", limit, 10_000).unwrap();
         over.sort();
         out.push(over);
     }

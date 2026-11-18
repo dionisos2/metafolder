@@ -8,7 +8,6 @@ use metafolder_core::query::{Aspect, Query};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
-use metafolder_daemon::store::Questions;
 use uuid::Uuid;
 
 mod common;
@@ -45,8 +44,8 @@ fn sorted(mut uuids: Vec<Uuid>) -> Vec<Uuid> {
 /// those holding the field).
 fn over_under(store: &KvStore, max: i64, min: i64) -> (Vec<Uuid>, Vec<Uuid>) {
     (
-        sorted(Questions::count_over(store, "tag", max, 1000).unwrap()),
-        sorted(Questions::count_under(store, "tag", min, 1000).unwrap()),
+        sorted(store.count_over("tag", max, 1000).unwrap()),
+        sorted(store.count_under("tag", min, 1000).unwrap()),
     )
 }
 
@@ -124,7 +123,7 @@ fn many_rows_going_at_once_keep_the_counts_exact() {
     // Thirteen values (1101) to one: three bits go.
     set_tags(&mut store, a, 1);
     check(&store);
-    assert_eq!(sorted(Questions::count_over(&store, "tag", 1, 1000).unwrap()), sorted(vec![b, c]));
+    assert_eq!(sorted(store.count_over("tag", 1, 1000).unwrap()), sorted(vec![b, c]));
 
     // Six values and a `Nothing` (110) to none at all.
     let mut w = Writer::begin(&mut store, None).unwrap();
@@ -140,7 +139,7 @@ fn many_rows_going_at_once_keep_the_counts_exact() {
     set_tags(&mut store, c, 2);
     check(&store);
     assert_eq!(
-        sorted(Questions::count_over(&store, "tag", 1, 1000).unwrap()),
+        sorted(store.count_over("tag", 1, 1000).unwrap()),
         sorted(vec![c]),
         "only c holds more than one tag now"
     );

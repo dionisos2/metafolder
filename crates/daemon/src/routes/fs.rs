@@ -780,7 +780,7 @@ pub(super) async fn watch_exceeded_list(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let cache = repo_state.tree();
-        let uuids = crate::store::Questions::holding(
+        let uuids = crate::lookup::holding(
             &conn,
             crate::eligibility::WATCH_EXCEEDED,
             &metafolder_core::metarecord::Value::Bool(true),

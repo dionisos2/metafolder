@@ -63,10 +63,16 @@ fn rows_answer_what_was_written() {
     );
     assert!(store.rows_named(child, "none").unwrap().is_empty());
     let mut field: Vec<(Uuid, String)> = store
-        .field_rows("tag")
+        .holders("tag")
         .unwrap()
         .into_iter()
-        .map(|(u, r)| (u, format!("{:?}", r.value)))
+        .flat_map(|u| {
+            store
+                .rows_named(u, "tag")
+                .unwrap()
+                .into_iter()
+                .map(move |r| (u, format!("{:?}", r.value)))
+        })
         .collect();
     field.sort();
     assert_eq!(
@@ -565,12 +571,11 @@ fn a_healthy_store_checks_clean() {
     assert!(conn.check().unwrap().is_empty());
 }
 
-/// The schema check's candidate questions (doc "Schema"): a backend may answer
-/// them its own way, but with the answers of `store::derive`, which reads them
-/// off `Rows` — as sets, and within a limit, a part of that set.
+/// The schema check's candidate questions (doc "Schema"), answered off the
+/// indexes, hold to a derivation from every record's rows ([`oracle`]) — as
+/// sets, and within a limit, a part of that set.
 #[test]
 fn the_schema_questions_answer_like_their_derivation() {
-    use metafolder_daemon::store::{derive, Questions};
     use std::collections::BTreeSet;
 
     // Written below the `Writer`, which keeps one type per field: mixed types
@@ -600,6 +605,7 @@ fn the_schema_questions_answer_like_their_derivation() {
     mk(vec![("other", Value::Bool(true))]);
     tx.commit().unwrap();
     let store: &dyn Store = &conn;
+    let kv = store.as_kv().expect("a key-value store");
     let all = i64::MAX;
 
     let same = |what: &str, got: Vec<Uuid>, want: Vec<Uuid>| {
@@ -612,45 +618,124 @@ fn the_schema_questions_answer_like_their_derivation() {
         for field in ["rating", "label", "none"] {
             same(
                 &format!("wrong_type {field} {allowed}"),
-                Questions::wrong_type(store, field, allowed, all).unwrap(),
-                derive::wrong_type(store, field, allowed, all).unwrap(),
+                kv.wrong_type(field, allowed, all).unwrap(),
+                oracle::wrong_type(store, field, allowed, all).unwrap(),
             );
         }
     }
     for n in 0..4 {
         same(
             &format!("count_over {n}"),
-            Questions::count_over(store, "rating", n, all).unwrap(),
-            derive::count_over(store, "rating", n, all).unwrap(),
+            kv.count_over("rating", n, all).unwrap(),
+            oracle::count_over(store, "rating", n, all).unwrap(),
         );
         same(
             &format!("count_under {n}"),
-            Questions::count_under(store, "rating", n, all).unwrap(),
-            derive::count_under(store, "rating", n, all).unwrap(),
+            kv.count_under("rating", n, all).unwrap(),
+            oracle::count_under(store, "rating", n, all).unwrap(),
         );
     }
     for field in ["rating", "none", "mf_schema"] {
         same(
             &format!("missing {field}"),
-            Questions::missing(store, field, all).unwrap(),
-            derive::missing(store, field, all).unwrap(),
+            kv.missing(field, all).unwrap(),
+            oracle::missing(store, field, all).unwrap(),
         );
     }
     for types in [vec![], vec!["film"], vec!["film", "song"], vec!["book"]] {
         let types: Vec<String> = types.into_iter().map(String::from).collect();
         same(
             &format!("typed_missing {types:?}"),
-            Questions::typed_missing(store, &types, "rating", all).unwrap(),
-            derive::typed_missing(store, &types, "rating", all).unwrap(),
+            kv.typed_missing(&types, "rating", all).unwrap(),
+            oracle::typed_missing(store, &types, "rating", all).unwrap(),
         );
     }
 
     // A limit takes part of the answer, never more.
-    let whole: BTreeSet<Uuid> =
-        Questions::missing(store, "rating", all).unwrap().into_iter().collect();
-    let part = Questions::missing(store, "rating", 2).unwrap();
+    let whole: BTreeSet<Uuid> = kv.missing("rating", all).unwrap().into_iter().collect();
+    let part = kv.missing("rating", 2).unwrap();
     assert_eq!(part.len(), 2);
     assert!(part.iter().all(|u| whole.contains(u)), "{part:?} within {whole:?}");
-    let part = Questions::count_under(store, "rating", 2, 1).unwrap();
+    let part = kv.count_under("rating", 2, 1).unwrap();
     assert_eq!(part.len(), 1);
+}
+
+/// The schema check's candidate questions derived from every record's rows:
+/// what the indexes' answers are held to.
+mod oracle {
+    use anyhow::Result;
+    use metafolder_core::metarecord::Value;
+    use metafolder_daemon::store::Store;
+    use uuid::Uuid;
+
+    fn type_name(v: &Value) -> &'static str {
+        match v {
+            Value::Nothing => "nothing",
+            Value::String(_) => "string",
+            Value::Int(_) => "int",
+            Value::Float(_) => "float",
+            Value::Bool(_) => "bool",
+            Value::DateTime(_) => "datetime",
+            Value::Ref(_) => "ref",
+            Value::TreeRef { .. } => "tree_ref",
+            Value::HierarchyRef { .. } => "hierarchy_ref",
+            Value::RefBase(_) => "refbase",
+            Value::ExternalRef { .. } => "externalref",
+        }
+    }
+
+    /// Each metarecord with its values of `field`.
+    fn values(s: &dyn Store, field: &str) -> Result<Vec<(Uuid, Vec<Value>)>> {
+        let mut out = Vec::new();
+        for u in s.metarecords()? {
+            let vs = s.rows_named(u, field)?.into_iter().map(|r| r.value).collect();
+            out.push((u, vs));
+        }
+        Ok(out)
+    }
+
+    fn take(it: impl Iterator<Item = Uuid>, limit: i64) -> Vec<Uuid> {
+        it.take(limit.max(0) as usize).collect()
+    }
+
+    pub fn wrong_type(s: &dyn Store, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
+        let bad = |vs: &[Value]| vs.iter().any(|v| *v != Value::Nothing && type_name(v) != allowed);
+        Ok(take(values(s, field)?.into_iter().filter(|(_, vs)| bad(vs)).map(|(u, _)| u), limit))
+    }
+
+    pub fn count_over(s: &dyn Store, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
+        let over = |vs: &[Value]| vs.len() as i64 > max;
+        Ok(take(values(s, field)?.into_iter().filter(|(_, vs)| over(vs)).map(|(u, _)| u), limit))
+    }
+
+    pub fn count_under(s: &dyn Store, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
+        let under = |vs: &[Value]| !vs.is_empty() && (vs.len() as i64) < min;
+        Ok(take(values(s, field)?.into_iter().filter(|(_, vs)| under(vs)).map(|(u, _)| u), limit))
+    }
+
+    pub fn missing(s: &dyn Store, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        Ok(take(
+            values(s, field)?.into_iter().filter(|(_, vs)| vs.is_empty()).map(|(u, _)| u),
+            limit,
+        ))
+    }
+
+    pub fn typed_missing(
+        s: &dyn Store,
+        types: &[String],
+        field: &str,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        let mut out = Vec::new();
+        for (u, vs) in values(s, field)? {
+            let declared = s
+                .rows_named(u, "mf_schema")?
+                .into_iter()
+                .any(|r| matches!(&r.value, Value::String(t) if types.contains(t)));
+            if declared && vs.is_empty() {
+                out.push(u);
+            }
+        }
+        Ok(take(out.into_iter(), limit))
+    }
 }

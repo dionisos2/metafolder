@@ -236,13 +236,13 @@ pub fn mark_orphans(repo: &RepoState) -> Result<MarkResult, ApiError> {
 
     let mut conn = repo.conn.lock_recover();
     let mut orphans: std::collections::BTreeSet<Uuid> = stale.into_iter().collect();
-    orphans.extend(crate::store::Questions::holding(
-        &conn,
+    orphans.extend(crate::lookup::holding(
+        &*conn,
         "mfr_path",
         &metafolder_core::metarecord::Value::Nothing,
     )?);
-    let marked: std::collections::BTreeSet<Uuid> = crate::store::Questions::holding(
-        &conn,
+    let marked: std::collections::BTreeSet<Uuid> = crate::lookup::holding(
+        &*conn,
         ORPHAN_FIELD,
         &metafolder_core::metarecord::Value::Bool(true),
     )?
@@ -314,7 +314,7 @@ pub fn relink_reported(
     // hashing down to the candidates that could possibly match.
     reporter.progress("orphans", None, None);
     let mut by_size: HashMap<i64, Vec<rows::OrphanCandidate>> = HashMap::new();
-    for candidate in crate::store::Questions::hashed_orphans(&conn)? {
+    for candidate in crate::lookup::hashed_orphans(&*conn)? {
         by_size.entry(candidate.size).or_default().push(candidate);
     }
     if by_size.is_empty() {
@@ -322,7 +322,7 @@ pub fn relink_reported(
     }
 
     // Tracked files whose size matches one of them.
-    let tracked: Vec<(Uuid, i64)> = crate::store::Questions::tracked_files_with_size(&conn)?
+    let tracked: Vec<(Uuid, i64)> = crate::lookup::tracked_files_with_size(&*conn)?
         .into_iter()
         .filter(|(_, size)| by_size.contains_key(size))
         .collect();

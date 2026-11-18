@@ -592,13 +592,12 @@ fn a_path_pattern_anchored_at_the_end_reads_its_candidates() {
 /// rows are read — where each used to be, to be counted.
 #[test]
 fn the_count_questions_read_no_record_on_a_field_of_several_values() {
-    use metafolder_daemon::store::Questions;
     let cost = |kv: &KvStore| {
         let before = kv.reads();
-        assert!(Questions::count_over(kv, "tag", 5, 21).unwrap().is_empty());
-        assert!(Questions::count_under(kv, "tag", 2, 21).unwrap().is_empty());
-        assert_eq!(Questions::count_over(kv, "tag", 2, 21).unwrap().len(), 21);
-        assert_eq!(Questions::count_under(kv, "tag", 4, 21).unwrap().len(), 21);
+        assert!(kv.count_over("tag", 5, 21).unwrap().is_empty());
+        assert!(kv.count_under("tag", 2, 21).unwrap().is_empty());
+        assert_eq!(kv.count_over("tag", 2, 21).unwrap().len(), 21);
+        assert_eq!(kv.count_under("tag", 4, 21).unwrap().len(), 21);
         kv.reads() - before
     };
     let (small, _s) = tagged(2_000);
@@ -615,16 +614,15 @@ fn the_count_questions_read_no_record_on_a_field_of_several_values() {
 /// repository, where none of them has an answer worth reading past its limit
 /// (doc "Schema"): files that all hold an `int` `rating`, ten of a rare `kind`.
 fn schema_candidate_reads(kv: &KvStore) -> u64 {
-    use metafolder_daemon::store::Questions;
     let before = kv.reads();
-    assert!(Questions::wrong_type(kv, "rating", "int", 21).unwrap().is_empty());
-    assert!(Questions::count_over(kv, "rating", 1, 21).unwrap().is_empty());
-    assert!(Questions::count_under(kv, "rating", 1, 21).unwrap().is_empty());
-    assert!(Questions::typed_missing(kv, &["rare".into()], "rating", 21).unwrap().is_empty());
+    assert!(kv.wrong_type("rating", "int", 21).unwrap().is_empty());
+    assert!(kv.count_over("rating", 1, 21).unwrap().is_empty());
+    assert!(kv.count_under("rating", 1, 21).unwrap().is_empty());
+    assert!(kv.typed_missing(&["rare".into()], "rating", 21).unwrap().is_empty());
     // Answers that grow, read up to their limit: the folders lack a rating,
     // and a field the schema types `int` holds strings in every file.
-    assert_eq!(Questions::missing(kv, "rating", 21).unwrap().len(), 21);
-    assert_eq!(Questions::wrong_type(kv, "name", "int", 21).unwrap().len(), 21);
+    assert_eq!(kv.missing("rating", 21).unwrap().len(), 21);
+    assert_eq!(kv.wrong_type("name", "int", 21).unwrap().len(), 21);
     kv.reads() - before
 }
 

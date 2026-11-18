@@ -352,12 +352,9 @@ fn test_relink_refuses_to_absorb_an_annotated_metarecord() {
 /// marker would return.
 fn marked(repo: &RepoState) -> Vec<Uuid> {
     let conn = repo.conn.lock().unwrap();
-    let mut uuids = metafolder_daemon::store::Questions::holding(
-        &*conn,
-        orphans::ORPHAN_FIELD,
-        &Value::Bool(true),
-    )
-    .unwrap();
+    let mut uuids =
+        metafolder_daemon::lookup::holding(&*conn, orphans::ORPHAN_FIELD, &Value::Bool(true))
+            .unwrap();
     uuids.sort();
     uuids
 }

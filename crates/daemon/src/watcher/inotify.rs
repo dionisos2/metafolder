@@ -419,7 +419,7 @@ fn enter(root: &Path, rel: &RelPath, rules: &WatchRules, walk: &mut Walk) {
 /// inside an excluded subtree.
 fn watch_exceeded_overrides(conn: &dyn crate::store::Store, cache: &Forest) -> HashSet<String> {
     let mut out = HashSet::new();
-    let uuids = match crate::store::Questions::holding(
+    let uuids = match crate::lookup::holding(
         conn,
         eligibility::WATCH_EXCEEDED,
         &metafolder_core::metarecord::Value::Bool(false),

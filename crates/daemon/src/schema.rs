@@ -364,12 +364,10 @@ pub fn validate_entry_fields(
 }
 
 /// [`violation_candidates`] for the constraints of one field: the records
-/// that could violate one of them, `limit` at most of each kind. A write that
-/// changed a field of many records asks it once, instead of validating each
-/// record: a healthy repository has next to none, whatever the write.
-pub fn field_candidates(
+/// that could violate one of them, `limit` at most of each kind.
+fn field_candidates(
     schema: &CompiledSchema,
-    conn: &dyn crate::store::Store,
+    conn: &crate::kvstore::KvStore,
     field: &str,
     limit: i64,
 ) -> Result<Vec<Uuid>> {
@@ -378,23 +376,21 @@ pub fn field_candidates(
     for c in constraints {
         // A row of the wrong type trips the `type` constraint.
         if let Some(expected) = &c.value_type {
-            out.extend(crate::store::Questions::wrong_type(conn, field, expected, limit)?);
+            out.extend(conn.wrong_type(field, expected, limit)?);
         }
         // Too many rows trips `max`.
         if let Some(max) = c.max {
-            out.extend(crate::store::Questions::count_over(conn, field, max as i64, limit)?);
+            out.extend(conn.count_over(field, max as i64, limit)?);
         }
         // Too few rows trips `min`: present-but-under, plus records that lack
         // the field entirely (restricted to the target population when the
         // constraint is targeted, so unrelated records never become
         // candidates; unrestricted for a global constraint).
         if c.min > 0 {
-            out.extend(crate::store::Questions::count_under(conn, field, c.min as i64, limit)?);
+            out.extend(conn.count_under(field, c.min as i64, limit)?);
             match &c.targets {
-                Some(types) => {
-                    out.extend(crate::store::Questions::typed_missing(conn, types, field, limit)?)
-                }
-                None => out.extend(crate::store::Questions::missing(conn, field, limit)?),
+                Some(types) => out.extend(conn.typed_missing(types, field, limit)?),
+                None => out.extend(conn.missing(field, limit)?),
             }
         }
     }
@@ -472,6 +468,8 @@ pub fn violation_candidates(
     cap: Option<usize>,
 ) -> Result<Vec<Uuid>> {
     let limit = cap.map(|c| c as i64).unwrap_or(i64::MAX);
+    let conn = crate::store::Rows::as_kv(conn)
+        .ok_or_else(|| anyhow::anyhow!("the schema check reads the key-value store"))?;
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for field in schema.by_field.keys() {

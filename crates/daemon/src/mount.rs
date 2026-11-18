@@ -142,7 +142,7 @@ pub struct DeclaredMount {
 /// metarecord carrying [`FIELD`], with the path it sits at.
 pub fn declared_set(conn: &dyn crate::store::Store, cache: &Forest) -> Result<Vec<DeclaredMount>> {
     let mut out = Vec::new();
-    for (uuid, expected) in crate::store::Questions::string_owners(conn, FIELD)? {
+    for (uuid, expected) in crate::lookup::string_owners(conn, FIELD)? {
         let rel = cache.rel_path_of(conn, uuid)?;
         let path = rel.as_ref().map(crate::relpath::RelPath::display);
         out.push(DeclaredMount { uuid, path, rel, expected });
@@ -228,7 +228,7 @@ pub fn offline(
     root: &Path,
 ) -> Result<OfflineMounts> {
     let mut paths = Vec::new();
-    for (uuid, _) in crate::store::Questions::string_owners(conn, FIELD)? {
+    for (uuid, _) in crate::lookup::string_owners(conn, FIELD)? {
         // A mount point whose own `mfr_path` is gone freezes nothing: there is
         // no subtree left to protect, and its records are ordinary orphans.
         // Probed at its exact bytes, kept as displayed: what `contains` is

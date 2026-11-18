@@ -828,10 +828,10 @@ impl KvSource<'_> {
 
     // ── The schema check's candidates (doc "Schema") ────────────────────────
     //
-    // `store::Questions`, answered from the sets and the value partition: a
-    // healthy repository answers each from a few bitmaps, where reading the
-    // constrained fields' rows cost a key per row (`tests/kv_cost.rs`). Each
-    // gives the answer of `store::derive`'s, in id order rather than row order.
+    // Answered from the sets and the postings: a healthy repository answers
+    // each from a few bitmaps, where reading the constrained fields' rows cost
+    // a key per row (`tests/kv_cost.rs`). `tests/store_contract.rs` holds
+    // each to a derivation from the rows, in id order rather than row order.
 
     /// The value types `field` holds rows of (`field_types`).
     fn types_of(&self, field: &str) -> Result<Vec<String>> {
