@@ -134,8 +134,7 @@ command; the bound on the log is the bound on its entries.
 A write by id is checked against the schema ''once'', after its last operation (the
 last of a batch), and without reading a record: the write transaction keeps the
 counters of each field and the postings of each value up to date as it writes, so the
-records the write changed that may break a constraint on the field ([[Schema
-constraints]]) are set arithmetic on them —
+records the write changed that may break a constraint on the field ([[Schema constraints]]) are set arithmetic on them —
 
 * the type: a value the write puts in the field is of the wrong type — known from the
   command, not from the records — and every changed record the constraint targets is

@@ -377,7 +377,9 @@ fn script_lists_the_scripts_and_copies_a_template() {
 #[test]
 fn test_repo_wear_says_what_is_pending_and_what_is_dead() {
     let (repo, _root) = init_repo("wear");
-    for _ in 0..3 {
+    // Past the mass-write threshold (20 shipped): a write to fewer records
+    // is written into them and leaves nothing pending.
+    for _ in 0..21 {
         create_metarecord(&repo, &["note:string=x"]);
     }
     assert_ok(&mf(&[
@@ -410,7 +412,9 @@ fn test_repo_wear_says_what_is_pending_and_what_is_dead() {
 #[test]
 fn test_repo_fold_folds_what_is_pending() {
     let (repo, _root) = init_repo("fold");
-    for _ in 0..3 {
+    // Past the mass-write threshold (20 shipped): a write to fewer records
+    // is written into them and leaves nothing pending.
+    for _ in 0..21 {
         create_metarecord(&repo, &["note:string=x"]);
     }
     assert_ok(&mf(&[
