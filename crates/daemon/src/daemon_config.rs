@@ -55,6 +55,12 @@ pub struct DaemonSettings {
     /// would null thousands of paths is a filesystem going away, not a
     /// deletion the user asked for. `0` disables the check.
     pub orphan_cascade_limit: usize,
+    /// The most metarecords a write to many of them — a field set, added,
+    /// removed or unset on a query's matches, a deletion — changes one record
+    /// at a time; past it, the store writes them in bulk, one entry for all
+    /// (doc "Mass writes in the store"). A repository may override it in its
+    /// own `config.json`.
+    pub mass_write_threshold: u64,
     /// How long an operation must take before it is written to the
     /// repository's slow-operation log (doc "Slow log"). `0` turns the log off.
     pub slow_operation_threshold_ms: u64,
@@ -403,6 +409,7 @@ mod tests {
         assert_eq!(s.watch_quiet_period(), Duration::from_millis(2000));
         assert_eq!(s.watch_budget_share, 50);
         assert_eq!(s.orphan_cascade_limit, 10_000);
+        assert_eq!(s.mass_write_threshold, 20);
         assert_eq!(s.watchd_socket, PathBuf::from("/run/metafolder/watchd.sock"));
         assert_eq!(s.slow_operation_threshold_ms, 1500);
         assert_eq!(s.slow_read_threshold_ms, 500);

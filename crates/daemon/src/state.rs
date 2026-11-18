@@ -130,6 +130,9 @@ pub struct RepoState {
     /// `config.json` override where set, the daemon's `[settings]` otherwise.
     /// Applied by every writer built through [`Self::writer`].
     log_retention: crate::log::Retention,
+    /// The most records a write to many of them changes one at a time
+    /// (`mass-write-threshold`, doc "Mass writes in the store").
+    mass_write_threshold: u64,
     /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
     /// the executor before applying a cascade.
     pub orphan_cascade_limit: usize,
@@ -220,6 +223,8 @@ impl RepoState {
         let repo_uuid = opened.config.repo_uuid;
         let name = Mutex::new(opened.config.name.clone());
         let log_retention = opened.config.log_retention(settings.log_retention());
+        let mass_write_threshold =
+            opened.config.mass_write_threshold(settings.mass_write_threshold);
         let root_identity = root_identity_of(&opened.config.root);
         let slow_dir =
             metafolder_core::slowlog::slow_dir(&opened.metafolder_dir.join(repo::INTERNAL_DIR));
@@ -263,6 +268,7 @@ impl RepoState {
             watch_rules: Mutex::new(RulesSlot::default()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
+            mass_write_threshold,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
             held_paths: Mutex::new(std::collections::BTreeSet::new()),
             slowlog,
@@ -360,7 +366,9 @@ impl RepoState {
             )
             .into());
         }
-        crate::log::Writer::begin_in(conn, context, self.log_retention)
+        let mut writer = crate::log::Writer::begin_in(conn, context, self.log_retention)?;
+        writer.set_mass_threshold(self.mass_write_threshold);
+        Ok(writer)
     }
 
     /// [`Self::writer`] for the one write a revert lock lets through: the
@@ -370,7 +378,9 @@ impl RepoState {
         conn: &'c mut dyn crate::store::Database,
         context: crate::log::WriteContext,
     ) -> anyhow::Result<crate::log::Writer<'c>> {
-        crate::log::Writer::begin_in(conn, context, self.log_retention)
+        let mut writer = crate::log::Writer::begin_in(conn, context, self.log_retention)?;
+        writer.set_mass_threshold(self.mass_write_threshold);
+        Ok(writer)
     }
 
     /// This repository's effective log retention.

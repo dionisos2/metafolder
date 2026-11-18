@@ -321,3 +321,52 @@ fn a_reference_to_a_record_a_reindex_dropped_has_a_reserved_id() {
         assert!(diff.is_empty(), "before: {before}, mass: {mass}, folded: {diff:#?}");
     }
 }
+
+/// A write to no more records than the threshold goes one record at a time,
+/// and leaves nothing pending; past it, one entry and one event (doc "Mass
+/// writes in the store"). Counted on the records it would change, not on the
+/// matches: a value most already hold is a write to the few that lack it.
+#[test]
+fn a_write_to_few_records_is_written_into_them() {
+    let (mut store, _root) = open();
+    let uuids = records(&mut store, 60);
+    store.fold().unwrap();
+    let ids = |store: &KvStore, n: usize| store.dense_ids(&uuids[..n]).unwrap();
+    let few = ids(&store, 20);
+    let changed = write(&mut store, |w| {
+        w.set_mass_threshold(20);
+        w.mass_add_ids("tag", s("few"), &few).unwrap()
+    });
+    assert_eq!(changed.len(), 20);
+    assert_eq!(store.pending_mass().unwrap(), 0, "twenty records are no mass write");
+    assert_eq!(store.pending_events("tag").unwrap(), 0);
+    // Twenty-one matches, of which twenty already hold the value: one write.
+    let more = ids(&store, 21);
+    let changed = write(&mut store, |w| {
+        w.set_mass_threshold(20);
+        w.mass_add_ids("tag", s("few"), &more).unwrap()
+    });
+    assert_eq!(changed.len(), 1);
+    assert_eq!(store.pending_mass().unwrap(), 0);
+    for kind in ["remove", "unset", "set"] {
+        let some = ids(&store, 10);
+        let changed = write(&mut store, |w| {
+            w.set_mass_threshold(20);
+            match kind {
+                "remove" => w.mass_remove_ids("tag", &s("few"), &some),
+                "unset" => w.mass_unset_ids("rank", &some),
+                _ => w.mass_set_ids("rank", vec![Value::Int(1)], &some),
+            }
+            .unwrap()
+        });
+        assert_eq!(changed.len(), 10, "{kind}");
+        assert_eq!(store.pending_mass().unwrap(), 0, "{kind}");
+    }
+    let many = ids(&store, 21);
+    write(&mut store, |w| {
+        w.set_mass_threshold(20);
+        w.mass_add_ids("tag", s("many"), &many).unwrap()
+    });
+    assert_eq!(store.pending_mass().unwrap(), 1, "twenty-one records are");
+    check(&store);
+}

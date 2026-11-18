@@ -63,6 +63,11 @@ pub struct RepoConfig {
     /// `[settings] log-retention-user-ops`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_retention_user_ops: Option<u64>,
+    /// The most metarecords a write to many of them changes one record at a
+    /// time, overriding the daemon's `[settings] mass-write-threshold`
+    /// (doc "Mass writes in the store").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mass_write_threshold: Option<u64>,
     /// A daemon-internal repository (e.g. a cross-repo sync plan repo,
     /// doc "The sync plan"): loaded and usable like any repo, but hidden from
     /// `GET /repos` unless `?all=true`.
@@ -99,6 +104,7 @@ impl RepoConfig {
             created_at,
             log_retention_watcher_ops: None,
             log_retention_user_ops: None,
+            mass_write_threshold: None,
             system: false,
             storage: Storage::Kv,
             borrowed: None,
@@ -166,6 +172,12 @@ impl RepoConfig {
             watcher_ops: self.log_retention_watcher_ops.unwrap_or(daemon.watcher_ops),
             user_ops: self.log_retention_user_ops.unwrap_or(daemon.user_ops),
         }
+    }
+
+    /// This repository's mass-write threshold: its own where set, the
+    /// daemon's otherwise.
+    pub fn mass_write_threshold(&self, daemon: u64) -> u64 {
+        self.mass_write_threshold.unwrap_or(daemon)
     }
 
     /// True when a repository is already initialised in this directory.
@@ -276,6 +288,19 @@ mod tests {
         let config = RepoConfig::read(&dir).unwrap();
         assert_eq!(config.log_retention_watcher_ops, None);
         assert_eq!(config.log_retention_user_ops, None);
+        assert_eq!(config.mass_write_threshold, None);
+        assert_eq!(config.mass_write_threshold(20), 20);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_a_repository_overrides_the_mass_write_threshold() {
+        let dir = temp_dir();
+        let json = r#"{"repo_uuid":"00000000-0000-4000-8000-000000000001","name":"r",
+                       "version":1,"root":"/r","created_at":0,"mass_write_threshold":5}"#;
+        std::fs::write(dir.join("config.json"), json).unwrap();
+        let config = RepoConfig::read(&dir).unwrap();
+        assert_eq!(config.mass_write_threshold(20), 5);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

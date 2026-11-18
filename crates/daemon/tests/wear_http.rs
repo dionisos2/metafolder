@@ -12,6 +12,16 @@ use tower::util::ServiceExt;
 mod common;
 use common::TempDir;
 
+/// The shipped settings, every write to many records in bulk: what these
+/// tests look at is what a mass write leaves pending, on a handful of records
+/// (doc "Mass writes in the store").
+fn mass_settings() -> metafolder_daemon::daemon_config::DaemonSettings {
+    metafolder_daemon::daemon_config::DaemonSettings {
+        mass_write_threshold: 0,
+        ..common::settings()
+    }
+}
+
 async fn request(
     app: &Router,
     method: &str,
@@ -64,7 +74,7 @@ async fn the_wear_of_a_new_repository_is_nothing_pending() {
 /// and only those leave it one by one.
 #[tokio::test]
 async fn a_trashing_is_a_deletion_of_many_records() {
-    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
+    let app = routes::build(std::sync::Arc::new(AppState::new(mass_settings())));
     let root = TempDir::new("wear_http_trash");
     common::seed_config(&root);
     let (status, body) =
@@ -118,7 +128,7 @@ async fn a_trashing_is_a_deletion_of_many_records() {
 /// the rows, the histograms the pending deletions leave counted included.
 #[tokio::test]
 async fn a_check_folds_what_is_pending_and_holds_the_histograms() {
-    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
+    let app = routes::build(std::sync::Arc::new(AppState::new(mass_settings())));
     let root = TempDir::new("wear_http_check");
     common::seed_config(&root);
     let (status, body) =
@@ -159,7 +169,7 @@ async fn a_check_folds_what_is_pending_and_holds_the_histograms() {
 /// `POST /repos/:repo/fold` folds every list pending now, one list at a time.
 #[tokio::test]
 async fn an_explicit_fold_writes_the_pending_lists_in() {
-    let app = routes::build(std::sync::Arc::new(AppState::new(common::settings())));
+    let app = routes::build(std::sync::Arc::new(AppState::new(mass_settings())));
     let root = TempDir::new("wear_http_fold");
     common::seed_config(&root);
     let (status, body) =

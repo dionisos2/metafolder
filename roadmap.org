@@ -18,6 +18,13 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   record loses, compressing what the log keeps of a deletion.
 - The =undo_redo_properties= suite takes about 3 minutes on four cores; the cost
   left is the writes of its cases, not their set-up.
+- The kinds of the =sets= table (universe, counts, absent, referrers, descendants,
+  postings, …) told apart by a first byte become tables of their own (user
+  decision, 18 November 2026), and the tables' names are to be gone over at the
+  same time.
+- The mass-write threshold (=mass-write-threshold=, 20 to start) is one number for
+  every operation: a way to derive better values from the repository is to come
+  (doc "Mass writes in the store").
 
 * To discuss
 Every deferred or proposed note, to be gone through one by one: build it, keep

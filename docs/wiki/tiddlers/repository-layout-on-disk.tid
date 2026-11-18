@@ -40,6 +40,7 @@ says which daemon ([[The repository lock]]).
 |`created_at` |integer |creation time, Unix seconds |
 |`log_retention_watcher_ops` |integer |optional: how many of the watcher's operations the log keeps, overriding the daemon's setting (`0`: all) ([[Automatic retention]]) |
 |`log_retention_user_ops` |integer |optional: how many of every other operation the log keeps, overriding the daemon's setting (`0`: all) |
+|`mass_write_threshold` |integer |optional: the most metarecords a write to many of them changes one at a time, overriding the daemon's `mass-write-threshold` ([[Mass writes in the store]]) |
 |`system` |bool |a repository the daemon uses internally (a sync plan repository): hidden from `GET /repos` unless `?all=true` |
 |`borrowed` |object |optional: a borrowed copy of a repository of another machine — `{"metafolder"}`, the remote `.metafolder/` through this machine's mount, where `mf repo give-back` sends it ([[Cross-machine sync]]) |
 |`storage` |string |the store holding the data: the key-value store. Absent means a SQLite repository from before September 2026, which is refused at load ([[How the storage backend was built]]) |

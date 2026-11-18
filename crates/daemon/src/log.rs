@@ -397,6 +397,15 @@ impl WriteEffects {
     }
 }
 
+/// What [`Writer::mass_or_each`] decided.
+enum Mass {
+    /// Written in bulk: the records that changed.
+    Done(RoaringBitmap),
+    /// To write one record at a time: on these records, or on every one
+    /// asked when the indexes cannot say which would change.
+    Each(Option<RoaringBitmap>),
+}
+
 // ── Automatic retention (doc "Automatic retention") ────────────────
 
 /// How much history the log keeps: a number of operations per origin — the
@@ -483,6 +492,11 @@ pub struct Writer<'c> {
     deferred_trees: Option<std::cell::RefCell<Vec<(Uuid, String, Value)>>>,
     /// How much history to keep behind HEAD; applied on commit.
     retention: Retention,
+    /// The most records a write to many of them changes one at a time; past
+    /// it, the store writes them in bulk (doc "Mass writes in the store").
+    /// `0` for a writer the repository did not configure: every such write
+    /// in bulk.
+    mass_threshold: u64,
     /// What this write will oblige its caller to refresh, accumulated as the
     /// operations are recorded rather than read back off `pending` — which the
     /// flush above empties, so a long write used to forget its early writes.
@@ -607,6 +621,7 @@ impl<'c> Writer<'c> {
             deferred_types: None,
             deferred_trees: None,
             retention,
+            mass_threshold: 0,
             effects: WriteEffects { base_head: head, ..WriteEffects::default() },
             tree_lost: Vec::new(),
             tree_lost_seen: HashMap::new(),
@@ -638,6 +653,13 @@ impl<'c> Writer<'c> {
     pub fn set_origin(&mut self, origin: &str) -> Result<()> {
         self.origin = Some(origin.to_string());
         Ok(())
+    }
+
+    /// Writes to no more than `n` records one record at a time, as the
+    /// repository's `mass-write-threshold` says (doc "Mass writes in the
+    /// store").
+    pub fn set_mass_threshold(&mut self, n: u64) {
+        self.mass_threshold = n;
     }
 
     /// Read access to the transaction, for lookups that must observe the
@@ -1253,30 +1275,34 @@ impl<'c> Writer<'c> {
     /// changed.
     pub fn mass_add(&mut self, name: &str, value: Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
         self.validate_value_type(name, &value)?;
-        if let Some(ids) = self.tx.dense_ids(uuids, true)? {
-            if let Some(changed) =
-                self.mass_logged(MassKind::Add, name, std::slice::from_ref(&value), &ids)?
-            {
-                return self.in_request_order(uuids, &changed);
+        let ids = self.tx.dense_ids(uuids, true)?;
+        let one = std::slice::from_ref(&value);
+        match self.mass_or_each(MassKind::Add, name, one, ids.as_ref())? {
+            Mass::Done(changed) => self.in_request_order(uuids, &changed),
+            Mass::Each(Some(few)) => {
+                let few = self.in_request_order(uuids, &few)?;
+                self.add_each(name, &value, &few)
             }
+            Mass::Each(None) => self.add_each(name, &value, uuids),
         }
-        self.one_by_one(uuids, move |w, uuid| {
-            Ok(w.append_field(uuid, name, value.clone())?.created())
-        })
     }
 
     /// Removes `value` from `name` on every one of `uuids` that holds it; the
     /// records it changed.
     pub fn mass_remove(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
-        if let Some(ids) = self.tx.dense_ids(uuids, false)? {
-            if let Some(changed) =
-                self.mass_logged(MassKind::Remove, name, std::slice::from_ref(value), &ids)?
-            {
+        let ids = self.tx.dense_ids(uuids, false)?;
+        let one = std::slice::from_ref(value);
+        match self.mass_or_each(MassKind::Remove, name, one, ids.as_ref())? {
+            Mass::Done(changed) => {
                 self.field_types.remove(name); // rows removed: the type may have unlocked
-                return self.in_request_order(uuids, &changed);
+                self.in_request_order(uuids, &changed)
             }
+            Mass::Each(Some(few)) => {
+                let few = self.in_request_order(uuids, &few)?;
+                self.remove_each(name, value, &few)
+            }
+            Mass::Each(None) => self.remove_each(name, value, uuids),
         }
-        self.one_by_one(uuids, |w, uuid| Ok(w.delete_fields_valued(uuid, name, value)? > 0))
     }
 
     /// Replaces the rows of `name` by `values` on every one of `uuids`, which
@@ -1292,28 +1318,36 @@ impl<'c> Writer<'c> {
             for value in &kept {
                 self.validate_value_type(name, value)?;
             }
-            if let Some(ids) = self.tx.dense_ids(uuids, true)? {
-                if let Some(changed) = self.mass_logged(MassKind::Replace, name, &kept, &ids)? {
+            let ids = self.tx.dense_ids(uuids, true)?;
+            match self.mass_or_each(MassKind::Replace, name, &kept, ids.as_ref())? {
+                Mass::Done(changed) => {
                     self.field_types.remove(name); // rows replaced: the type may have unlocked
                     return self.in_request_order(uuids, &changed);
                 }
+                Mass::Each(Some(few)) => {
+                    let few = self.in_request_order(uuids, &few)?;
+                    return self.set_each(name, &values, &few);
+                }
+                Mass::Each(None) => {}
             }
         }
-        self.one_by_one(uuids, move |w, uuid| {
-            w.set_field_multi(uuid, name, values.clone())?;
-            Ok(true)
-        })
+        self.set_each(name, &values, uuids)
     }
 
     /// Removes `name` from every one of `uuids`; the records that held it.
     pub fn mass_unset(&mut self, name: &str, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
-        if let Some(ids) = self.tx.dense_ids(uuids, false)? {
-            if let Some(changed) = self.mass_logged(MassKind::Replace, name, &[], &ids)? {
+        let ids = self.tx.dense_ids(uuids, false)?;
+        match self.mass_or_each(MassKind::Replace, name, &[], ids.as_ref())? {
+            Mass::Done(changed) => {
                 self.field_types.remove(name); // rows removed: the type may have unlocked
-                return self.in_request_order(uuids, &changed);
+                self.in_request_order(uuids, &changed)
             }
+            Mass::Each(Some(few)) => {
+                let few = self.in_request_order(uuids, &few)?;
+                self.unset_each(name, &few)
+            }
+            Mass::Each(None) => self.unset_each(name, uuids),
         }
-        self.one_by_one(uuids, |w, uuid| Ok(w.delete_fields_named(uuid, name)? > 0))
     }
 
     /// Adds `value` to `name` on the records `ids` (live ones) that lack it:
@@ -1327,13 +1361,12 @@ impl<'c> Writer<'c> {
         ids: &RoaringBitmap,
     ) -> Result<RoaringBitmap> {
         self.validate_value_type(name, &value)?;
-        if let Some(changed) =
-            self.mass_logged(MassKind::Add, name, std::slice::from_ref(&value), ids)?
-        {
-            return Ok(changed);
-        }
-        let uuids = self.tx.uuids_of(ids)?;
-        let changed = self.mass_add(name, value, &uuids)?;
+        let one = std::slice::from_ref(&value);
+        let uuids = match self.mass_or_each(MassKind::Add, name, one, Some(ids))? {
+            Mass::Done(changed) => return Ok(changed),
+            Mass::Each(few) => self.tx.uuids_of(few.as_ref().unwrap_or(ids))?,
+        };
+        let changed = self.add_each(name, &value, &uuids)?;
         Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
     }
 
@@ -1345,14 +1378,15 @@ impl<'c> Writer<'c> {
         value: &Value,
         ids: &RoaringBitmap,
     ) -> Result<RoaringBitmap> {
-        if let Some(changed) =
-            self.mass_logged(MassKind::Remove, name, std::slice::from_ref(value), ids)?
-        {
-            self.field_types.remove(name); // rows removed: the type may have unlocked
-            return Ok(changed);
-        }
-        let uuids = self.tx.uuids_of(ids)?;
-        let changed = self.mass_remove(name, value, &uuids)?;
+        let one = std::slice::from_ref(value);
+        let uuids = match self.mass_or_each(MassKind::Remove, name, one, Some(ids))? {
+            Mass::Done(changed) => {
+                self.field_types.remove(name); // rows removed: the type may have unlocked
+                return Ok(changed);
+            }
+            Mass::Each(few) => self.tx.uuids_of(few.as_ref().unwrap_or(ids))?,
+        };
+        let changed = self.remove_each(name, value, &uuids)?;
         Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
     }
 
@@ -1369,26 +1403,53 @@ impl<'c> Writer<'c> {
             for value in &kept {
                 self.validate_value_type(name, value)?;
             }
-            if let Some(changed) = self.mass_logged(MassKind::Replace, name, &kept, ids)? {
+            if let Mass::Done(changed) =
+                self.mass_or_each(MassKind::Replace, name, &kept, Some(ids))?
+            {
                 self.field_types.remove(name); // rows replaced: the type may have unlocked
                 return Ok(changed);
             }
         }
         let uuids = self.tx.uuids_of(ids)?;
-        let changed = self.mass_set(name, values, &uuids)?;
+        let changed = self.set_each(name, &values, &uuids)?;
         Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
     }
 
     /// Takes `name` off the records `ids`: [`Self::mass_unset`] for a caller
     /// that holds dense ids.
     pub fn mass_unset_ids(&mut self, name: &str, ids: &RoaringBitmap) -> Result<RoaringBitmap> {
-        if let Some(changed) = self.mass_logged(MassKind::Replace, name, &[], ids)? {
-            self.field_types.remove(name); // rows removed: the type may have unlocked
-            return Ok(changed);
-        }
-        let uuids = self.tx.uuids_of(ids)?;
-        let changed = self.mass_unset(name, &uuids)?;
+        let uuids = match self.mass_or_each(MassKind::Replace, name, &[], Some(ids))? {
+            Mass::Done(changed) => {
+                self.field_types.remove(name); // rows removed: the type may have unlocked
+                return Ok(changed);
+            }
+            Mass::Each(few) => self.tx.uuids_of(few.as_ref().unwrap_or(ids))?,
+        };
+        let changed = self.unset_each(name, &uuids)?;
         Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
+    }
+
+    /// [`Self::mass_add`] one record at a time.
+    fn add_each(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        self.one_by_one(uuids, |w, uuid| Ok(w.append_field(uuid, name, value.clone())?.created()))
+    }
+
+    /// [`Self::mass_remove`] one record at a time.
+    fn remove_each(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        self.one_by_one(uuids, |w, uuid| Ok(w.delete_fields_valued(uuid, name, value)? > 0))
+    }
+
+    /// [`Self::mass_set`] one record at a time.
+    fn set_each(&mut self, name: &str, values: &[Value], uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        self.one_by_one(uuids, |w, uuid| {
+            w.set_field_multi(uuid, name, values.to_vec())?;
+            Ok(true)
+        })
+    }
+
+    /// [`Self::mass_unset`] one record at a time.
+    fn unset_each(&mut self, name: &str, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
+        self.one_by_one(uuids, |w, uuid| Ok(w.delete_fields_named(uuid, name)? > 0))
     }
 
     /// Deletes the metarecords `ids` (those that exist): one entry in the log
@@ -1396,8 +1457,9 @@ impl<'c> Writer<'c> {
     /// in the log"), else one by one, as [`Self::delete_metarecord`] does. The
     /// ids of those it deleted.
     pub fn mass_delete_ids(&mut self, ids: &RoaringBitmap) -> Result<RoaringBitmap> {
-        // A revert writes what it undoes one operation at a time.
-        if self.reverting.is_none() {
+        // A revert writes what it undoes one operation at a time, and so is
+        // a deletion of few records.
+        if self.reverting.is_none() && ids.len() > self.mass_threshold {
             // The ids of this write's operations come first.
             self.flush_pending()?;
             let origin = self.origin.clone();
@@ -1504,6 +1566,50 @@ impl<'c> Writer<'c> {
         let done: HashSet<Uuid> = self.tx.uuids_of(changed)?.into_iter().collect();
         let mut seen = HashSet::new();
         Ok(asked.iter().copied().filter(|u| done.contains(u) && seen.insert(*u)).collect())
+    }
+
+    /// Whether a write of `values` to `name` on `ids` goes in bulk: when it
+    /// would change more records than the threshold and the store does it
+    /// so, done; otherwise to be written one record at a time — on the records
+    /// it would change, when the indexes say which without reading them.
+    fn mass_or_each(
+        &mut self,
+        kind: MassKind,
+        name: &str,
+        values: &[Value],
+        ids: Option<&RoaringBitmap>,
+    ) -> Result<Mass> {
+        let Some(ids) = ids else { return Ok(Mass::Each(None)) };
+        if self.reverting.is_none() {
+            if let Some(would) = self.would_change(kind, name, values, ids)? {
+                if would.len() <= self.mass_threshold {
+                    return Ok(Mass::Each(Some(would)));
+                }
+            }
+        }
+        Ok(match self.mass_logged(kind, name, values, ids)? {
+            Some(changed) => Mass::Done(changed),
+            None => Mass::Each(None),
+        })
+    }
+
+    /// The records of `ids` a write of `values` to `name` would change, from
+    /// the postings and the counters the transaction keeps; `None` when the
+    /// store cannot say without reading them, or the value has no posting.
+    fn would_change(
+        &self,
+        kind: MassKind,
+        name: &str,
+        values: &[Value],
+        ids: &RoaringBitmap,
+    ) -> Result<Option<RoaringBitmap>> {
+        Ok(match (kind, values) {
+            (MassKind::Add, [value]) => self.tx.value_holder_ids(name, value)?.map(|h| ids - h),
+            (MassKind::Remove, [value]) => self.tx.value_holder_ids(name, value)?.map(|h| ids & h),
+            (MassKind::Replace, []) => self.tx.holder_ids(name)?.map(|h| ids & h),
+            (MassKind::Replace, _) => Some(ids.clone()),
+            _ => None,
+        })
     }
 
     /// An add or a remove the store does in bulk (doc "Mass operations in the
