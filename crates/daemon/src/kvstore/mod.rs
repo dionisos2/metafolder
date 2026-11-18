@@ -10,13 +10,14 @@
 //!
 //! | table         | key                              | value                     |
 //! |---------------|----------------------------------|---------------------------|
-//! | meta          | name                             | counter / HEAD            |
+//! | meta          | name                             | counter / HEAD / version / flag |
 //! | metarecords   | uuid                             | (empty: it exists)        |
 //! | records       | dense id                         | the rows: field name · value |
+//! | mass          | part · number                    | a write to many records ([`mass`]) |
 //! | field_types   | name · value type                | rows of that type         |
 //! | forest        | field · parent · name bytes      | uuid · dense id           |
 //! | ops           | op id                            | the operation             |
-//! | snaps         | op id · after? · index           | a snapshot row            |
+//! | snaps         | op id · added? · index           | a snapshot row            |
 //! | ops_by_label  | label · op id                    | —                         |
 //! | ops_by_entity | uuid · op id                     | —                         |
 //! | labels        | label id                         | name · description · parent · created |

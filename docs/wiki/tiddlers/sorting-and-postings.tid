@@ -37,8 +37,8 @@ the walk ran over its budget and the page fell back to fetching every match
 Nothing is read any more. The pages follow one another from the first, so a walk
 meets a record ''first'' at its representative: a record met that was not given yet
 is at its place, and one already given is a repeat. The cursor therefore carries the
-ids given so far that hold several values of the sort field (the field's `multi`
-set; a record of one value is listed once and needs no memory), and the walk skips
+ids given so far that hold several values of the sort field (those in the field's
+count sets past the first bit, [[Store tables]]; a record of one value is listed once and needs no memory), and the walk skips
 them — a posted value's holders are taken whole, minus those. Either strategy adds
 its page's ids to the cursor, so a walked page may follow a fetched one. The cursor
 stays with the client: nothing is resident in the daemon between two requests

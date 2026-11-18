@@ -31,11 +31,11 @@ each removal the same twenty again.
 A field keeps its trigrams one of two ways (`grams`, [[Store tables]]).
 
 ''By value'' — how every field starts. A trigram names the ''distinct texts'' that
-hold it (their keys in the field's value or name partition). A write adds entries
+hold it (their value keys, or name keys on a position's name). A write adds entries
 only when its text is one the field did not hold: tagging a file with an existing tag
 writes nothing. A search joins the texts of its trigrams, tests each text once — on
 the key itself, no metarecord is read — and unions the holders of the texts that
-match, from the partition or the value's posting. The answer is exact, with nothing
+match, from their postings. The answer is exact, with nothing
 pending.
 
 ''By metarecord'' — for a field whose texts are mostly new ones, file names first:

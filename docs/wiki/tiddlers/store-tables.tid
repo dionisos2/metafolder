@@ -21,10 +21,10 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 ([[The storage boundary]]).
 
 |!Table |!Key |!Value |!Serves |
-|`meta` |name |the id counters, HEAD, the layout and derived-format versions, the watcher's label | |
+|`meta` |name |the id and operation counters (`next_id`, `next_op`, the labels'), HEAD, the layout and derived-format versions, the watcher's label, the ''numbering'' of the dense ids (below), `kept` (a deleted metarecord's record may be stored, [[Deleting a metarecord in the store]]), `mass_extra` (the operations the stubs hold beyond one each, [[Mass operations in the log]]) | |
 |`metarecords` |uuid |empty |existence (the version is computed from the rows, [[Metarecord version]]) |
 |`records` |dense id |the rows: field name · value, each; then, if any, their numbers, tombs and cleared fields |a record's rows, in one read |
-|`mass` |part · operation number |field · kind · values · the ids of the part |the writes to many records not yet written into the records ([[Mass writes in the store]]); under a part of its own, the deletions of many records not yet folded ([[Mass operations in the log]]) |
+|`mass` |part · operation number |field · kind · values · the ids of the part |the writes to many records — past the mass-write threshold — not yet written into the records ([[Mass writes in the store]]); under a part of its own, the deletions of many records not yet folded ([[Mass operations in the log]]) |
 |`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
 |`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
 |`ops` |op id |the operation — or, at its first id, a stub: one entry for the operations of a write to many records ([[Mass operations in the log]]) |the log, in order ([[The operation log]]) |
@@ -53,9 +53,10 @@ and `forest` are filed under it, so a reindex, which numbers the metarecords aga
 files them again: the records go under their uuid while the ids are numbered, then
 under their new id. A metarecord with no row has no key in `records`.
 
-A deleted metarecord's `records` key goes with it; its `forest` key stays until a
-reindex: a `forest` entry carries its metarecord's dense id, tested against the
-universe ([[Deleting a metarecord in the store]]).
+A deleted metarecord's `records` key stays, and so does its `forest` key, until a
+reindex: a restoration reads the record back, `kept` in `meta` makes a read of a
+record sift it through the universe, and a `forest` entry carries its metarecord's
+dense id, tested against the universe ([[Deleting a metarecord in the store]]).
 
 !! Derived tables — the indexes (`kvstore/derived.rs`)
 
@@ -96,6 +97,7 @@ chunk: a write rewrites one chunk, a read unions a few. The kinds:
 |referrers |field · target's dense id |the ids pointing at a metarecord — a folder's children, a `ref`'s referrers ([[The forest in the store]]) |
 |descendants |field · node's dense id |every id below a node ([[The forest in the store]]) |
 |postings |field · value key |the holders of a value — every value has its own ([[Sorting and postings]]) |
+|name postings |field · name key |on a `tree_ref` field, the holders of a position's name, whatever its folder (below) |
 |long texts |field |the ids whose text is too long for trigrams ([[Text search in the store]]) |
 |pending trigrams |field |in a field whose trigrams are kept by metarecord, the ids written since the last fold ([[Text search in the store]]) |
 |reserved |— |the ids given to a uuid something points at and no metarecord has had |
