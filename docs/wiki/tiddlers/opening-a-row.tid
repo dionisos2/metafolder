@@ -25,12 +25,20 @@ The keys open the same two viewers, whatever the panel:
 <<key "panel:open other metarecord-detail" Shift+Enter>> in the detail panel — in the
 other slot; after <<key "panel:open here viewer" "t f">> in place of the list, after `b`
 in a new workspace ([[open targets|Panel slots and layout]]). It is
-[[panel:open]] itself, since the row under the cursor is already the workspace's
-selection ([[Cross-panel selection]]): opening a viewer is opening a panel type, with
+[[panel:open]] itself: opening a viewer is opening a panel type, with
 nothing of the list's own in between, so the panel opened is the one the key names —
 never the detail panel ''instead of'' the viewer panel because the metarecord has no
 file. `panel:open` refuses a viewer that has nothing of the selection to show, the
 way the greyed button does, and says so.
+
+What it opens is the row under the cursor. That row is normally the workspace's
+selection already ([[Cross-panel selection]]), but not always: a list keeps its
+cursor where it was when another panel selects a metarecord it has not loaded, or an
+untracked file, so that its arrows go on from there — and the viewer then opened
+showed that other selection, not the highlighted row. So, before opening the viewer
+panel or the detail panel, `panel:open` selects again the row under the cursor of the
+focused panel, when it has one (its `index` and `select`,
+[[Generic panel commands]]), as the row's buttons do.
 
 Two panels give Enter a meaning of their own on some rows: the file manager goes into
 a folder (<<key "file-manager:activate other" Enter>>, as `↘` does) and the duplicates

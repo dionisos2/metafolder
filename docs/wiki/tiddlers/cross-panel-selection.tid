@@ -21,8 +21,8 @@ screen. Only the highlight moves; nothing is selected again.
 <<key "panel:open other viewer" Enter>> — shows it in the other slot of the same
 workspace, in the [[viewer panel]]; its `ⓘ` button, or
 <<key "panel:open other metarecord-detail" Shift+Enter>>, in `metarecord-detail`. Both
-are [[panel:open]]: the row is the selection already, which the panel opened reads. A
-hidden slot is opened for it.
+are [[panel:open]], which first selects again the row under the list's cursor; the
+panel opened reads that selection ([[Opening a row]]). A hidden slot is opened for it.
 
 While a field of `metarecord-detail` or a file of the [[viewer panel]] is being edited,
 moving the selection asks first, and a refusal leaves it where it is ([[Edits in progress]]).

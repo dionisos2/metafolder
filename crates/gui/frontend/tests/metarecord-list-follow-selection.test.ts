@@ -5,7 +5,7 @@
 // its query, for whoever plays what it shows (doc "Slideshow").
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { cursor } from './support/cursor';
+import { cursor, provided } from './support/cursor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { withRuns } from './support/runs';
@@ -224,6 +224,15 @@ describe('a selection made elsewhere', () => {
     await p.selectElsewhere('m2');
     await p.selectElsewhere('elsewhere');
     expect(p.cursorRow()).toBe(1);
+  });
+
+  test('selecting the row under the cursor again publishes it (what Enter opens)', async () => {
+    const p = await mountPanel(2);
+    await p.selectElsewhere('m2');
+    await p.selectElsewhere('elsewhere');
+    const functions = provided(p.provide);
+    await functions.select!(functions.index!());
+    expect(p.selected()).toBe('m2');
   });
 });
 

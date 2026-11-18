@@ -5,10 +5,12 @@
 import { closeFind, openFind, stepFind } from "../find";
 import { openHints } from "../hints";
 import { invoke } from "../ipc";
+import { functionProvider } from "../panelFunctions";
 import { status } from "../status";
 import { slotPayload, store } from "../store.svelte";
 import { isTarget, resolveTarget, TARGETS } from "../targets";
 import { confirmClosing } from "../unsavedEdits";
+import type { ExecContext } from "../types";
 import type { Builtin, Builtins } from "./types";
 
 /** Why `panelType`, a viewer of the selection, has nothing of `ws`'s selection
@@ -35,6 +37,19 @@ async function viewerHasNothing(
     return "no metarecord for this entry — record it first";
   }
   return null;
+}
+
+/** Selects again the row under the cursor of the panel focused in `context`,
+ *  when it has one: what a viewer of the selection then opens is that row (doc
+ *  "Opening a row"). A list keeps its cursor when another panel selects what it
+ *  has not loaded, so the two can differ; the row's open buttons select it the
+ *  same way. */
+async function selectUnderCursor(context: ExecContext): Promise<void> {
+  const panelType = context.slot ? slotPayload(context.slot).panel_type : null;
+  if (!context.ws || !panelType) return;
+  const functions = await functionProvider()?.get(context.ws, panelType, context);
+  const index = functions?.index?.() ?? -1;
+  if (index >= 0 && functions?.select) await functions.select(index);
 }
 
 /** Immersive mode: mirror the flag into the store (the shell hides all
@@ -100,6 +115,8 @@ export const layoutBuiltins: Builtins = {
       return;
     }
     if (!panelType) return;
+    if (panelType === "viewer" || panelType === "metarecord-detail")
+      await selectUnderCursor(context);
     const nothing = await viewerHasNothing(panelType, context.ws);
     if (nothing) {
       if (context.ws) {

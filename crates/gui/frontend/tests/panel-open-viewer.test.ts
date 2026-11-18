@@ -5,8 +5,10 @@
 // no selection at all, a viewer opens as any panel type does (a layout being
 // set up, `b t f` on an empty workspace).
 
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { dispatch } from '../src/lib/commands';
+import { setFunctionProvider, type PanelFunctions } from '../src/lib/panelFunctions';
+import { store } from '../src/lib/store.svelte';
 import type { ExecContext } from '../src/lib/types';
 
 const { tauri, vars } = vi.hoisted(() => ({
@@ -83,5 +85,81 @@ describe('panel:open on a viewer of the selection', () => {
     select({ uuid: 'aa', repo: 'r' }, []);
     await dispatch('panel:open other metarecord-list', CONTEXT);
     expect(opened()).toEqual(['metarecord-list']);
+  });
+});
+
+// The row under the cursor of the focused panel is what a viewer opens (doc
+// "Opening a row"). A list keeps its cursor when another panel selects what it
+// has not loaded, so the two can differ: the key selects the row again first,
+// as the row's open buttons do.
+describe('panel:open from a panel with a cursor', () => {
+  const calls: string[] = [];
+
+  beforeEach(() => {
+    tauri.length = 0;
+    vars.clear();
+    calls.length = 0;
+    store.layout.left = { ...store.layout.left, workspace_id: 'ws-1', panel_type: 'metarecord-list' };
+    store.layout.focused = 'left';
+  });
+
+  afterEach(() => setFunctionProvider(null));
+
+  function provide(functions: PanelFunctions | null) {
+    setFunctionProvider({
+      get: async (_ws, type) => (type === 'metarecord-list' ? functions : null),
+      provided: () => undefined,
+      unsaved: () => [],
+      root: () => null,
+    });
+  }
+
+  test('selects the row under the cursor before opening the viewer', async () => {
+    // Selected elsewhere: a metarecord without a file, which the list has not loaded.
+    select({ uuid: 'elsewhere', repo: 'r' }, []);
+    provide({
+      index: () => 2,
+      count: () => 5,
+      select: (index) => {
+        calls.push(`select ${index}`);
+        select({ uuid: 'row-2', repo: 'r' }, ['/repo/row-2.txt']);
+      },
+    });
+
+    await dispatch('panel:open other viewer', CONTEXT);
+
+    expect(calls).toEqual(['select 2']);
+    expect(opened()).toEqual(['viewer']);
+  });
+
+  test('and before the detail panel', async () => {
+    select(null, ['/repo/untracked.txt']);
+    provide({
+      index: () => 0,
+      count: () => 1,
+      select: () => select({ uuid: 'row-0', repo: 'r' }, ['/repo/row-0.txt']),
+    });
+
+    await dispatch('panel:open other metarecord-detail', CONTEXT);
+
+    expect(opened()).toEqual(['metarecord-detail']);
+  });
+
+  test('no row under the cursor leaves the selection as it is', async () => {
+    select({ uuid: 'aa', repo: 'r' }, ['/repo/a.txt']);
+    provide({ index: () => -1, count: () => 0, select: () => calls.push('select') });
+
+    await dispatch('panel:open other viewer', CONTEXT);
+
+    expect(calls).toEqual([]);
+    expect(opened()).toEqual(['viewer']);
+  });
+
+  test('a panel type that is no viewer of the selection moves nothing', async () => {
+    provide({ index: () => 1, count: () => 2, select: () => calls.push('select') });
+
+    await dispatch('panel:open other log', CONTEXT);
+
+    expect(calls).toEqual([]);
   });
 });
