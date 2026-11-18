@@ -192,6 +192,144 @@ function ensurePanelHistory(root, { zone, read, append, getRepo }) {
 }
 
 /**
+ * The panel's history as a list of *searches* (doc "Input history"): where
+ * several zones make one search — the metarecord list's finder, simplified
+ * query and normal DSL — each apply records what every zone holds, as one JSON
+ * line, and a step back puts all of them back at once, empty zones included.
+ * Stepping one zone at a time instead left the others at their current value:
+ * the search shown was never one that had run. A step only fills the zones, as
+ * typing would (`input` events); applying is the user's.
+ *
+ * `fields` maps each zone's name in the entry to its input. Installed on the
+ * root as the panel's history (`panelHistoryOf`), in place of a list of fields.
+ * Returns `{record, detach}`: `record()` on every apply.
+ *
+ * @param {ShadowRoot} root
+ * @param {{
+ *   zone: string,
+ *   fields: Record<string, HTMLInputElement|HTMLTextAreaElement>,
+ *   read: (repo: string, zone: string) => Promise<string[]>,
+ *   append: (repo: string, zone: string, entry: string) => Promise<unknown>,
+ *   getRepo: () => Promise<string|null>,
+ * }} options
+ */
+export function attachSearchHistory(root, { zone, fields, read, append, getRepo }) {
+  const names = Object.keys(fields);
+  /** @type {string[]} no active repo: the searches last the session */
+  const session = [];
+  /** @typedef {Record<string, string>} Search */
+  /** @type {{list: Search[], index: number, draft: Search}|null} */
+  let walk = null;
+  let filling = false;
+  /** Steps run one at a time, so that keys pressed quickly each take theirs. */
+  let queue = Promise.resolve();
+  /** @param {() => Promise<void>} step */
+  const enqueue = (step) => (queue = queue.then(step, step));
+
+  /** @returns {Search} what the zones hold now */
+  const current = () =>
+    Object.fromEntries(names.map((name) => [name, fields[name].value.trim()]));
+  /** @param {Search} a @param {Search} b */
+  const same = (a, b) => names.every((name) => (a[name] ?? '') === (b[name] ?? ''));
+
+  /** A stored line as a search; null for one that is not (an edited file).
+   *  @param {string} line @returns {Search|null} */
+  function parse(line) {
+    try {
+      const value = JSON.parse(line);
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+      return Object.fromEntries(
+        names.map((name) => [name, typeof value[name] === 'string' ? value[name] : '']),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  async function load() {
+    const repo = await getRepo().catch(() => null);
+    const lines = repo ? await read(repo, zone).catch(() => []) : [...session];
+    return (Array.isArray(lines) ? lines : []).map(parse).filter((s) => s !== null);
+  }
+
+  /** @param {Search} search */
+  function fill(search) {
+    filling = true;
+    try {
+      for (const name of names) {
+        const input = fields[name];
+        const value = search[name] ?? '';
+        if (input.value === value) continue;
+        input.value = value;
+        // Bubbling `input`: the finder filters, the preview follows — and each
+        // zone's own walk ends, as after a recall in another zone.
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    } finally {
+      filling = false;
+    }
+  }
+
+  const reset = () => {
+    walk = null;
+  };
+  const onEdit = () => {
+    if (!filling) reset();
+  };
+  for (const name of names) {
+    fields[name].addEventListener('input', onEdit);
+    fields[name].addEventListener('blur', reset);
+  }
+
+  const handle = {
+    reset,
+    prev: () =>
+      enqueue(async () => {
+        if (!walk) {
+          const draft = current();
+          const list = await load();
+          // The search just applied usually stays in the zones: a step that
+          // shows nothing new would be lost.
+          const walked = list.length > 0 && same(list[list.length - 1], draft) ? list.slice(0, -1) : list;
+          walk = { list: walked, index: walked.length, draft };
+        }
+        if (walk.index === 0) return;
+        walk.index -= 1;
+        fill(walk.list[walk.index]);
+      }),
+    next: () =>
+      enqueue(async () => {
+        if (!walk || walk.index >= walk.list.length) return;
+        walk.index += 1;
+        fill(walk.index === walk.list.length ? walk.draft : walk.list[walk.index]);
+      }),
+  };
+  /** @type {any} */ (root).mfPanelHistory = handle;
+
+  return {
+    async record() {
+      reset();
+      const entry = JSON.stringify(current());
+      const repo = await getRepo().catch(() => null);
+      if (repo) {
+        // A store failure must not break applying.
+        await Promise.resolve(append(repo, zone, entry)).catch(() => {});
+      } else if (session.at(-1) !== entry) {
+        session.push(entry);
+        if (session.length > MAX_SESSION_ENTRIES) session.shift();
+      }
+    },
+    detach() {
+      for (const name of names) {
+        fields[name].removeEventListener('input', onEdit);
+        fields[name].removeEventListener('blur', reset);
+      }
+      if (/** @type {any} */ (root).mfPanelHistory === handle) delete (/** @type {any} */ (root).mfPanelHistory);
+    },
+  };
+}
+
+/**
  * Attaches per-repo input history to a text input.
  *
  * - `zone`: the zone name, or a function returning it per command (falsy

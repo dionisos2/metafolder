@@ -14,7 +14,7 @@ import {
   composeQueryText,
 } from '/__finder.js';
 import { clipboardPaths, fileMenuItems, metarecordMenuItems, parentDir } from '/__file-actions.js';
-import { attachHistory } from '/__history.js';
+import { attachHistory, attachSearchHistory } from '/__history.js';
 import { createListCursor } from '/__list-cursor.js';
 import { createCatchup } from '/__watcher-settle.js';
 import { createBulkEdit } from './bulk-edit.js';
@@ -179,11 +179,6 @@ export async function mount(root, metafolder) {
     append: (histRepo, zone, entry) => metafolder.history.append(histRepo, zone, entry),
     getRepo: async () => repo,
     container: bodyEl,
-    fields: {
-      zone: 'metarecord-list:fields',
-      /** @param {string} histRepo @param {string} zone @param {string} field */
-      append: (histRepo, zone, field) => metafolder.history.appendField(histRepo, zone, field),
-    },
   };
   const finderHistory = attachHistory(finderInput, {
     zone: 'metarecord-list:finder',
@@ -198,6 +193,19 @@ export async function mount(root, metafolder) {
     zone: 'metarecord-list:normal',
     ...historyDeps,
   });
+  // The panel's history is one of searches, not of fields: a step puts the
+  // three search zones back as one apply left them (doc "Input history").
+  const searchHistory = attachSearchHistory(root, {
+    zone: 'metarecord-list:searches',
+    fields: {
+      finder: finderInput,
+      simplified: queryInput,
+      normal: byId(root, 'normal-input', HTMLInputElement),
+    },
+    read: historyDeps.read,
+    append: historyDeps.append,
+    getRepo: historyDeps.getRepo,
+  });
 
   // ── Query (two-zone editor, ./query-editor.js) ──────────────────────────
   const editor = createQueryEditor({
@@ -207,6 +215,7 @@ export async function mount(root, metafolder) {
     normalHistory,
     onApply: () => {
       queryRan = true;
+      void searchHistory.record();
     },
     run: (mf) => fetchPage(true, mf),
   });
@@ -1464,6 +1473,7 @@ export async function mount(root, metafolder) {
     editor.dispose();
     catchup.cancel();
     finderHistory.detach();
+    searchHistory.detach();
     queryHistory.detach();
     unsubscribeChanges();
     document.removeEventListener('mousemove', /** @type {EventListener} */ (onMouseMove));

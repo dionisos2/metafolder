@@ -33,18 +33,43 @@ name the focused panel lacks, is an error.
 !! A panel's history
 
 Outside a text field <<key "history:prev self" "Ctrl+P">> and
-<<key "history:next self" "Ctrl+N">> walk the panel's own history: the list of its
-fields, in the order they were submitted. Each step runs <<cmd "history:prev">> on
-the field at that place of the list, then the one before, and so on, whichever field
-it is; <<cmd "history:next">> takes the same steps back. Going back through what was
-tried in the finder and the query so needs no going to either: ''no field takes the
-focus''.
+<<key "history:next self" "Ctrl+N">> walk the panel's own history, without going to
+any field: ''no field takes the focus''. A panel without one lets the keys pass
+through.
 
-A step only fills the field, as a recall in it does: the finder filters as it
-changes, the query waits to be applied. A submitted field joins the list only if its
-history gained an entry, so that each step has one to recall; a name the panel no
-longer has is passed over. Editing a field, submitting one or leaving one ends the
-walk. A panel without fields with a history lets the keys pass through.
+!!! The metarecord list: its searches
+
+In the [[metarecord-list panel]] the finder, the simplified query and the normal
+query are one search, so its history is a list of ''searches'': each time a query is
+applied — `Enter` in any of the zones, <<key "metarecord-list:apply-query" "p p">>, a
+command showing a query (a folder listed) or another panel writing one — what the
+three zones hold is recorded together, empty ones included. A step back puts all
+three back as that search left them; <<cmd "history:next">> walks forward again, to
+what the zones held before the walk began. A search the zones hold already is passed
+over, as in a field: the first step after applying goes to the search before.
+
+A step only fills the zones, as typing would: the finder filters as it changes, the
+queries wait to be applied (<<key "metarecord-list:apply-query" "p p">>). The columns
+and the order are not part of a search. Editing a zone, applying, or leaving a zone
+ends the walk.
+
+Each zone keeps its own history as well, for <<cmd "history:prev">> in it.
+
+Recalling one zone at a time — the panel's history used to be the list of the fields
+submitted, each step recalling in one of them — left the others at their current
+value: a step back showed a search that had never run.
+
+!!! The other panels: their fields
+
+Elsewhere the panel's history is the list of its fields, in the order they were
+submitted. Each step runs <<cmd "history:prev">> on the field at that place of the
+list, then the one before, and so on, whichever field it is; <<cmd "history:next">>
+takes the same steps back.
+
+A step only fills the field, as a recall in it does. A submitted field joins the list
+only if its history gained an entry, so that each step has one to recall; a name the
+panel no longer has is passed over. Editing a field, submitting one or leaving one
+ends the walk.
 
 !! What is recorded
 
@@ -65,8 +90,12 @@ only; it is not carried into a repository's history when one is opened.
 
 In the repository: one plain-text file per zone,
 `.metafolder/gui/history/<zone>` — one entry per line, the newest
-last. A panel's list of fields is a file of the same kind, `<panel>:fields` (`metarecord-list:fields`), with one field's name per line, a name repeated when the field was
-submitted twice in a row. The file is replaced whole at each addition (written aside, then renamed), so
+last. A panel's list of fields is a file of the same kind, `<panel>:fields` (`help:fields`), with one field's name per line, a name repeated when the field was
+submitted twice in a row. The metarecord list's searches are `metarecord-list:searches`, one
+search per line as a JSON object (`{"finder": …, "simplified": …, "normal": …}`); a
+line that is not one is passed over. The list's former `metarecord-list:fields` is no
+longer read: a list of field names cannot be turned into searches, since it does not
+say what the other zones held. The file is replaced whole at each addition (written aside, then renamed), so
 an interrupted write leaves the previous history intact.
 
 These files are ordinary content of `.metafolder/`, unlike `internal/`: they can be

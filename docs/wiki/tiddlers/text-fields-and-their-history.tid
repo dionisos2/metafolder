@@ -21,6 +21,7 @@ history works: [[Input history]]. An entry is never recorded while typing.
 |normal query |[[metarecord-list panel]] |`normal` |`metarecord-list:normal` |it is applied, or a command shows a query there |
 |columns |[[metarecord-list panel]] |`columns` |`metarecord-list:columns` |they are applied: as the field then shows them |
 |order field |[[metarecord-list panel]] |`order` |`metarecord-list:order` |the order is turned on |
+|the three search zones together |[[metarecord-list panel]] |`self`, the panel's history ([[Input history]]) |`metarecord-list:searches` |a query is applied, whichever zone it comes from or a command showing one: what the finder, the simplified query and the normal query hold, as one line |
 |search box |[[help panel]] |`search` |`help:search` |it is applied |
 |intents file |[[sync panel]] |`intents` |`sync:intents` |a plan is asked for |
 |filter |[[config panel]] |`filter` |`config:filter` |`Enter` validates it ([[editing:validate]]) |

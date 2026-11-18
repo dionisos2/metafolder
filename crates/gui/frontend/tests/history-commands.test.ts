@@ -4,7 +4,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { attachHistory } from '/__history.js';
+import { attachHistory, attachSearchHistory } from '/__history.js';
 import {
   historyApplies,
   historyFieldNames,
@@ -328,5 +328,153 @@ describe('the note listing the text fields', () => {
     expect(zones).toContain('shell:find');
     const missing = zones.filter((zone) => !zone.endsWith(':fields') && !note.includes(`\`${zone}\``));
     expect(missing).toEqual([]);
+  });
+});
+
+// The metarecord list's history is one of searches (doc "Input history"): each
+// apply records what every search zone holds, and a step puts all of them back
+// at once — the search as it was, empty zones included.
+describe('self: the walk over the searches a panel applied', () => {
+  function makePanel(searches: object[] = [], repo: string | null = 'repo') {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: 'open' });
+    const store = searches.map((s) => JSON.stringify(s));
+    const field = (name: string) => {
+      const input = document.createElement('input');
+      input.dataset.mfFocus = name;
+      root.appendChild(input);
+      return input;
+    };
+    const finder = field('finder');
+    const simplified = field('simplified');
+    const normal = field('normal');
+    const inputs: string[] = [];
+    finder.addEventListener('input', () => inputs.push(finder.value));
+    const history = attachSearchHistory(root, {
+      zone: 'test:searches',
+      fields: { finder, simplified, normal },
+      read: async () => [...store],
+      append: async (_repo: string, _zone: string, entry: string) => {
+        if (store.at(-1) === entry) return false;
+        store.push(entry);
+        return true;
+      },
+      getRepo: async () => repo,
+    });
+    const values = () => [finder.value, simplified.value, normal.value];
+    return { root, finder, simplified, normal, history, store, values, inputs };
+  }
+  const prev = (root: ShadowRoot) => runHistoryCommand('history:prev', 'self', document.body, root);
+  const next = (root: ShadowRoot) => runHistoryCommand('history:next', 'self', document.body, root);
+
+  test('a step puts every zone of the search before back, empty ones included', async () => {
+    const p = makePanel([
+      { finder: 'f1', simplified: 's1', normal: 'n1' },
+      { finder: '', simplified: 's2', normal: '' },
+    ]);
+    await prev(p.root);
+    expect(p.values()).toEqual(['', 's2', '']);
+    await prev(p.root);
+    expect(p.values()).toEqual(['f1', 's1', 'n1']);
+    await prev(p.root);
+    expect(p.values()).toEqual(['f1', 's1', 'n1']);
+  });
+
+  test('the search the zones hold already is passed over', async () => {
+    const p = makePanel([
+      { finder: 'f1', simplified: '', normal: '' },
+      { finder: 'f2', simplified: 's2', normal: '' },
+    ]);
+    p.finder.value = 'f2';
+    p.simplified.value = 's2';
+    await prev(p.root);
+    expect(p.values()).toEqual(['f1', '', '']);
+  });
+
+  test('next walks back to what the zones held', async () => {
+    const p = makePanel([{ finder: 'f1', simplified: 's1', normal: 'n1' }]);
+    p.normal.value = 'typed';
+    await prev(p.root);
+    await next(p.root);
+    expect(p.values()).toEqual(['', '', 'typed']);
+    await next(p.root);
+    expect(p.values()).toEqual(['', '', 'typed']);
+  });
+
+  test('a step fills the zones as typing would, without ending the walk', async () => {
+    const p = makePanel([
+      { finder: 'f1', simplified: '', normal: '' },
+      { finder: 'f2', simplified: '', normal: '' },
+    ]);
+    await prev(p.root);
+    await prev(p.root);
+    // The finder heard each value, as it filters on `input`.
+    expect(p.inputs).toEqual(['f2', 'f1']);
+    expect(p.values()).toEqual(['f1', '', '']);
+  });
+
+  test('a real edit ends the walk', async () => {
+    const p = makePanel([
+      { finder: 'f1', simplified: '', normal: '' },
+      { finder: 'f2', simplified: '', normal: '' },
+    ]);
+    await prev(p.root);
+    await prev(p.root);
+    p.simplified.value = 'edited';
+    p.simplified.dispatchEvent(new Event('input', { bubbles: true }));
+    await prev(p.root);
+    expect(p.values()).toEqual(['f2', '', '']);
+  });
+
+  test('keys pressed quickly each take their step', async () => {
+    const p = makePanel([
+      { finder: 'f1', simplified: '', normal: '' },
+      { finder: 'f2', simplified: '', normal: '' },
+    ]);
+    await Promise.all([prev(p.root), prev(p.root)]);
+    expect(p.values()).toEqual(['f1', '', '']);
+  });
+
+  test('recording stores what every zone holds, trimmed, once in a row', async () => {
+    const p = makePanel();
+    p.finder.value = ' f ';
+    p.normal.value = 'n';
+    await p.history.record();
+    await p.history.record();
+    expect(p.store.map((line) => JSON.parse(line))).toEqual([
+      { finder: 'f', simplified: '', normal: 'n' },
+    ]);
+  });
+
+  test('recording ends the walk', async () => {
+    const p = makePanel([
+      { finder: 'f1', simplified: '', normal: '' },
+      { finder: 'f2', simplified: '', normal: '' },
+    ]);
+    await prev(p.root);
+    await prev(p.root);
+    await p.history.record(); // f1 applied again
+    p.finder.value = 'f3';
+    await prev(p.root);
+    expect(p.values()).toEqual(['f1', '', '']);
+  });
+
+  test('a line that is no search is passed over', async () => {
+    const p = makePanel([{ finder: 'f1', simplified: '', normal: '' }]);
+    p.store.push('not json', '"a string"');
+    await prev(p.root);
+    expect(p.values()).toEqual(['f1', '', '']);
+  });
+
+  test('without a repository the searches last the session', async () => {
+    const p = makePanel([], null);
+    p.finder.value = 'f1';
+    await p.history.record();
+    p.finder.value = 'f2';
+    await p.history.record();
+    await prev(p.root);
+    expect(p.values()).toEqual(['f1', '', '']);
+    expect(p.store).toEqual([]);
   });
 });

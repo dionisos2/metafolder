@@ -1515,23 +1515,27 @@ scenario_history() {
     assert "history: ctrl+r in the finder opens its search" \
         until_ok 10 shows .mf-history-item "old finder query"
 
-    # Outside any field, the keys walk the panel's fields, none taking the focus.
-    local fields="$REPO_DIR/.metafolder/gui/history/metarecord-list:fields"
-    printf 'finder\n' >"$fields"
+    # Outside any field, the keys walk the list's searches, none taking the
+    # focus: a step puts every zone back at once (doc "Input history").
+    local searches="$REPO_DIR/.metafolder/gui/history/metarecord-list:searches"
+    printf '%s\n' '{"finder":"older finder query","simplified":"","normal":"mfr_type = \"dir\""}' >"$searches"
     keys Escape
     keys ctrl+p
-    assert "history: ctrl+p outside a field recalls in the listed field" \
+    assert "history: ctrl+p outside a field puts the search's finder back" \
         until_ok 10 reads "older finder query" "#finder-input"
+    assert "history: and its normal query, in the same step" \
+        until_ok 10 reads 'mfr_type = "dir"' "#normal-input"
     keys ctrl+n
     assert "history: ctrl+n outside a field walks back" \
         until_ok 10 reads "old finder query" "#finder-input"
-    # A submit with a new entry adds a step.
+    assert "history: to every zone as it was" until_ok 10 reads "" "#normal-input"
+    # Applying records the search.
     run metarecord-list:focus finder
     keys ctrl+p
     until_ok 10 reads "older finder query" "#finder-input"
     keys Return
-    assert "history: a submit lists the field again" \
-        until_ok 10 bash -c "[ \"\$(grep -cx finder '$fields')\" = 2 ]"
+    assert "history: applying records the search" \
+        until_ok 10 bash -c "[ \"\$(wc -l <'$searches')\" = 2 ]"
 
     # The normal query records what is typed in it.
     run metarecord-list:focus normal
