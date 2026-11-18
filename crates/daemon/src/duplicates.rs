@@ -432,8 +432,9 @@ impl Writes<'_> {
         result: &mut ScanResult,
         prune: Option<(Option<&HashSet<Uuid>>, &Reporter)>,
     ) -> Result<(), ApiError> {
-        let mut existing = groups_by_class(writer.store())?;
-        let mut links = group_links(writer.store())?;
+        // The groups this write found or made, by class: each class asks the
+        // postings for its own, never the repository for all of them.
+        let mut existing: HashMap<(i64, String), DuplicateGroup> = HashMap::new();
         let root = &self.repo.config.root;
         for (size, mut members) in self.classes.drain(..) {
             let mut kept = Vec::with_capacity(members.len());
@@ -454,22 +455,13 @@ impl Writes<'_> {
                 size,
                 &kept,
                 &mut existing,
-                &mut links,
                 &mut self.grouped,
                 &mut self.touched,
                 result,
             )?;
         }
         if let Some((scope, reporter)) = prune {
-            prune_groups(
-                &mut writer,
-                &existing,
-                &mut links,
-                &self.grouped,
-                &self.touched,
-                scope,
-                reporter,
-            )?;
+            prune_groups(&mut writer, &self.grouped, &self.touched, scope, reporter)?;
         }
         self.commit(writer)?;
         self.opened = Instant::now();
@@ -645,43 +637,39 @@ pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Resul
     }
 }
 
-/// The `duplicate_group` metarecords by `(content size, content hash)`: the
-/// posting of the type, each group read.
-fn groups_by_class(
-    conn: &dyn crate::store::Store,
-) -> anyhow::Result<HashMap<(i64, String), DuplicateGroup>> {
-    let schema = Value::String(GROUP_SCHEMA.to_string());
-    let mut out = HashMap::new();
-    for uuid in crate::lookup::holding(conn, "mf_schema", &schema)? {
-        let rows = crate::store::Rows::rows(conn, uuid)?;
-        let hash = rows.iter().find_map(|r| match &r.value {
-            Value::String(h) if r.name == "mfr_content_hash" => Some(h.clone()),
-            _ => None,
-        });
-        let first = |name: &str| crate::lookup::ints(&rows, name).into_iter().next();
-        let (Some(hash), Some(size)) = (hash, first("mfr_content_size")) else { continue };
-        let group = DuplicateGroup {
-            uuid,
-            count: first("mfr_duplicate_count"),
-            reclaimable: first("mfr_duplicate_reclaimable"),
-        };
-        out.insert((size, hash), group);
-    }
-    Ok(out)
+/// The `duplicate_group` metarecord of a class, `(content size, content
+/// hash)`: the intersection of the three postings, the group read.
+fn group_of_class(
+    writer: &Writer,
+    size: i64,
+    hash: &str,
+) -> Result<Option<DuplicateGroup>, ApiError> {
+    let store = writer.store();
+    let holders =
+        |name: &str, value: Value| crate::store::Rows::value_holder_ids(store, name, &value);
+    let ids = holders("mfr_content_hash", Value::String(hash.to_string()))?
+        & holders("mfr_content_size", Value::Int(size))?
+        & holders("mf_schema", Value::String(GROUP_SCHEMA.to_string()))?;
+    let Some(uuid) = crate::store::Rows::uuids_of_ids(store, &ids)?.into_iter().next() else {
+        return Ok(None);
+    };
+    let rows = crate::store::Rows::rows(store, uuid)?;
+    let first = |name: &str| crate::lookup::ints(&rows, name).into_iter().next();
+    Ok(Some(DuplicateGroup {
+        uuid,
+        count: first("mfr_duplicate_count"),
+        reclaimable: first("mfr_duplicate_reclaimable"),
+    }))
 }
 
-/// Every member's link to its group: the holders of [`GROUP_FIELD`], each
-/// read.
-fn group_links(conn: &dyn crate::store::Store) -> anyhow::Result<HashMap<Uuid, Uuid>> {
-    let mut out = HashMap::new();
-    for uuid in conn.uuids_of_ids(&conn.holder_ids(GROUP_FIELD)?)? {
-        for row in crate::store::Rows::rows_named(conn, uuid, GROUP_FIELD)? {
-            if let Value::Ref(group) = row.value {
-                out.insert(uuid, group);
-            }
-        }
-    }
-    Ok(out)
+/// The group `uuid` is linked to, if any.
+fn link_of(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<Option<Uuid>, ApiError> {
+    Ok(crate::store::Rows::rows_named(conn, uuid, GROUP_FIELD)?.into_iter().find_map(
+        |row| match row.value {
+            Value::Ref(group) => Some(group),
+            _ => None,
+        },
+    ))
 }
 
 /// Recomputes one group's counters from the members that still point at it, and
@@ -691,7 +679,8 @@ fn group_links(conn: &dyn crate::store::Store) -> anyhow::Result<HashMap<Uuid, U
 pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Result<()> {
     // The members are the group value's posting, not a read of every
     // duplicate of the repository.
-    let members = writer.uuids_of(&writer.value_holders(GROUP_FIELD, &Value::Ref(group))?)?;
+    let holders = writer.value_holders(GROUP_FIELD, &Value::Ref(group))?;
+    let members = crate::store::Rows::uuids_of_ids(writer.store(), &holders)?;
     if members.len() < 2 {
         for member in members {
             writer.clear_field_as(op, member, GROUP_FIELD)?;
@@ -754,7 +743,6 @@ fn write_class_groups(
     size: i64,
     members: &[Candidate],
     existing: &mut HashMap<(i64, String), rows::DuplicateGroup>,
-    links: &mut HashMap<Uuid, Uuid>,
     grouped: &mut HashSet<Uuid>,
     touched: &mut HashSet<Uuid>,
     result: &mut ScanResult,
@@ -792,6 +780,11 @@ fn write_class_groups(
         // size classes could in principle produce the same hash, and the
         // find-or-create has to stay well defined.
         let key = (size, hash.clone());
+        if !existing.contains_key(&key) {
+            if let Some(found) = group_of_class(writer, size, &hash)? {
+                existing.insert(key.clone(), found);
+            }
+        }
         let entry = match existing.entry(key) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
@@ -831,7 +824,7 @@ fn write_class_groups(
         touched.insert(group);
 
         for member in group_members {
-            if links.get(&member.uuid) != Some(&group) {
+            if link_of(writer.store(), member.uuid)? != Some(group) {
                 writer
                     .set_field_as(
                         OpType::FileModified,
@@ -840,7 +833,6 @@ fn write_class_groups(
                         Value::Ref(group),
                     )
                     .map_err(ApiError::from)?;
-                links.insert(member.uuid, group);
             }
             grouped.insert(member.uuid);
         }
@@ -856,62 +848,54 @@ fn write_class_groups(
 #[allow(clippy::too_many_arguments)]
 fn prune_groups(
     writer: &mut Writer,
-    existing: &HashMap<(i64, String), rows::DuplicateGroup>,
-    links: &mut HashMap<Uuid, Uuid>,
     grouped: &HashSet<Uuid>,
     touched: &HashSet<Uuid>,
     scope: Option<&HashSet<Uuid>>,
     reporter: &Reporter,
 ) -> Result<(), ApiError> {
-    let total = existing.len() as u64;
-    reporter.progress("prune", Some(0), Some(total));
-
-    // Driven by the records that *currently carry a link* — the map loaded at
-    // the start and kept current by the writes above, so this asks the database
-    // nothing. It catches every way of ceasing to be a duplicate at once: the
-    // twin changed, the file grew out of its size class, it fell under
-    // `min_size`, it stopped being a file. That is what keeps
-    // "`mfr_duplicate_group` present ⟹ it had a twin at the last scan" true.
-    // A scoped scan touches only its own subtree.
-    let stale: Vec<Uuid> = links
-        .keys()
-        .copied()
-        .filter(|uuid| !grouped.contains(uuid) && scope.is_none_or(|s| s.contains(uuid)))
-        .collect();
-    for uuid in stale {
-        writer
-            .clear_field_as(OpType::FileModified, uuid, "mfr_duplicate_group")
-            .map_err(ApiError::from)?;
-        links.remove(&uuid);
+    // Driven by the records that *currently carry a link* — the holders of
+    // the field, within the scope for a scoped scan. It catches every way of
+    // ceasing to be a duplicate at once: the twin changed, the file grew out
+    // of its size class, it fell under `min_size`, it stopped being a file.
+    // That is what keeps "`mfr_duplicate_group` present ⟹ it had a twin at
+    // the last scan" true. A scoped scan touches only its own subtree, and
+    // reads nothing of the groups outside it.
+    let linked = crate::store::Rows::holder_ids(writer.store(), GROUP_FIELD)?;
+    let linked = match scope {
+        None => linked,
+        Some(scope) => {
+            let scope: Vec<Uuid> = scope.iter().copied().collect();
+            linked & writer.dense_ids(&scope).map_err(ApiError::from)?
+        }
+    };
+    // The groups to look at again: those a stale link pointed at, and on a
+    // whole scan every group, one that lost all its members included.
+    let mut again: HashSet<Uuid> = HashSet::new();
+    for uuid in crate::store::Rows::uuids_of_ids(writer.store(), &linked)? {
+        if grouped.contains(&uuid) {
+            continue;
+        }
+        if let Some(group) = link_of(writer.store(), uuid)? {
+            again.insert(group);
+        }
+        writer.clear_field_as(OpType::FileModified, uuid, GROUP_FIELD).map_err(ApiError::from)?;
     }
-
-    for (i, group) in existing.values().enumerate() {
+    if scope.is_none() {
+        let schema = Value::String(GROUP_SCHEMA.to_string());
+        again.extend(crate::lookup::holding(writer.store(), "mf_schema", &schema)?);
+    }
+    let mut again: Vec<Uuid> = again.into_iter().filter(|g| !touched.contains(g)).collect();
+    again.sort();
+    let total = again.len() as u64;
+    reporter.progress("prune", Some(0), Some(total));
+    for (i, group) in again.into_iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             reporter.progress("prune", Some(i as u64), Some(total));
         }
-        if touched.contains(&group.uuid) {
-            continue;
-        }
-        let members: Vec<Uuid> = links
-            .iter()
-            .filter(|(_, target)| **target == group.uuid)
-            .map(|(owner, _)| *owner)
-            .collect();
-        if members.len() > 1 {
-            // Still a group, but not one this scan wrote: a scoped scan took
-            // a member out, and the counters must say so.
-            if group.count != Some(members.len() as i64) {
-                refresh_group(writer, OpType::FileModified, group.uuid).map_err(ApiError::from)?;
-            }
-            continue;
-        }
-        for member in members {
-            writer
-                .clear_field_as(OpType::FileModified, member, "mfr_duplicate_group")
-                .map_err(ApiError::from)?;
-            links.remove(&member);
-        }
-        writer.delete_metarecord(group.uuid).map_err(ApiError::from)?;
+        // Recounted from the members left, and dissolved under two: still a
+        // group but not one this scan wrote, a scoped scan having taken a
+        // member out, or no group any more.
+        refresh_group(writer, OpType::FileModified, group).map_err(ApiError::from)?;
     }
     Ok(())
 }

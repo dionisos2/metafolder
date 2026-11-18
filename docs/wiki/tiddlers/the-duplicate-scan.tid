@@ -42,7 +42,7 @@ seconds, and at the end with ''the prune''. All of it under one label.
 
 Since the store was free in between, a write trusts nothing loaded before it:
 
-* the existing groups with their counters and the member links are read again (two whole-repository questions per write, none per record) — a group deleted since is made again, a counter changed since is compared to its current value;
+* a class's group, with its counters, is looked up as it is written — the intersection of the postings of its hash, its size and the `duplicate_group` type — and so is each member's link: a group deleted since is made again, a counter changed since is compared to its current value. Nothing is read of the groups of other classes;
 * a record deleted since gets no hash;
 * each member of a group is checked on disk: a file whose `(mtime, size)` is no longer the one its full hash was taken under is left out of the group. Its change reaches the store after this write (the watcher's flush waits for the store too), and finds it in no group.
 
@@ -67,6 +67,13 @@ records at random dirties pages all over the store (25 takes cost 3.7 s of commi
 unsorted, 1.8 s sorted; the longest wait behind the scan fell to 0.4 s). The groups and
 the prune go in the last take, which reads the groups and links it writes against.
 
+The prune starts from the records holding a link — the field's holders, within the
+subtree for a scoped scan — and takes it off those the scan did not group; the groups
+they pointed at, and on a whole scan every group, are then recounted from their
+members (the posting of the group) and dissolved under two. A scoped scan reads
+nothing of the groups and links outside its subtree, whatever their number
+(`tests/api_cost.rs`).
+
 A field is written only when it is absent or changed, so a re-scan of an
 unchanged repository writes nothing.
 
@@ -76,7 +83,7 @@ unchanged repository writes nothing.
 |`size` |files partitioned / candidate files |
 |`partial` |files hashed / files to hash |
 |`full` |''bytes'' hashed / bytes to hash |
-|`prune` |groups checked / groups |
+|`prune` |groups checked / groups to check |
 
 The `full` phase counts bytes because file sizes span orders of magnitude and a
 file count would make the bar meaningless; its total is known exactly before it

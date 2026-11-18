@@ -273,11 +273,16 @@ async fn adding_a_tag_under_a_schema_on_it_costs_the_same_in_a_larger_repository
 /// them (doc "Duplicate groups"): the group metarecords, and the members'
 /// links to them.
 async fn group_duplicates(r: &Repo) {
+    group_some_duplicates(r, usize::MAX).await
+}
+
+/// [`group_duplicates`] for the first `limit` files only.
+async fn group_some_duplicates(r: &Repo, limit: usize) {
     let q = json!({"query": {"type": "is_present", "field": "rating"}});
     let (_, files) = r.cost("POST", "/query", Some(q)).await;
     let files = files.get("results").unwrap_or(&files);
     let files: Vec<String> =
-        files.as_array().unwrap().iter().map(|u| u.as_str().unwrap().into()).collect();
+        files.as_array().unwrap().iter().take(limit).map(|u| u.as_str().unwrap().into()).collect();
     let mut ops = Vec::new();
     for (k, members) in files.chunks(3).filter(|c| c.len() == 3).enumerate() {
         let group = Uuid::new_v4().simple().to_string();
@@ -360,4 +365,24 @@ async fn the_workers_lookups_cost_the_same_in_a_larger_repository() {
         conn.as_kv().unwrap().reads() - before
     }
     bounded("the workers' lookups", steady!(&small, lookups), steady!(&large, lookups));
+}
+
+#[tokio::test]
+async fn a_scoped_duplicate_scan_costs_the_same_whatever_the_groups_elsewhere() {
+    // A scan of one file's subtree writes the groups of its classes and
+    // prunes its own links: the groups and links of the rest of the
+    // repository are not read.
+    let (few, many) = (load("few", 1).await, load("many", 1).await);
+    group_some_duplicates(&few, 3).await;
+    group_some_duplicates(&many, usize::MAX).await;
+    async fn scan_one(r: &Repo) -> u64 {
+        let scope: Uuid = r.sample().await.parse().unwrap();
+        let repo = r.state.ready_repo(r.repo).unwrap();
+        let before = r.reads();
+        let opts =
+            metafolder_daemon::duplicates::ScanOptions { scope: Some(scope), ..Default::default() };
+        metafolder_daemon::duplicates::scan(&repo, &opts).unwrap();
+        r.reads() - before
+    }
+    bounded("a scoped scan", steady!(&few, scan_one), steady!(&many, scan_one));
 }
