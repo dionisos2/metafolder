@@ -49,6 +49,8 @@ help:
 	@echo '  build-headless     build daemon + cli only (no GUI toolkit / frontend)'
 	@echo '  frontend           (re)build the GUI frontend bundle'
 	@echo '  docs               render the documentation wiki (docs/wiki/dist/)'
+	@echo '  apply-docs         docs, then sync-config: the help panel shows them'
+	@echo '                     (applies every shipped default to the user config)'
 	@echo ''
 	@echo '  install            build + install binaries into $(BINDIR) + user config'
 	@echo '  install-headless   daemon + cli + user config'
@@ -122,6 +124,15 @@ build: build-headless build-gui
 .PHONY: docs
 docs: $(NPM_STAMP)
 	scripts/dev/doc build
+
+# The documentation rendered, then applied to the configuration so that the help
+# panel shows it. sync-config applies every shipped default, not only docs/: this
+# touches the user configuration, which `docs` alone never does. Debug build of
+# sync-config, the one `make dev` builds and keeps.
+.PHONY: apply-docs
+apply-docs: docs
+	$(CARGO) build -p metafolder-core --features sync-config --bin metafolder-sync-config
+	target/debug/metafolder-sync-config
 
 # The complete development build, doc "Building". The frontend comes before cargo:
 # Tauri embeds it at compile time, and bundled after, the binary keeps the
