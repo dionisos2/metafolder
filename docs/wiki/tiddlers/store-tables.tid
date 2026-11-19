@@ -21,10 +21,10 @@ What was written. The rest of the daemon reaches it through `Rows` and `Log`
 ([[The storage boundary]]).
 
 |!Table |!Key |!Value |!Serves |
-|`meta` |name |the id and operation counters (`next_id`, `next_op`, the labels'), HEAD, the layout and derived-format versions, the watcher's label, the ''numbering'' of the dense ids (below), `kept` (a deleted metarecord's record may be stored, [[Deleting a metarecord in the store]]), `mass_extra` (the operations the stubs hold beyond one each, [[Mass operations in the log]]) | |
+|`meta` |name |a number: a counter, HEAD, a format version or a flag (below) | |
 |`metarecords` |uuid |empty |existence (the version is computed from the rows, [[Metarecord version]]) |
 |`records` |dense id |the rows: field name · value, each; then, if any, their numbers, tombs and cleared fields |a record's rows, in one read |
-|`mass` |part · operation number |field · kind · values · the ids of the part |the writes to many records — past the mass-write threshold — not yet written into the records ([[Mass writes in the store]]); under a part of its own, the deletions of many records not yet folded ([[Mass operations in the log]]) |
+|`mass` |part · write number (`mass_op`) |field · kind · values · the ids of the part |the writes to many records — past the mass-write threshold — not yet written into the records ([[Mass writes in the store]]); under a part of its own, the deletions of many records not yet folded ([[Mass operations in the log]]) |
 |`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
 |`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
 |`ops` |op id |the operation — or, at its first id, a stub: one entry for the operations of a write to many records ([[Mass operations in the log]]) |the log, in order ([[The operation log]]) |
@@ -57,6 +57,28 @@ A deleted metarecord's `records` key stays, and so does its `forest` key, until 
 reindex: a restoration reads the record back, `kept` in `meta` makes a read of a
 record sift it through the universe, and a `forest` entry carries its metarecord's
 dense id, tested against the universe ([[Deleting a metarecord in the store]]).
+
+!! The `meta` table
+
+Each key is a name, each value one big-endian `i64`. A key that is absent reads as its
+default.
+
+|!Key |!Holds |!Written by |!Read by |
+|`layout` |the version of the primary tables' format (`LAYOUT`) |the conversion at open |the open: another version is converted ([[Persisted format changes]]) |
+|`derived` |the version of the derived tables' format (`DERIVED_VERSION`) |a reindex |the open: another version is derived again |
+|`head` |the id of the last operation in the log; absent, an empty log |every write, an undo included |the log's readers: HEAD ([[The operation log]]) |
+|`next_op` |the next operation id — never reused, a stub taking as many as it holds |every write |the next write |
+|`mass_extra` |the operations the stubs hold beyond one each |a mass write; a prune or the retention cutting its stub |the count of operations: the size of `ops` plus this, two numbers instead of a walk ([[Mass operations in the log]]) |
+|`next_label` |the next label id, never reused |a label's creation |the next one ([[Labels and contexts]]) |
+|`watcher_label` |the id of the label the watcher's writes hang under |the watcher's first write, or its first after that label was pruned |each watcher write ([[Automatic retention]]) |
+|`next_id` |the next dense id; 1 again at a reindex |a new metarecord, a uuid reserved |the next one; [[Storage wear]], as the ids ever handed out |
+|`numbering` |how many times the dense ids were numbered |each reindex |a page's cursor, refused if made under another numbering ([[Pagination and sorting]]) |
+|`kept` |1 when a deleted metarecord's record may still be in `records` |a deletion; 0 again at a reindex |a read of a record: it then sifts the record through the universe ([[Deleting a metarecord in the store]]) |
+|`mass_op` |the next number of the writes a part's entry is ordered against |a mass write's entry, a write to a record an entry names |the order of the entries and of a record's row numbers, tombs and cleared fields ([[Mass writes in the store]]) |
+|`event_seq` |the next number of a pending event, whatever its field |an event's creation |the key of the next event: a field's events are replayed in that order |
+
+A conversion of the primary tables that drops the log (from an old layout) removes
+`head`, `watcher_label` and `mass_extra` with it.
 
 !! Derived tables — the indexes (`kvstore/derived.rs`)
 
