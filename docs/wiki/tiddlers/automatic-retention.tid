@@ -1,7 +1,7 @@
 title: Automatic retention
 tags: [[Event log]]
 kind: reference
-aliases: retention log-retention-watcher-ops log-retention-user-ops
+aliases: retention log-retention-watcher-entries log-retention-user-entries
 summary: The log keeps the last 50 000 entries of the watcher and the last million of everything else; the trim rides the write that triggers it.
 
 A watched repository records every change the watcher sees and would keep them for ever;
@@ -9,8 +9,8 @@ most of that history is of no interest. Retention is pruning as a standing polic
 in ''entries of the log, per origin'' — an entry being one operation on one or many metarecords ([[Log storage]]): what the log costs is its entries. Two settings, per repository (its `config.json`) or
 daemon-wide (`[settings]`, [[Daemon configuration]]):
 
-* ''`log-retention-watcher-ops`'' — how many of the watcher's entries to keep; default 50 000, `0` keeps them all.
-* ''`log-retention-user-ops`'' — how many of every other entry to keep: what the user wrote from the command line, the GUI or a script (a trashing included); default 1 000 000, `0` keeps them all.
+* ''`log-retention-watcher-entries`'' — how many of the watcher's entries to keep; default 50 000, `0` keeps them all.
+* ''`log-retention-user-entries`'' — how many of every other entry to keep: what the user wrote from the command line, the GUI or a script (a trashing included); default 1 000 000, `0` keeps them all.
 
 Two budgets because the volumes are not comparable: a watched tree writes operations all
 day, and a limit shared with them would let that churn push the user's own history out.
@@ -31,6 +31,14 @@ The settings before October 2026, `log-retention-revisions` and
 `log-retention-keep-labels`, counted revisions and kept labelled ones; they went with the
 history tree. The daemon still reads them from `config.toml`, ignores them and says so at
 startup; a repository's `config.json` drops them silently the next time it is written.
+
+Until November 2026 the two settings counted operations, as `log-retention-watcher-ops`
+and `log-retention-user-ops` (`log_retention_*_ops` in `config.json`). An entry holding
+several operations since ([[Log storage]]), they count entries, under the names
+above. The shipped `config.toml` brings the new names with the next update of the
+configuration; an old name still there is ignored, and the daemon says so at startup,
+naming the new one. A repository's `config.json` is read with its old names as the new
+ones, and written with the new ones the next time it is written.
 
 !! What a trim does
 

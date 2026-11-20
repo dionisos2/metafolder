@@ -38,8 +38,8 @@ says which daemon ([[The repository lock]]).
 |`root` |path |the watched directory: absolute, or relative to the directory holding `.metafolder/` — `.` for a repository created with `.metafolder/` inside its root, an absolute path for an external one ([[Moving a repository]]) |
 |`schema` |path |optional: the user schema, relative to `.metafolder/` or absolute (default `.metafolder/config/schema.json`) |
 |`created_at` |integer |creation time, Unix seconds |
-|`log_retention_watcher_ops` |integer |optional: how many of the watcher's operations the log keeps, overriding the daemon's setting (`0`: all) ([[Automatic retention]]) |
-|`log_retention_user_ops` |integer |optional: how many of every other operation the log keeps, overriding the daemon's setting (`0`: all) |
+|`log_retention_watcher_entries` |integer |optional: how many of the watcher's entries the log keeps, overriding the daemon's setting (`0`: all) ([[Automatic retention]]); `log_retention_watcher_ops` before November 2026, read under the new name |
+|`log_retention_user_entries` |integer |optional: how many of every other entry the log keeps, overriding the daemon's setting (`0`: all); `log_retention_user_ops` before November 2026, read under the new name |
 |`mass_write_threshold` |integer |optional: the most metarecords a write to many of them changes one at a time, overriding the daemon's `mass-write-threshold` ([[Mass writes in the store]]) |
 |`system` |bool |a repository the daemon uses internally (a sync plan repository): hidden from `GET /repos` unless `?all=true` |
 |`borrowed` |object |optional: a borrowed copy of a repository of another machine — `{"metafolder"}`, the remote `.metafolder/` through this machine's mount, where `mf repo give-back` sends it ([[Cross-machine sync]]) |
