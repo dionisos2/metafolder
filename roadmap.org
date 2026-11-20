@@ -27,6 +27,14 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   (user decision, 20 November 2026): independent, with a migration of its own. To
   go over later on the same principles: compact encoding, snapshot fields in the
   record value format rather than JSON, the tables' names.
+- A trace of the values a retype loses (user decision, 20 November 2026, to do
+  later): with the store's table review, a value a retype cannot convert is
+  removed rather than turned into =nothing=, and the field goes when none
+  converts. The retype's summary says so and the log can undo it, but nothing
+  finds those metarecords afterwards. Proposed: a multi-valued user field, say
+  =retype_lost=, one text per lost value (=<field> = <original value>=), without a
+  prefix so that it is cleared without =--force=, as =orphan= is (doc "Orphans");
+  =mfr_retype_lost= was the alternative.
 - The mass-write threshold (=mass-write-threshold=, 20 to start) is one number for
   every operation: a way to derive better values from the repository is to come
   (doc "Mass writes in the store").
