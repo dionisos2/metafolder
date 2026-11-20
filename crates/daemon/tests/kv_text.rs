@@ -34,8 +34,15 @@ fn add(store: &mut KvStore, fields: Vec<Field>) -> Uuid {
 }
 
 /// The keys the last write put in a table.
+/// The keys the last write wrote to `table` — to the three trigram tables
+/// for `grams`.
 fn written(store: &KvStore, table: &str) -> u64 {
-    store.last_write_keys().get(table).copied().unwrap_or(0)
+    let keys = store.last_write_keys();
+    let of = |t: &str| keys.get(t).copied().unwrap_or(0);
+    if table == "grams" {
+        return of("index_trigram_texts") + of("index_trigram_holders") + of("index_trigram_state");
+    }
+    of(table)
 }
 
 fn check(store: &KvStore) {
@@ -208,10 +215,15 @@ fn a_store_of_the_former_trigram_format_is_reindexed_when_it_opens() {
     drop(store);
     {
         let env = common::kv::raw_env(dir.path());
-        let grams = common::kv::open_raw(&env, "grams");
+        let grams: Vec<_> = ["index_trigram_texts", "index_trigram_holders", "index_trigram_state"]
+            .iter()
+            .map(|n| common::kv::open_raw(&env, n))
+            .collect();
         let meta = common::kv::open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
-        grams.clear(&mut w).unwrap();
+        for t in grams {
+            t.clear(&mut w).unwrap();
+        }
         meta.put(&mut w, b"derived_version", &6u64.to_be_bytes()).unwrap();
         w.commit().unwrap();
     }

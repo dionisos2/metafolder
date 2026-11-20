@@ -122,7 +122,9 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
     let mut r = repo();
     delete(&mut r.store, r.others[1]);
     let written = r.store.last_write_keys();
-    for table in ["index_raw_holder", "ids", "uuids", "grams"] {
+    for table in
+        ["index_raw_holder", "ids", "uuids", "index_trigram_texts", "index_trigram_holders"]
+    {
         assert_eq!(written.get(table), None, "a deletion wrote to {table}: {written:?}");
     }
     assert_eq!(written.get("metarecords"), None, "the record keeps its key: {written:?}");

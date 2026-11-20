@@ -263,7 +263,7 @@ fn a_store_from_before_the_histograms_gains_them_when_it_opens() {
     drop(store);
     {
         let env = common::kv::raw_env(dir.path());
-        let hist = common::kv::open_raw(&env, "hist");
+        let hist = common::kv::open_raw(&env, "index_histogram_rows");
         let meta = common::kv::open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
         assert!(hist.len(&w).unwrap() > 0, "`size`, `ratio` and `at` have buckets");

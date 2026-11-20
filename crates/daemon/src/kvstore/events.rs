@@ -93,7 +93,7 @@ impl Event {
 /// `field`'s pending events, oldest first.
 pub(crate) fn read_events(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<Event>> {
     let mut out = Vec::new();
-    for entry in t.events.prefix_iter(r, &name_key(field))? {
+    for entry in t.index_pending_writes.prefix_iter(r, &name_key(field))? {
         out.push(Event::decode(entry?.1)?);
     }
     Ok(out)
@@ -165,7 +165,7 @@ impl KvTxn<'_> {
             return Ok(*n);
         }
         let prefix = name_key(field);
-        let n = self.t.events.prefix_iter(&self.txn.borrow(), &prefix)?.count();
+        let n = self.t.index_pending_writes.prefix_iter(&self.txn.borrow(), &prefix)?.count();
         self.events.borrow_mut().insert(field.to_string(), n);
         Ok(n)
     }
@@ -286,7 +286,7 @@ impl KvTxn<'_> {
         let pending = self.eventful(field)?;
         let seq = self.next(super::super::State::NextWriteNumber)?;
         let key = [&name_key(field)[..], &seq.to_be_bytes()].concat();
-        self.t.events.put(&mut self.txn.borrow_mut(), &key, &event.encode())?;
+        self.t.index_pending_writes.put(&mut self.txn.borrow_mut(), &key, &event.encode())?;
         self.events.borrow_mut().insert(field.to_string(), pending + 1);
         Ok(())
     }
@@ -314,7 +314,7 @@ impl KvTxn<'_> {
 
     fn hist_bump(&self, field: &str, key: &[u8], delta: i64) -> Result<()> {
         match hist_bucket(key) {
-            Some(bucket) if delta != 0 => self.bump(self.t.hist, &hist_key(field, &bucket), delta),
+            Some(bucket) if delta != 0 => self.bump_hist(&hist_key(field, &bucket), delta),
             _ => Ok(()),
         }
     }
@@ -418,11 +418,11 @@ impl KvTxn<'_> {
         let prefix = name_key(field);
         let mut w = self.txn.borrow_mut();
         let mut keys = Vec::new();
-        for entry in t.events.prefix_iter(&w, &prefix)? {
+        for entry in t.index_pending_writes.prefix_iter(&w, &prefix)? {
             keys.push(entry?.0.to_vec());
         }
         for k in keys {
-            t.events.delete(&mut w, &k)?;
+            t.index_pending_writes.delete(&mut w, &k)?;
         }
         drop(w);
         self.events.borrow_mut().insert(field.to_string(), 0);
@@ -511,7 +511,7 @@ impl KvTxn<'_> {
     /// [`Self::fold_events`] for every field with events pending.
     pub(in super::super) fn fold_all_events(&self) -> Result<()> {
         let mut fields = BTreeSet::new();
-        for entry in self.t.events.iter(&self.txn.borrow())? {
+        for entry in self.t.index_pending_writes.iter(&self.txn.borrow())? {
             let (name, _) = unesc(entry?.0)?;
             fields.insert(String::from_utf8(name).context("a field name")?);
         }
@@ -554,7 +554,7 @@ impl KvTxn<'_> {
             consider(size, List::Part(part));
         }
         let mut fields: std::collections::BTreeMap<String, u64> = Default::default();
-        for entry in self.t.events.iter(&self.txn.borrow())? {
+        for entry in self.t.index_pending_writes.iter(&self.txn.borrow())? {
             let (k, v) = entry?;
             let (name, _) = unesc(k)?;
             let name = String::from_utf8(name).context("a field name")?;

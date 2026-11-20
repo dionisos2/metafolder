@@ -346,7 +346,9 @@ impl KvSource<'_> {
     fn gram_state(&self, field: &str) -> derived::GramState {
         let read = || -> Result<derived::GramState> {
             self.read_keys(1)?;
-            derived::GramState::decode(self.t.grams.get(&self.r, &derived::gram_state_key(field))?)
+            derived::GramState::decode(
+                self.t.grams().get(&self.r, &derived::gram_state_key(field))?,
+            )
         };
         self.ok(read(), Default::default())
     }
@@ -371,7 +373,7 @@ impl KvSource<'_> {
         let read = || -> Result<Vec<Vec<u8>>> {
             let mut out = Vec::new();
             if let [only] = &prefixes[..] {
-                for entry in self.t.grams.prefix_iter(&self.r, only)? {
+                for entry in self.t.grams().prefix_iter(&self.r, only)? {
                     self.read_keys(1)?;
                     out.push(entry?.0[only.len()..].to_vec());
                 }
@@ -387,7 +389,8 @@ impl KvSource<'_> {
                 let from = [&prefix[..], &at].concat();
                 let range = (Bound::Included(from.as_slice()), Bound::Unbounded);
                 self.read_keys(1)?;
-                let Some((k, _)) = self.t.grams.range(&self.r, &range)?.next().transpose()? else {
+                let Some((k, _)) = self.t.grams().range(&self.r, &range)?.next().transpose()?
+                else {
                     break;
                 };
                 if !k.starts_with(prefix) {
@@ -417,7 +420,7 @@ impl KvSource<'_> {
         let read = || -> Result<RoaringBitmap> {
             let prefix = derived::gram_prefix(field, gram);
             let mut out = RoaringBitmap::new();
-            for entry in self.t.grams.prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.grams().prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
@@ -504,7 +507,7 @@ impl KvSource<'_> {
         };
         let read = || -> Result<RangeRows> {
             let (mut sure, mut edge, mut keys) = (0, 0, 0);
-            for entry in self.t.hist.range(&self.r, &range)? {
+            for entry in self.t.hist().range(&self.r, &range)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 keys += 1;

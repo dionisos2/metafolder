@@ -101,3 +101,29 @@ fn nothing_is_a_key_among_the_holders_of_the_values() {
     // The kind byte, `note` 00 00, the type byte of nothing, the chunk.
     assert!(keys.iter().any(|k| k[1..].starts_with(b"note\0\0\xFF")), "{keys:?}");
 }
+
+/// The trigrams, the histograms and the pending index writes have tables of
+/// their own (doc "Store tables").
+#[test]
+fn the_trigrams_and_the_histograms_are_tables_of_their_own() {
+    let dir = TempDir::new("kv-index-grams");
+    {
+        let mut kv = KvStore::open_unsynced(dir.path()).unwrap();
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        w.create_metarecord(vec![
+            Field::new("title", Value::String("holiday".into())),
+            Field::new("size", Value::Int(42)),
+        ])
+        .unwrap();
+        w.commit().unwrap();
+    }
+    let env = raw_env(dir.path());
+    for gone in ["grams", "hist", "events"] {
+        assert!(!has_table(&env, gone), "{gone}");
+    }
+    for table in ["index_trigram_texts", "index_trigram_state", "index_histogram_rows"] {
+        let db = open_raw(&env, table);
+        let r = env.read_txn().unwrap();
+        assert!(db.len(&r).unwrap() > 0, "{table}");
+    }
+}

@@ -54,8 +54,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
-pub(super) const DERIVED_VERSION: i64 = 22;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
+pub(super) const DERIVED_VERSION: i64 = 23;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -285,7 +285,7 @@ pub(super) const LIVE: u8 = 2;
 pub(super) fn chunk_db(t: &Tables, table: u8, key: &[u8]) -> super::table::Db {
     match table {
         SETS => t.sets().db(key[0]),
-        GRAMS => t.grams,
+        GRAMS => t.grams().db(key[0]),
         LIVE => t.live_metarecords,
         other => unreachable!("no chunked table {other}"),
     }
@@ -300,6 +300,132 @@ pub(super) struct SetTables<'a>(&'a Tables);
 impl Tables {
     pub(super) fn sets(&self) -> SetTables<'_> {
         SetTables(self)
+    }
+}
+
+/// The trigram tables, reached by a key that begins with its kind (texts,
+/// holders, state), as the one table `grams` was — the byte kept at the
+/// head of the keys (doc "Store tables").
+#[derive(Clone, Copy)]
+pub(super) struct GramTables<'a>(&'a Tables);
+
+/// The histogram tables: the rows of a bucket, and its posting keys — a key
+/// whose field is followed by `FF` (doc "Query planner").
+#[derive(Clone, Copy)]
+pub(super) struct HistTables<'a>(&'a Tables);
+
+impl Tables {
+    pub(super) fn grams(&self) -> GramTables<'_> {
+        GramTables(self)
+    }
+
+    pub(super) fn hist(&self) -> HistTables<'_> {
+        HistTables(self)
+    }
+}
+
+impl<'a> GramTables<'a> {
+    pub(super) fn db(self, kind: u8) -> super::table::Db {
+        match kind {
+            GRAM_VALUES => self.0.index_trigram_texts,
+            GRAM_IDS => self.0.index_trigram_holders,
+            GRAM_STATE => self.0.index_trigram_state,
+            other => unreachable!("no trigram kind {other}"),
+        }
+    }
+
+    pub(super) fn get<'t>(self, r: &'t RoTxn<'_>, k: &[u8]) -> heed::Result<Option<&'t [u8]>> {
+        self.db(k[0]).get(r, k)
+    }
+
+    pub(super) fn put(
+        self,
+        w: &mut super::table::Wtxn<'_>,
+        k: &[u8],
+        v: &[u8],
+    ) -> heed::Result<()> {
+        self.db(k[0]).put(w, k, v)
+    }
+
+    pub(super) fn delete(self, w: &mut super::table::Wtxn<'_>, k: &[u8]) -> heed::Result<bool> {
+        self.db(k[0]).delete(w, k)
+    }
+
+    pub(super) fn prefix_iter<'t>(
+        self,
+        r: &'t RoTxn<'_>,
+        prefix: &[u8],
+    ) -> heed::Result<heed::RoPrefix<'t, heed::types::Bytes, heed::types::Bytes>> {
+        self.db(prefix[0]).prefix_iter(r, prefix)
+    }
+
+    pub(super) fn range<'t, R: std::ops::RangeBounds<[u8]>>(
+        self,
+        r: &'t RoTxn<'_>,
+        range: &R,
+    ) -> heed::Result<heed::RoRange<'t, heed::types::Bytes, heed::types::Bytes>> {
+        self.db(SetTables::kind_of(range)).range(r, range)
+    }
+}
+
+impl<'a> HistTables<'a> {
+    /// The table of a key: the posting keys' when its field is followed by
+    /// `FF`.
+    pub(super) fn db(self, k: &[u8]) -> super::table::Db {
+        let end = (0..k.len().saturating_sub(1)).find(|&i| k[i] == 0 && k[i + 1] == 0);
+        match end.and_then(|e| k.get(e + 2)) {
+            Some(0xFF) => self.0.index_histogram_keys,
+            _ => self.0.index_histogram_rows,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn get<'t>(self, r: &'t RoTxn<'_>, k: &[u8]) -> heed::Result<Option<&'t [u8]>> {
+        self.db(k).get(r, k)
+    }
+
+    #[cfg(test)]
+    pub(super) fn put(
+        self,
+        w: &mut super::table::Wtxn<'_>,
+        k: &[u8],
+        v: &[u8],
+    ) -> heed::Result<()> {
+        self.db(k).put(w, k, v)
+    }
+
+    #[cfg(test)]
+    pub(super) fn delete(self, w: &mut super::table::Wtxn<'_>, k: &[u8]) -> heed::Result<bool> {
+        self.db(k).delete(w, k)
+    }
+
+    pub(super) fn range<'t, R: std::ops::RangeBounds<[u8]>>(
+        self,
+        r: &'t RoTxn<'_>,
+        range: &R,
+    ) -> heed::Result<heed::RoRange<'t, heed::types::Bytes, heed::types::Bytes>> {
+        use std::ops::Bound;
+        let k = match range.start_bound() {
+            Bound::Included(k) | Bound::Excluded(k) => k,
+            Bound::Unbounded => match range.end_bound() {
+                Bound::Included(k) | Bound::Excluded(k) => k,
+                Bound::Unbounded => unreachable!("a range of the histograms with no bound"),
+            },
+        };
+        self.db(k).range(r, range)
+    }
+
+    /// Every entry of both tables, in the order of their keys.
+    pub(super) fn entries(self, r: &RoTxn<'_>) -> heed::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let mut out = Vec::new();
+        for db in [self.0.index_histogram_rows, self.0.index_histogram_keys] {
+            for e in db.iter(r)? {
+                let (k, v) = e?;
+                out.push((k.to_vec(), v.to_vec()));
+            }
+        }
+        out.sort();
+        Ok(out)
     }
 }
 
@@ -903,7 +1029,7 @@ impl KvTxn<'_> {
         let mut w = self.txn.borrow_mut();
         for field in self.grams_changed.borrow_mut().drain() {
             let state = self.grams.borrow()[&field];
-            self.t.grams.put(&mut w, &gram_state_key(&field), &state.encode())?;
+            self.t.grams().put(&mut w, &gram_state_key(&field), &state.encode())?;
         }
         // The posting chunks that came or went, by bucket of their value.
         let mut chunks: BTreeMap<Vec<u8>, i64> = BTreeMap::new();
@@ -933,7 +1059,7 @@ impl KvTxn<'_> {
         }
         drop(w);
         for (key, delta) in chunks {
-            self.bump(self.t.hist, &key, delta)?;
+            self.bump_hist(&key, delta)?;
         }
         Ok(())
     }
@@ -961,6 +1087,11 @@ impl KvTxn<'_> {
             }
         }
         Ok(false)
+    }
+
+    /// [`Self::bump`] on the histogram table of `k`.
+    pub(super) fn bump_hist(&self, k: &[u8], delta: i64) -> Result<()> {
+        self.bump(self.t.hist().db(k), k, delta)
     }
 
     /// Adds `delta` to a row count, deleting the key at zero.
@@ -1167,7 +1298,7 @@ impl KvTxn<'_> {
     /// rows that no universe sifts.
     pub(super) fn drop_hist(&self, field: &str, value: &Value) -> Result<()> {
         if let Some(bucket) = value_key(value).as_deref().and_then(hist_bucket) {
-            self.bump(self.t.hist, &hist_key(field, &bucket), -1)?;
+            self.bump_hist(&hist_key(field, &bucket), -1)?;
         }
         Ok(())
     }
@@ -1176,7 +1307,7 @@ impl KvTxn<'_> {
     /// back with the record.
     pub(super) fn add_hist(&self, field: &str, value: &Value) -> Result<()> {
         if let Some(bucket) = value_key(value).as_deref().and_then(hist_bucket) {
-            self.bump(self.t.hist, &hist_key(field, &bucket), 1)?;
+            self.bump_hist(&hist_key(field, &bucket), 1)?;
         }
         Ok(())
     }
@@ -1187,7 +1318,7 @@ impl KvTxn<'_> {
     /// rows, and whether the row's parent still has a child.
     pub(super) fn derive_dropped(&self, uuid: Uuid, field: &str, value: &Value) -> Result<()> {
         if let Some(bucket) = value_key(value).as_deref().and_then(hist_bucket) {
-            self.bump(self.t.hist, &hist_key(field, &bucket), -1)?;
+            self.bump_hist(&hist_key(field, &bucket), -1)?;
         }
         if value.position().is_some() {
             let parent = target_of(value).expect("a position has a parent key");
@@ -1240,7 +1371,7 @@ impl KvTxn<'_> {
                 self.chunk_member(SETS, &posting_prefix(field, &k), id, held)?;
             }
             if let Some(bucket) = hist_bucket(&k) {
-                self.bump(self.t.hist, &hist_key(field, &bucket), delta)?;
+                self.bump_hist(&hist_key(field, &bucket), delta)?;
             }
         }
         if let Some(k) = name_part_key(value) {
@@ -1369,7 +1500,7 @@ impl KvTxn<'_> {
             return Ok(*state);
         }
         let state =
-            GramState::decode(self.t.grams.get(&self.txn.borrow(), &gram_state_key(field))?)?;
+            GramState::decode(self.t.grams().get(&self.txn.borrow(), &gram_state_key(field))?)?;
         self.grams.borrow_mut().insert(field.to_string(), state);
         Ok(state)
     }
@@ -1416,13 +1547,13 @@ impl KvTxn<'_> {
             for gram in trigrams(text) {
                 let prefix = gram_values_prefix(field, &gram);
                 let k = [&prefix[..], key].concat();
-                if self.t.grams.get(&w, &k)?.is_some() {
+                if self.t.grams().get(&w, &k)?.is_some() {
                     continue;
                 }
-                if self.t.grams.prefix_iter(&w, &prefix)?.next().transpose()?.is_none() {
+                if self.t.grams().prefix_iter(&w, &prefix)?.next().transpose()?.is_none() {
                     state.grams += 1;
                 }
-                self.t.grams.put(&mut w, &k, &[])?;
+                self.t.grams().put(&mut w, &k, &[])?;
                 state.entries += 1;
             }
         }
@@ -1455,7 +1586,7 @@ impl KvTxn<'_> {
     /// The fields that have trigram state.
     pub(super) fn gram_fields(&self) -> Result<Vec<String>> {
         let mut fields: Vec<String> = Vec::new();
-        for entry in self.t.grams.prefix_iter(&self.txn.borrow(), &[GRAM_STATE])? {
+        for entry in self.t.grams().prefix_iter(&self.txn.borrow(), &[GRAM_STATE])? {
             let (name, _) = unesc(&entry?.0[1..])?;
             fields.push(String::from_utf8(name).context("a field name")?);
         }
@@ -1506,11 +1637,11 @@ impl KvTxn<'_> {
                 let prefix = [&[GRAM_VALUES][..], &name_key(&field)].concat();
                 let mut w = self.txn.borrow_mut();
                 let mut gone = Vec::new();
-                for entry in t.grams.prefix_iter(&w, &prefix)? {
+                for entry in t.grams().prefix_iter(&w, &prefix)? {
                     gone.push(entry?.0.to_vec());
                 }
                 for k in gone {
-                    t.grams.delete(&mut w, &k)?;
+                    t.grams().delete(&mut w, &k)?;
                 }
                 state.leftovers = false;
                 state.entries = 0;
@@ -1675,9 +1806,12 @@ impl KvTxn<'_> {
             t.live_metarecords,
             t.field_types,
             t.index_raw_holder,
-            t.grams,
-            t.hist,
-            t.events,
+            t.index_trigram_texts,
+            t.index_trigram_holders,
+            t.index_trigram_state,
+            t.index_histogram_rows,
+            t.index_histogram_keys,
+            t.index_pending_writes,
         ] {
             db.clear(&mut w)?;
         }
@@ -1965,7 +2099,7 @@ impl KvStore {
         }
         wear.mass_parts = parts.len();
         let mut fields = std::collections::BTreeSet::new();
-        for entry in self.t.events.iter(&r)? {
+        for entry in self.t.index_pending_writes.iter(&r)? {
             let (k, v) = entry?;
             wear.events += 1;
             wear.event_bytes += (k.len() + v.len()) as u64;
@@ -2251,7 +2385,7 @@ impl KvStore {
         // the rows as replayed — each event list as it reads on the value
         // partition, and on the referrers.
         let mut pending: HashMap<String, (Vec<events::Event>, ())> = HashMap::new();
-        for entry in t.events.iter(r)? {
+        for entry in t.index_pending_writes.iter(r)? {
             let (name, _) = unesc(entry?.0)?;
             let field = String::from_utf8(name).context("a field name")?;
             if let std::collections::hash_map::Entry::Vacant(slot) = pending.entry(field) {
@@ -2366,7 +2500,7 @@ impl KvStore {
         // A field with events pending counts the rows a replacement removed
         // until its fold: its histogram is not held to the rows.
         let mut behind: BTreeSet<Vec<u8>> = BTreeSet::new();
-        for entry in self.t.events.iter(r)? {
+        for entry in self.t.index_pending_writes.iter(r)? {
             let (name, _) = unesc(entry?.0)?;
             behind.insert(name);
         }
@@ -2383,8 +2517,8 @@ impl KvStore {
             }
         }
         let mut expected = expected.into_iter().filter(|(k, _)| settled(k)).peekable();
-        for entry in self.t.hist.iter(r)? {
-            let (k, v) = entry?;
+        for (k, v) in self.t.hist().entries(r)? {
+            let (k, v) = (&k[..], &v[..]);
             if !settled(k) {
                 continue;
             }
@@ -2592,7 +2726,7 @@ impl GramCheck {
         }
         let field = group.field.as_str();
         if !self.fields.contains_key(field) {
-            let state = GramState::decode(t.grams.get(r, &gram_state_key(field))?)?;
+            let state = GramState::decode(t.grams().get(r, &gram_state_key(field))?)?;
             let mut pending = RoaringBitmap::new();
             for entry in t.sets().prefix_iter(r, &set_prefix(GRAM_PENDING, Some(field)))? {
                 pending |= decode_set(entry?.1)?;
@@ -2603,7 +2737,7 @@ impl GramCheck {
         if !state.by_ids {
             for (gram, key) in &group.grams {
                 let k = [&gram_values_prefix(field, gram)[..], key].concat();
-                if t.grams.get(r, &k)?.is_none() {
+                if t.grams().get(r, &k)?.is_none() {
                     let gram = String::from_utf8_lossy(gram);
                     diff.push(format!("gram missing: ({field:?}, {gram:?}, text key {key:?})"));
                 }
@@ -2623,7 +2757,7 @@ impl GramCheck {
                 if self.chunks.len() >= 1024 {
                     self.chunks.clear();
                 }
-                let chunk = match t.grams.get(r, &k)? {
+                let chunk = match t.grams().get(r, &k)? {
                     Some(bytes) => decode_set(bytes)?,
                     None => RoaringBitmap::new(),
                 };
@@ -2803,9 +2937,10 @@ mod tests {
     #[test]
     fn test_a_lost_trigram_chunk_is_named() {
         let (store, _dir) = populated();
-        let key = first_key(&store, |t| t.grams, &gram_values_prefix("title", b"num"));
+        let key =
+            first_key(&store, |t| t.index_trigram_texts, &gram_values_prefix("title", b"num"));
         tamper(&store, |t, w| {
-            t.grams.delete(w, &key).unwrap();
+            t.grams().delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "gram missing: "), "{}", some(&diff));
@@ -2898,22 +3033,22 @@ mod tests {
     #[test]
     fn test_a_histogram_is_required_and_exact() {
         let (store, _dir) = populated();
-        let key = first_key(&store, |t| t.hist, &name_key("size"));
+        let key = first_key(&store, |t| t.index_histogram_rows, &name_key("size"));
 
         // A count off by one.
         let n = {
             let r = store.env.read_txn().unwrap();
-            from_be(store.t.hist.get(&r, &key).unwrap().unwrap())
+            from_be(store.t.hist().get(&r, &key).unwrap().unwrap())
         };
         tamper(&store, |t, w| {
-            t.hist.put(w, &key, &be(n + 1)).unwrap();
+            t.hist().put(w, &key, &be(n + 1)).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram of "), "{}", some(&diff));
 
         // A bucket gone.
         tamper(&store, |t, w| {
-            t.hist.delete(w, &key).unwrap();
+            t.hist().delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram missing: "), "{}", some(&diff));
@@ -2923,8 +3058,8 @@ mod tests {
             [&name_key("size")[..], &hist_bucket(&value_key(&Value::Int(-7)).unwrap()).unwrap()]
                 .concat();
         tamper(&store, |t, w| {
-            t.hist.put(w, &key, &be(n)).unwrap();
-            t.hist.put(w, &bogus, &be(3)).unwrap();
+            t.hist().put(w, &key, &be(n)).unwrap();
+            t.hist().put(w, &bogus, &be(3)).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert_eq!(diff.len(), 1, "{}", some(&diff));
@@ -2939,20 +3074,20 @@ mod tests {
         let key = hist_chunks_key("size", &bucket);
         let n = {
             let r = store.env.read_txn().unwrap();
-            from_be(store.t.hist.get(&r, &key).unwrap().expect("the keys are counted"))
+            from_be(store.t.hist().get(&r, &key).unwrap().expect("the keys are counted"))
         };
         assert!(n >= 1, "{n}");
 
         // Off by one.
         tamper(&store, |t, w| {
-            t.hist.put(w, &key, &be(n + 1)).unwrap();
+            t.hist().put(w, &key, &be(n + 1)).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram of "), "{}", some(&diff));
 
         // Gone.
         tamper(&store, |t, w| {
-            t.hist.delete(w, &key).unwrap();
+            t.hist().delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram missing: "), "{}", some(&diff));

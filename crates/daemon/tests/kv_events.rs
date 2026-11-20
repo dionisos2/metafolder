@@ -163,7 +163,7 @@ fn a_value_added_to_many_records_is_one_event() {
     let changed = write(&mut store, |w| w.mass_add("tag", s("fresh"), &all[..200]).unwrap());
     assert_eq!(changed.len(), 200);
     let written = store.last_write_keys();
-    assert_eq!(written.get("events"), Some(&1), "{written:?}");
+    assert_eq!(written.get("index_pending_writes"), Some(&1), "{written:?}");
 
     // Those that hold it already are left alone, and not reported.
     let again = write(&mut store, |w| w.mass_add("tag", s("fresh"), &all[100..260]).unwrap());
