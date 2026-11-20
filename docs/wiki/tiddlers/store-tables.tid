@@ -6,123 +6,152 @@ summary: The key-value store's tables, primary and derived, and how their keys a
 
 The store is a set of LMDB tables, each an ''ordered map of byte strings'': a read is
 a lookup or a scan of a key range. Everything below is designed around that — keys
-are built so that what a read needs together is one contiguous range.
+are built so that what a read needs together is one contiguous range. Each table
+holds one kind of thing under one form of key, and its name says what (November
+2026: the tables were gone over one by one — kinds told apart by a first byte became
+tables of their own, and the values got a compact encoding).
 
 !! How keys are built
 
 * Integers are big-endian, so byte order is numeric order.
 * A uuid is its 16 bytes.
 * A name inside a composite key (a field name, a node's name) is escaped (`00` → `00 FF`) and ended by `00 00`, so that no name is a prefix of another: `tag` and `tags` never share a range.
-* `·` below separates the parts of a composite key.
+* `·` below separates the parts of a composite key; `F` is a field name.
+* Every index table starts with the field: what a query of one field reads is one range.
+
+Values are encoded compactly: lengths and counts are varints (LEB128), a signed
+integer a zigzag varint, a value type one byte, a uuid its 16 bytes with no length
+([[The column form of a value]]).
 
 !! Primary tables (`kvstore/mod.rs`)
 
-What was written. The rest of the daemon reaches it through `Rows` and `Log`
-([[The storage boundary]]).
+What was written, which nothing else can give back. The rest of the daemon reaches it
+through `Rows` and `Log` ([[The storage boundary]]).
 
 |!Table |!Key |!Value |!Serves |
-|`meta` |name |a number: a counter, HEAD, a format version or a flag (below) | |
-|`metarecords` |uuid |empty |existence (the version is computed from the rows, [[Metarecord version]]) |
-|`records` |dense id |the rows: field name · value, each; then, if any, their numbers, tombs and cleared fields |a record's rows, in one read |
-|`mass` |part · write number (`mass_op`) |field · kind · values · the ids of the part |the writes to many records — past the mass-write threshold — not yet written into the records ([[Mass writes in the store]]); under a part of its own, the deletions of many records not yet folded ([[Mass operations in the log]]) |
-|`field_types` |field name · value type |how many rows of that type |a field's type ([[One value type per field name]]) |
-|`forest` |field · parent · name bytes |uuid · dense id |a child by name: path lookup |
-|`ops` |op id |the operation — or, at its first id, a stub: one entry for the operations of a write to many records ([[Mass operations in the log]]) |the log, in order ([[The operation log]]) |
-|`snaps` |op id · added? · index |a snapshot row |the rows an operation took off, and the value an append added |
-|`ops_by_label` |label · op id |— |an undo or revert by label |
-|`ops_by_entity` |uuid · op id |— |a metarecord's history; under the nil uuid, the stubs |
-|`labels` |label id |name · description · parent · created |[[Labels and contexts]] |
-|`label_kids` |parent label · child label |— |the labels' nesting |
-|`label_keys` |command key |label id |a command finding its label at its next write |
-|`reverted_by` |op id · op id of a revert of it |— |whether an operation still stands ([[The undo selection]]) |
-|`label_reverts` |`0` · reverting label · reverted label, and `1` · reverted label · reverting label |`1` if the whole label was reverted, else `0` |what a label reverts and what reverts it, without reading operations ([[Label summaries]]) |
-|`watcher_ops`, `user_ops` |op id |— |the two retention classes ([[Automatic retention]]) |
+|`version` |`primary_version`, `derived_version` |the format version of the primary tables, of the derived ones |the open: another version is converted, or derived again ([[Persisted format changes]]) |
+|`global_primary_state` |a name |a number (below) |the counters and pointers of the primary data |
+|`metarecords` |dense id |the record: its fields and values; then, if a pending write names it, when its fields and values were last written by hand |a record's rows, in one read |
+|`ids` |uuid |dense id (u32) |a metarecord's dense id; the reserved ids too |
+|`live_metarecords` |chunk |a roaring bitmap of dense ids |the metarecords that exist ([[Deleting a metarecord in the store]]) |
+|`pending_writes` |part · write number |kind · content · the ids of the part |the writes to many records not yet written into the records, deletions included ([[Mass writes in the store]]) |
 
-A record's rows are ''one key'', its dense id, in `records`: reading a record is one
-read, and so is writing it, whatever its fields — a real file carries a dozen `mfr_*`
-and metadata fields. The price is that a read of one field reads the others with it.
-A row has no key of its own and no id: it is its name and value in its record's list,
-in no order. Operation and label ids come from counters in `meta` and are never reused.
+The log's tables are primary too ([[Log storage]]):
 
-What the rows of ''one field'' of the whole repository are is not read off the rows:
-the field's counts and its absences (the bitmaps below) say which records hold one,
-and those records are read.
+|!Table |!Key |!Value |!Serves |
+|`log_entries` |first op id |log context · timestamp · origin · effect · file action · first reverted op · parameters · target count |the log, in order ([[The operation log]]) |
+|`log_targets` |first op id · chunk number |the chunk's targets (uuids), then its before |which metarecords an entry wrote, and what to undo it with |
+|`log_entries_by_label` |log context · first op id |target count |an undo or revert by context |
+|`log_reverted_by` |first op id of the reverted entry · first reverted · last reverted · first op id of the revert |— |whether an operation still stands ([[The undo selection]]) |
+|`log_watcher_entries`, `log_user_entries` |first op id |— |the two retention classes ([[Automatic retention]]) |
+|`log_contexts` |context id |name · description · parent · created |[[Labels and contexts]] |
+|`log_context_children` |parent · child |— |the contexts' nesting |
+|`log_context_reverts` |`0` · reverting · reverted, and `1` · reverted · reverting |`1` if the whole context was reverted |what a context reverts and what reverts it, without reading entries ([[Label summaries]]) |
 
-The dense id is a number the derived tables hand out (`ids`, `uuids`), and `records`
-and `forest` are filed under it, so a reindex, which numbers the metarecords again,
-files them again: the records go under their uuid while the ids are numbered, then
-under their new id. A metarecord with no row has no key in `records`.
+!!! The record
 
-A deleted metarecord's `records` key stays, and so does its `forest` key, until a
-reindex: a restoration reads the record back, `kept` in `meta` makes a read of a
-record sift it through the universe, and a `forest` entry carries its metarecord's
-dense id, tested against the universe ([[Deleting a metarecord in the store]]).
+A record's rows are ''one key'', its dense id, in `metarecords`: reading a record is
+one read, and so is writing it, whatever its fields — a real file carries a dozen
+`mfr_*` and metadata fields. The price is that a read of one field reads the others
+with it. A row has no key of its own and no id.
 
-!! The `meta` table
+```
+record = varint field count · { field }
+         [· extras]                       only while a pending write names it
+field  = varint len · name · nothing
+       | varint len · name · type · varint value count · { value }
+```
 
-Each key is a name, each value one big-endian `i64`. A key that is absent reads as its
-default.
+The type is written once per field, not per value: a field holds `nothing` or values,
+never both ([[Nothing versus unknown]]). `tags = "foo"` is 12 bytes, ten tags 48.
+
+Every metarecord has a record, an empty one included: existence is one case. A
+deleted metarecord's record stays until a reindex: it says which index entries are
+filed under its id, which a restoration needs ([[Deleting a metarecord in the store]]).
+
+The ''extras'' say when a field or a value was last written by hand, so that an older
+pending write does not touch it ([[Mass writes in the store]]):
+
+```
+extras = varint count · { field · write number }                  fixed fields
+         · varint count · { field · type · value · write number } fixed values
+```
+
+!!! `global_primary_state`
+
+Each key is a name, each value one big-endian integer. A key that is absent reads as
+its default.
 
 |!Key |!Holds |!Written by |!Read by |
-|`layout` |the version of the primary tables' format (`LAYOUT`) |the conversion at open |the open: another version is converted ([[Persisted format changes]]) |
-|`derived` |the version of the derived tables' format (`DERIVED_VERSION`) |a reindex |the open: another version is derived again |
-|`head` |the id of the last operation in the log; absent, an empty log |every write, an undo included |the log's readers: HEAD ([[The operation log]]) |
-|`next_op` |the next operation id — never reused, a stub taking as many as it holds |every write |the next write |
-|`mass_extra` |the operations the stubs hold beyond one each |a mass write; a prune or the retention cutting its stub |the count of operations: the size of `ops` plus this, two numbers instead of a walk ([[Mass operations in the log]]) |
-|`next_label` |the next label id, never reused |a label's creation |the next one ([[Labels and contexts]]) |
-|`watcher_label` |the id of the label the watcher's writes hang under |the watcher's first write, or its first after that label was pruned |each watcher write ([[Automatic retention]]) |
-|`next_id` |the next dense id; 1 again at a reindex |a new metarecord, a uuid reserved |the next one; [[Storage wear]], as the ids ever handed out |
-|`numbering` |how many times the dense ids were numbered |each reindex |a page's cursor, refused if made under another numbering ([[Pagination and sorting]]) |
-|`kept` |1 when a deleted metarecord's record may still be in `records` |a deletion; 0 again at a reindex |a read of a record: it then sifts the record through the universe ([[Deleting a metarecord in the store]]) |
-|`mass_op` |the next number of the writes a part's entry is ordered against |a mass write's entry, a write to a record an entry names |the order of the entries and of a record's row numbers, tombs and cleared fields ([[Mass writes in the store]]) |
-|`event_seq` |the next number of a pending event, whatever its field |an event's creation |the key of the next event: a field's events are replayed in that order |
+|`log_head` |the id of the last operation in the log; absent, an empty log |every write, an undo included |the log's readers: HEAD ([[The operation log]]) |
+|`next_log_op` |the next operation id — never reused, an entry taking as many as it has targets |every write |the next write |
+|`next_label` |the next log context id, from 1, never reused |a context's creation |the next one ([[Labels and contexts]]) |
+|`watcher_label` |the context the watcher's writes hang under |the watcher's first write, or its first after that context was pruned |each watcher write ([[Automatic retention]]) |
+|`next_write_number` |the clock of the writes: the next number of a pending write, a fixed field or value, a pending index write |a pending write's entry, a write to a record one names, a pending index write |their order ([[Mass writes in the store]]) |
+|`next_reindex` |how many times the dense ids were numbered |each reindex |a page's cursor, refused if made under another numbering ([[Pagination and sorting]]) |
 
-A conversion of the primary tables that drops the log (from an old layout) removes
-`head`, `watcher_label` and `mass_extra` with it.
+`next_write_number` is one clock for everything ordered against the pending writes,
+never set back. It is not the operation id: a write needs its number before the log
+gives it an id, one operation can make several pending index writes of a field, and
+some writes have no operation (a record given back, a fold).
 
-!! Derived tables — the indexes (`kvstore/derived.rs`)
+!! The dense numbering
 
-Computed from the primary tables, read by the query evaluator through `KvSource`.
+Each metarecord has a small integer, its ''dense id'', and bitmaps hold these ids,
+not uuids. The numbering is ''primary data'': `metarecords` is filed under it and
+`live_metarecords` holds it, so it cannot be derived again — a reindex ''renumbers''
+(`ids`, `live_metarecords`, the keys of `metarecords`) and then rebuilds the indexes.
 
-|!Table |!Key |!Value |
-|`ids` |uuid |dense id (u32) |
-|`uuids` |dense id |uuid |
-|`sets` |kind · [field] · [key] · chunk |a roaring bitmap of dense ids |
-|`kids` |parent's dense id · field · dense id |rows (count) |
-|`grams` |`0` · field · trigram · text key |empty: a distinct text holding the trigram |
-|`grams` |`1` · field · trigram · chunk |a roaring bitmap of dense ids |
-|`grams` |`2` · field |the field's trigram state: its mode, its counts |
-|`hist` |field · bucket, or field · `FF` · bucket |rows (count), or posting keys (count) |
-|`events` |field · number |a pending event of the field's values: kind · values · a bitmap of dense ids ([[Mass writes in the store]]) |
-
-''Dense ids'' come first: each metarecord gets a small integer, allocated in
-discovery order and never reused. Bitmaps hold these ids, not uuids. A deleted
-metarecord's id leaves the ''universe'' and stays everywhere else, so every answer
-is read through the universe ([[Deleting a metarecord in the store]]). The files of one
-folder mostly get consecutive ids, so a folder's bitmaps compress to a few runs.
+Ids are handed out in discovery order and never reused between two reindexes. A
+metarecord deleted and created again (a revert) keeps its id. An id of `ids` outside
+`live_metarecords` is ''deleted'' if it has a record, ''reserved'' if not: given to
+the parent of a position before that parent is created, which takes it when it
+comes. Whether an id is reserved is one read, at a creation or a restoration only.
 
 Moves and late discoveries scatter a subtree's ids over the years; `mf repo reindex`
 gathers them again ([[Checking and reindexing a repository]]). It numbers the
 metarecords in ''forest order'' — each forest walked depth first, a folder's
 children by name, the forest of the most positions first — then those in no forest,
 in discovery order. A record comes at its first position, so after a reindex every
-subtree of the largest forest is one run of ids.
+subtree of the largest forest is one run of ids. What a client holds is refused
+afterwards: a page's cursor is bound to `next_reindex`.
+
+!! Derived tables — the indexes (`kvstore/derived.rs`)
+
+Computed from the primary tables, read by the query evaluator through `KvSource`;
+`mf repo reindex` rebuilds them all ([[Checking and reindexing a repository]]).
+
+|!Table |!Key |!Value |!Serves |
+|`global_derived_state` |a name |a number: `next_metarecord_id` (the largest id of `ids` plus one), `log_entries_by_metarecord_indexed_up_to` |the next dense id; how far the log is indexed by metarecord |
+|`uuids` |dense id |uuid |the inverse of `ids` |
+|`field_types` |F · type |how many rows of that type (`nothing` not counted) |a field's type ([[One value type per field name]]); a key goes at 0 |
+|`index_value_holders` |F · value key · chunk |bitmap |the holders of a value — every value has its own, `nothing` included; a position's value is its name; a `ref`'s holders are its referrers ([[Sorting and postings]]) |
+|`index_value_counts` |F · bit · chunk |bitmap |how many values (not `nothing`) each id holds, one set per bit (below) |
+|`index_parent_holders` |F · parent's dense id · chunk |bitmap |a node's children ([[The forest in the store]]) |
+|`index_raw_holder` |F · parent's dense id · name |the child's dense id |a child by name: path lookup, a folder by name |
+|`index_descendants` |F · node's dense id · chunk |bitmap |every id below a node, itself excluded |
+|`index_parents` |F · chunk |bitmap |the nodes with a live child: leaves set aside |
+|`index_trigram_texts` |F · trigram · value key |— |a distinct text holding the trigram ([[Text search in the store]]) |
+|`index_trigram_holders` |F · trigram · chunk |bitmap |the ids holding the trigram, in a field kept by metarecord |
+|`index_trigram_state` |F |mode · leftovers · entries · trigrams |the field's trigram mode, its counts |
+|`index_long_texts` |F · chunk |bitmap |the ids whose text is too long for trigrams |
+|`index_trigram_pending` |F · chunk |bitmap |in a field kept by metarecord, the ids written since the last fold |
+|`index_histogram_rows` |F · bucket |rows (count) |the planner's estimate of a range ([[Query planner]]) |
+|`index_histogram_keys` |F · bucket |posting keys (count) |the cost of walking it |
+|`index_pending_writes` |F · write number |kind · content · bitmap |a write to many records' values not yet in the postings ([[Mass writes in the store]]) |
+|`log_entries_by_metarecord` |uuid · op id |— |a metarecord's history; written at the idle fold, the entries past the pointer read directly ([[Log storage]]) |
 
 A ''set'' is a bitmap cut in chunks of 65 536 ids (the high 16 bits), one key per
-chunk: a write rewrites one chunk, a read unions a few. The kinds:
+chunk: a write rewrites one chunk, a read unions a few. The files of one folder
+mostly get consecutive ids, so a folder's bitmaps compress to a few runs. A deleted
+metarecord's id leaves `live_metarecords` and stays everywhere else, so every answer
+is read through it ([[Deleting a metarecord in the store]]).
 
-|!Kind |!Keyed by |!Holds |
-|universe |— |every metarecord |
-|counts |field · bit |how many values of the field each id holds, one set per bit of the count (below) |
-|absent |field |the ids holding `Nothing` in it |
-|parents |field |on a `tree_ref` field, the ids with a child |
-|referrers |field · target's dense id |the ids pointing at a metarecord — a folder's children, a `ref`'s referrers ([[The forest in the store]]) |
-|descendants |field · node's dense id |every id below a node ([[The forest in the store]]) |
-|postings |field · value key |the holders of a value — every value has its own ([[Sorting and postings]]) |
-|name postings |field · name key |on a `tree_ref` field, the holders of a position's name, whatever its folder (below) |
-|long texts |field |the ids whose text is too long for trigrams ([[Text search in the store]]) |
-|pending trigrams |field |in a field whose trigrams are kept by metarecord, the ids written since the last fold ([[Text search in the store]]) |
-|reserved |— |the ids given to a uuid something points at and no metarecord has had |
+The aspects of a position ([[Field aspects]]) are its tables: `:value`, the name, is
+in `index_value_holders`; `:parent` in `index_parent_holders`; `:raw`, the parent and
+the name, in `index_raw_holder` — a single child, names being unique among a node's
+children. `index_parents` is an optimisation only: a node is in it when its children
+in `index_parent_holders` meet `live_metarecords`.
 
 !! The count of values
 
@@ -132,48 +161,15 @@ questions asked all the time are read off them — a record ''holds a value'' wh
 is in any of the sets, and ''holds several'' when it is in any but the first (what a
 sorted walk needs, [[Sorting and postings]]) — and so are the schema check's "more
 than, fewer than so many values" ([[Schema]]), by comparing the counts with the
-bound bit by bit from the highest, without reading a record (`tests/kv_cost.rs`: four
-such questions read 192 144 keys on 16 000 records of three tags each, under 300
-now). A field of single values has one set, as it had one `present` set before
-(November 2026: `present` and `multi` were sets of their own).
+bound bit by bit from the highest, without reading a record. The bits of a field are
+read by one scan of its prefix.
 
 Why a count and not two flags: a write to many records at once can keep a count
 without reading any of them. Adding a value to the records that lack it is ''+1'' on
 a set of ids, which on these bitmaps is a carry — a few set operations whatever the
-number of ids — and removing one a borrow; "holds several" cannot be kept that way,
-since whether a record that loses a value still holds several depends on how many it
-had. A `Nothing` row is not a value: it is the `absent` set, beside the count.
-
-A value is a ''posting'': its holders as one chunked set, under a key whose bytes
-sort like the values (`POSTINGS · field · value key · chunk`), so equality is one read
-and ranges and sorts are range scans over the keys. A value had its holders in a
-''partition'' (`parts`, one key per holder) until they were promoted to a posting at 64
-of them; November 2026 dropped the value partition and the promotion — a value held by
-one record is a posting of one id — rather than keep two ways to hold the same thing
-(user decision). A position's ''name'' (a `tree_ref`'s name, whatever its folder) is a posting too, of its own kind, and its ''value'' is none: the `forest` holds it exactly (one metarecord for a field, a parent and a name), its parent's children are the referrers, and its name's holders the name's posting — so a file writes one key less, and not the longest (November 2026). A partition by the uuid a value points at was dropped before, a key per
-reference and per position written for one reader, which the referrers answer.
-
-!! Filed under the target's dense id
-
-What points at a metarecord — the referrers of a `ref`, the children and descendants
-of a folder — is filed under that metarecord's ''dense id'', not its uuid: following a
-reference from a set of ids reads their bitmaps without translating each id to a uuid,
-and the keys are 12 bytes shorter. A forest's roots are filed under id 0, which no
-metarecord has. A uuid pointed at before any metarecord has it (a reference to a
-record not yet created, a child written before its parent) is given an id at once,
-kept in the ''reserved'' set; the metarecord takes it when it comes.
-
-A dense id is not a metarecord's for life, so what is filed under one follows it:
-
-* a metarecord deleted and created again (a revert) keeps its id ([[Deleting a metarecord in the store]]), and its record stays under that id until a reindex;
-* `mf repo reindex` numbers every metarecord again and rebuilds all of this. Whatever else holds a dense id must be rewritten by it — today the `forest` entries — and what a client holds is refused afterwards: a page's cursor is bound to the ''numbering'', a counter the reindex moves ([[Pagination and sorting]]).
-
-`kids` is the forest keyed by parent first, so a metarecord arriving or leaving finds
-the fields it is a parent in without a scan. `grams` holds the trigrams of a
-field's texts, naming the distinct texts or the ids that hold each ([[Text search in the store]]). `hist` counts a number's or a date's rows per bucket,
-a bucket being a fixed-width prefix of the value key — and, under a key of its own, the
-posting keys of the bucket (a key per chunk of each value): the histograms the planner
-estimates a range from, and the cost of walking it ([[Query planner]]).
+number of ids — and removing one a borrow. A `nothing` is not a value: it is a posting
+of its own in `index_value_holders`, its key the type byte alone. The ids that have
+the field are those of a count above 0 and those of `nothing`.
 
 Every row change goes through one primitive (`derive_row`), every metarecord creation
 and removal through two others (`derive_created`, `derive_removed`) — reverts
@@ -182,9 +178,9 @@ check` holds all of them to a rebuild, on the ids of the metarecords that exist.
 
 !! Key size
 
-LMDB refuses a key over 511 bytes, and a posting's key (holding a value) or a forest
-key (holding a name) can hold any text:
+LMDB refuses a key over 511 bytes, and a posting's key (holding a value) or a
+`index_raw_holder` key (holding a name) can hold any text:
 
 * ''A text over 256 escaped bytes'' is keyed by that prefix, a marker `00 01` and a 64-bit hash of the whole. The marker sorts after the `00 00` ending a text equal to the prefix and before anything longer, so order is kept — except among long texts sharing the prefix, which a reader resolves from the values.
-* ''A node name over 300 bytes'' is keyed by its first 300 bytes and a hash, and read back from its row.
+* ''A node name over 300 bytes'' is keyed by its first 300 bytes and a hash, and read back from its record.
 * ''A field name'' is part of every key: one over about 200 bytes cannot be written.

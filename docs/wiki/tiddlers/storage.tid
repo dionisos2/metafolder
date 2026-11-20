@@ -11,8 +11,12 @@ open ([[The repository lock]]).
 !! Two kinds of data
 
 |!Kind |!What |!If it is wrong |
-|''primary data'' |the metarecords, their field rows, the operation log and HEAD — what was written |data is lost: the defence is [[Backups and restore]] |
-|''indexes'' — in the code, the ''derived key spaces'' |dense ids, bitmaps, the forest's bitmaps, trigrams, postings — computed from the primary data to answer queries |queries answer wrongly, nothing is lost: `mf repo reindex` rebuilds them ([[Checking and reindexing a repository]]) |
+|''primary data'' |the metarecords, their field rows, their dense numbering (which uuid has which id, which ids are live), the operation log and HEAD — what was written |data is lost: the defence is [[Backups and restore]] |
+|''indexes'' — in the code, the ''derived key spaces'' |the inverse of the numbering, the field types, bitmaps, the forest's tables, trigrams, postings — computed from the primary data to answer queries |queries answer wrongly, nothing is lost: `mf repo reindex` rebuilds them ([[Checking and reindexing a repository]]) |
+
+The records are filed under their dense id, so the numbering cannot be derived
+again: a reindex ''renumbers'' it — a primary change, in the same transaction — and
+then rebuilds the indexes ([[Store tables]]).
 
 Both are written in the same transaction by every write, so they agree by
 construction ([[Writes and atomicity]]).

@@ -12,11 +12,11 @@ mf -n music repo reindex     # rebuilds the indexes; prints "reindexed"
 
 A repository's store holds two kinds of data ([[Storage]]):
 
-* the ''primary'' data — the metarecords, their field rows, the operation log. It
-  is what you wrote, the source of truth;
-* the ''indexes'' (the code calls them the derived key spaces: ids, sets
-  and postings, the forest's bitmaps, trigrams, histograms) — computed from the primary data,
-  and used to answer queries quickly.
+* the ''primary'' data — the metarecords, their field rows, their dense numbering,
+  the operation log. It is what you wrote, the source of truth;
+* the ''indexes'' (the code calls them the derived key spaces: the field types,
+  postings, the forest's tables, trigrams, histograms) — computed from the primary
+  data, and used to answer queries quickly.
 
 Every write updates both in one transaction, so they should always agree. If they
 ever do not (a daemon bug, a crash the store did not survive cleanly), queries give
@@ -53,7 +53,7 @@ without renumbering anything.
 hundred at most), a summary on stderr, and exits 1. A problem is one of:
 
 |!Kind |!Example line |!Repair |
-|an index disagrees with the data |`ids: map 1203 metarecords, the store holds 1204` |`mf repo reindex` |
+|an index disagrees with the data |`uuids: map 1203 metarecords, the store holds 1204` |`mf repo reindex` |
 |a metarecord has several positions in one forest |`metarecord <uuid> holds 2 positions in the 'mfr_path' forest (one per forest): set the field to the one to keep` |set the field to a single value yourself |
 
 The second kind is not damage: an older daemon allowed it, the current one gives it
@@ -61,8 +61,8 @@ no meaning ([[One position per forest]]). It lives in the primary data, so
 `reindex` cannot choose for you which position to keep — after it, `check` still
 reports it.
 
-`reindex` discards the indexes and computes them again from the primary data. It
-never loses anything, writes nothing to the operation log, and leaves nothing to
+`reindex` renumbers the metarecords, then discards the indexes and computes them again
+from the primary data. It never loses anything, writes nothing to the operation log, and leaves nothing to
 undo. Run `check` again afterwards: it should print `ok` (or only the
 several-positions lines).
 
