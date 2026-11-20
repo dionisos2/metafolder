@@ -35,6 +35,14 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   =retype_lost=, one text per lost value (=<field> = <original value>=), without a
   prefix so that it is cleared without =--force=, as =orphan= is (doc "Orphans");
   =mfr_retype_lost= was the alternative.
+- Strings of any bytes (user wish, to decide later): a string should be able to
+  hold whatever a =tree_ref= name holds, bytes that need not be UTF-8. The store
+  will be ready (the table review encodes a string as =varint len · bytes=), but
+  the model is not: =Value::String= is a Rust =String= (=core/metarecord.rs=), and
+  so are the wire, the queries and the trigrams; doc "Changing a field's type"
+  turns a name that is not UTF-8 into its displayed form (=%XX=). The wire would
+  carry such a string as paths are carried, ={text, bytes}= (doc "Tree
+  names").
 - The mass-write threshold (=mass-write-threshold=, 20 to start) is one number for
   every operation: a way to derive better values from the repository is to come
   (doc "Mass writes in the store").
