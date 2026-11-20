@@ -1000,12 +1000,13 @@ impl KvSource<'_> {
     /// one for a parent and a name, and a position is no posting of its own.
     fn position_holders(&self, field: &str, value: &Value) -> RoaringBitmap {
         let read = || -> Result<RoaringBitmap> {
-            let Some(k) = super::KvTxn::forest_key(field, value) else {
+            self.read_keys(1)?;
+            let Some(k) = derived::raw_key_of(&self.t, &self.r, field, value)? else {
                 return Ok(RoaringBitmap::new());
             };
             self.read_keys(1)?;
-            Ok(match self.t.forest.get(&self.r, &k)? {
-                Some(v) => RoaringBitmap::from_iter([dense(&v[16..])]),
+            Ok(match self.t.index_raw_holder.get(&self.r, &k)? {
+                Some(v) => RoaringBitmap::from_iter([dense(v)]),
                 None => RoaringBitmap::new(),
             })
         };

@@ -737,7 +737,7 @@ impl KvTxn<'_> {
 
     /// The fields the store has rows of, and those among them that hold
     /// positions (`tree_ref`, `hierarchy_ref`).
-    fn fields_held(&self) -> Result<(Vec<String>, Vec<String>)> {
+    pub(super) fn fields_held(&self) -> Result<(Vec<String>, Vec<String>)> {
         let txn = self.txn.borrow();
         let (mut all, mut positional) = (Vec::<String>::new(), Vec::<String>::new());
         for e in self.t.field_types.iter(&txn)? {
@@ -1051,16 +1051,13 @@ impl KvTxn<'_> {
             touches_watch |= !(&self.holder_ids_now(field)? & &ids).is_empty();
         }
         // What is read is settled: the writes.
-        for (id, uuid, rows) in revived.iter().flatten() {
+        for (id, _, rows) in revived.iter().flatten() {
             // Not as plain rows: entries of a write to many records may still
             // name the id, older than the rows the deletion took.
             self.put_given_back(*id, rows)?;
             for row in rows {
                 self.add_hist(&row.name, &row.value)?;
-                if let Some(k) = Self::forest_key(&row.name, &row.value) {
-                    let v = key(&[uuid.as_bytes(), &id.to_be_bytes()]);
-                    self.t.forest.put(&mut self.txn.borrow_mut(), &k, &v)?;
-                }
+                self.file_position(&row.name, &row.value, *id)?;
             }
         }
         self.chunk_apply(super::derived::LIVE, &[], &ids, true)?;
@@ -1138,9 +1135,12 @@ impl KvTxn<'_> {
                 rows.push(dec_row(e?.1)?);
             }
             for row in &rows {
-                let Some(k) = Self::forest_key(&row.name, &row.value) else { continue };
-                if let Some(v) = self.t.forest.get(&txn, &k)? {
-                    let holder = super::derived::dense(&v[super::FOREST_ID..]);
+                let Some(k) = super::derived::raw_key_of(&self.t, &txn, &row.name, &row.value)?
+                else {
+                    continue;
+                };
+                if let Some(v) = self.t.index_raw_holder.get(&txn, &k)? {
+                    let holder = super::derived::dense(v);
                     if holder != id && self.live_in(&txn, holder)? {
                         return Ok(None);
                     }

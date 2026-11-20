@@ -122,7 +122,7 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
     let mut r = repo();
     delete(&mut r.store, r.others[1]);
     let written = r.store.last_write_keys();
-    for table in ["forest", "ids", "uuids", "kids", "grams"] {
+    for table in ["index_raw_holder", "ids", "uuids", "grams"] {
         assert_eq!(written.get(table), None, "a deletion wrote to {table}: {written:?}");
     }
     assert_eq!(written.get("metarecords"), None, "the record keeps its key: {written:?}");
@@ -257,7 +257,7 @@ fn a_reindex_removes_what_the_deletions_left_behind() {
     // One key per record: the root, the folder and the two files left.
     assert_eq!(entries(dir.path(), "metarecords"), 4);
     // One position each: the root, the folder and the two files left.
-    assert_eq!(entries(dir.path(), "forest"), 4);
+    assert_eq!(entries(dir.path(), "index_raw_holder"), 4);
     assert_eq!(entries(dir.path(), "ids"), 4);
     assert_eq!(entries(dir.path(), "uuids"), 4);
 

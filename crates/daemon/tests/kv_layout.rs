@@ -176,15 +176,17 @@ fn a_store_of_layout_7_converts_when_it_opens() {
         assert!(!has_table(&env, name), "{name} is removed");
     }
     let records = open_raw(&env, "metarecords");
-    let forest = open_raw(&env, "forest");
+    let positions = open_raw(&env, "index_raw_holder");
     let r = env.read_txn().unwrap();
     // One key per record that holds a row: the root, the thirty, and the one
     // the test wrote.
     assert_eq!(records.len(&r).unwrap(), 32);
-    for entry in forest.iter(&r).unwrap() {
+    for entry in positions.iter(&r).unwrap() {
         let (_, v) = entry.unwrap();
-        assert_eq!(v.len(), 20, "a forest entry is a uuid and a dense id");
+        assert_eq!(v.len(), 4, "a position holds its metarecord's dense id");
     }
+    drop(r);
+    assert!(!has_table(&env, "forest"), "the forest is an index now");
 }
 
 /// Opening the converted store again rewrites nothing.

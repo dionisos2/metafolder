@@ -44,7 +44,7 @@ use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
 use uuid::Uuid;
 
-use super::{be, dec_rows, from_be, name_key, uuid_of, KvStore, KvTxn, Tables};
+use super::{be, from_be, name_key, uuid_of, KvStore, KvTxn, Tables};
 use crate::index::keys::{dt_key, num_key};
 use crate::store::Rows;
 
@@ -54,8 +54,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables").
-pub(super) const DERIVED_VERSION: i64 = 18;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`.
+pub(super) const DERIVED_VERSION: i64 = 19;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -181,6 +181,38 @@ pub(super) const RESERVED: u8 = 10;
 /// The dense id standing for "no parent": what a forest's roots are filed
 /// under. No metarecord gets it — ids start at 1.
 pub(super) const NO_TARGET: u32 = 0;
+
+/// The key of a position in `index_raw_holder`: field · the parent's dense
+/// id ([`NO_TARGET`] for a root) · the name (doc "The forest in the store").
+/// Its value is the child's dense id.
+pub(super) fn raw_key(field: &str, parent: u32, name: &[u8]) -> Vec<u8> {
+    [&raw_prefix(field, parent)[..], &super::node_key(name)].concat()
+}
+
+/// The children of `parent` in `field`: the prefix of their keys.
+pub(super) fn raw_prefix(field: &str, parent: u32) -> Vec<u8> {
+    [&name_key(field)[..], &parent.to_be_bytes()].concat()
+}
+
+/// The dense id a position's parent is filed under, as committed: `None`
+/// when the parent's uuid has none (so no position is filed under it).
+pub(super) fn parent_id(t: &Tables, r: &RoTxn<'_>, parent: Option<Uuid>) -> Result<Option<u32>> {
+    match parent {
+        None => Ok(Some(NO_TARGET)),
+        Some(p) => id_of(t, r, p.as_bytes()),
+    }
+}
+
+/// [`raw_key`] of a position value, its parent's id as committed.
+pub(super) fn raw_key_of(
+    t: &Tables,
+    r: &RoTxn<'_>,
+    field: &str,
+    value: &Value,
+) -> Result<Option<Vec<u8>>> {
+    let Some((parent, name)) = value.position() else { return Ok(None) };
+    Ok(parent_id(t, r, parent)?.map(|pid| raw_key(field, pid, name.as_bytes())))
+}
 
 /// The key of the posting of a value key in `field`, without its chunk. A
 /// value key is self-delimiting (fixed-width, or a text ended by its
@@ -645,10 +677,6 @@ pub(super) fn set_prefix(kind: u8, field: Option<&str>) -> Vec<u8> {
     k
 }
 
-fn kids_key(parent: u32, field: &str, id: u32) -> Vec<u8> {
-    [&parent.to_be_bytes()[..], &name_key(field), &id.to_be_bytes()].concat()
-}
-
 pub(super) fn dense(b: &[u8]) -> u32 {
     u32::from_be_bytes(b[..4].try_into().expect("a 4-byte id"))
 }
@@ -950,12 +978,22 @@ impl KvTxn<'_> {
     }
 
     /// The fields in which the metarecord of dense id `parent` has children.
+    /// A key of `index_raw_holder` per field of positions (doc "Store
+    /// tables": the field comes first in every index key).
     fn parent_fields(&self, parent: u32) -> Result<BTreeSet<String>> {
         let mut out = BTreeSet::new();
-        for entry in self.t.kids.prefix_iter(&self.txn.borrow(), &parent.to_be_bytes())? {
-            let (k, _) = entry?;
-            let (field, _) = unesc(&k[4..])?;
-            out.insert(String::from_utf8(field).context("a field name")?);
+        let (_, positional) = self.fields_held()?;
+        let r = self.txn.borrow();
+        for field in positional {
+            if self
+                .t
+                .index_raw_holder
+                .prefix_iter(&r, &raw_prefix(&field, parent))?
+                .next()
+                .is_some()
+            {
+                out.insert(field);
+            }
         }
         Ok(out)
     }
@@ -1047,10 +1085,10 @@ impl KvTxn<'_> {
         let rows = rows.as_slice();
         // A position a metarecord that exists took since is not given back.
         for row in rows {
-            let Some(k) = Self::forest_key(&row.name, &row.value) else { continue };
+            let Some(k) = self.raw_key_now(&row.name, &row.value)? else { continue };
             let txn = self.txn.borrow();
-            if let Some(v) = self.t.forest.get(&txn, &k)? {
-                let holder = dense(&v[super::FOREST_ID..]);
+            if let Some(v) = self.t.index_raw_holder.get(&txn, &k)? {
+                let holder = dense(v);
                 if holder != id && self.live_in(&txn, holder)? {
                     return Err(crate::error::DomainError::BadRequest(format!(
                         "tree position already occupied for field '{}'",
@@ -1081,10 +1119,7 @@ impl KvTxn<'_> {
         for row in rows {
             self.count_type(&row.name, &row.value, 1)?;
             self.add_hist(&row.name, &row.value)?;
-            if let Some(k) = Self::forest_key(&row.name, &row.value) {
-                let v = super::key(&[uuid.as_bytes(), &id.to_be_bytes()]);
-                self.t.forest.put(&mut self.txn.borrow_mut(), &k, &v)?;
-            }
+            self.file_position(&row.name, &row.value, id)?;
             if row.value.position().is_some() {
                 let pid =
                     self.target_id(&target_of(&row.value).expect("a position has a parent"))?;
@@ -1221,7 +1256,6 @@ impl KvTxn<'_> {
             None => None,
         };
         if let (Some((parent, pid)), true) = (target, value.position().is_some()) {
-            self.bump(self.t.kids, &kids_key(pid, field, id), delta)?;
             if pid != NO_TARGET {
                 // The parent's referrers still hold `id` (they are brought up
                 // to date below): it counts only if it keeps a row there.
@@ -1574,15 +1608,21 @@ impl KvTxn<'_> {
     }
 
     /// The nodes placed directly under `parent` in `field`, with their ids.
+    /// Read off `index_raw_holder`, by name: a child under one parent with
+    /// two names (a `hierarchy_ref`) comes once.
     fn children_of(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, u32)>> {
         let pid = self.target_id(parent.as_bytes())?;
-        let prefix = [&pid.to_be_bytes()[..], &name_key(field)].concat();
+        let prefix = raw_prefix(field, pid);
         let r = self.txn.borrow();
+        let mut seen = BTreeSet::new();
         let mut out = Vec::new();
-        for entry in self.t.kids.prefix_iter(&r, &prefix)? {
-            let (k, _) = entry?;
-            let id = dense(&k[prefix.len()..]);
-            let uuid = self.t.uuids.get(&r, &id.to_be_bytes())?.context("a kid without a uuid")?;
+        for entry in self.t.index_raw_holder.prefix_iter(&r, &prefix)? {
+            let id = dense(entry?.1);
+            if !seen.insert(id) {
+                continue;
+            }
+            let uuid =
+                self.t.uuids.get(&r, &id.to_be_bytes())?.context("a child without a uuid")?;
             out.push((uuid_of(uuid), id));
         }
         Ok(out)
@@ -1629,9 +1669,16 @@ impl KvTxn<'_> {
         let t = self.t;
         // The numbering (`ids`, `live_metarecords`) is primary: a reindex
         // renumbers it, as it clears and gives the ids again below.
-        for db in
-            [t.ids, t.uuids, t.live_metarecords, t.field_types, t.kids, t.grams, t.hist, t.events]
-        {
+        for db in [
+            t.ids,
+            t.uuids,
+            t.live_metarecords,
+            t.field_types,
+            t.index_raw_holder,
+            t.grams,
+            t.hist,
+            t.events,
+        ] {
             db.clear(&mut w)?;
         }
         t.sets().clear(&mut w)?;
@@ -1640,10 +1687,29 @@ impl KvTxn<'_> {
 }
 
 impl KvTxn<'_> {
+    /// The key of a position in `index_raw_holder`, its parent's id as the
+    /// transaction sees it: `None` when the parent has no id, under which no
+    /// position can be filed.
+    pub(super) fn raw_key_now(&self, field: &str, value: &Value) -> Result<Option<Vec<u8>>> {
+        raw_key_of(&self.t, &self.txn.borrow(), field, value)
+    }
+
+    /// Files the position `value` of the metarecord `id` in
+    /// `index_raw_holder`, its parent given an id if it has none yet (a child
+    /// written before its parent: the id is reserved, doc "Store tables").
+    pub(super) fn file_position(&self, field: &str, value: &Value, id: u32) -> Result<()> {
+        let Some((parent, name)) = value.position() else { return Ok(()) };
+        let pid = match parent {
+            None => NO_TARGET,
+            Some(p) => self.target_id(p.as_bytes())?,
+        };
+        let k = raw_key(field, pid, name.as_bytes());
+        self.t.index_raw_holder.put(&mut self.txn.borrow_mut(), &k, &id.to_be_bytes())?;
+        Ok(())
+    }
+
     /// Removes from the primary tables what the deleted metarecords left
-    /// there (doc "Deleting a metarecord in the store"): the forest keys that
-    /// are no row's position any more. Held against the rows themselves, not
-    /// the universe — a reindex is also what repairs the derived data.
+    /// there (doc "Deleting a metarecord in the store"): their records.
     pub(super) fn drop_left_behind(&self) -> Result<()> {
         let t = self.t;
         let mut gone: Vec<(super::Db, Vec<u8>)> = Vec::new();
@@ -1655,24 +1721,6 @@ impl KvTxn<'_> {
                 let (k, _) = entry?;
                 if !self.live_in(&r, dense(k))? {
                     gone.push((t.metarecords, k.to_vec()));
-                }
-            }
-            // What the forest holds is read from the records that remain.
-            let records_gone: std::collections::HashSet<Vec<u8>> =
-                gone.iter().map(|(_, k)| k.clone()).collect();
-            for entry in t.forest.iter(&r)? {
-                let (k, v) = entry?;
-                let (field, _) = unesc(k)?;
-                let field = String::from_utf8(field).context("a field name")?;
-                let record = match t.metarecords.get(&r, &v[super::FOREST_ID..])? {
-                    Some(rows) if !records_gone.contains(&v[super::FOREST_ID..]) => dec_rows(rows)?,
-                    _ => Vec::new(),
-                };
-                let placed = record.iter().any(|row| {
-                    row.name == field && KvTxn::forest_key(&field, &row.value).as_deref() == Some(k)
-                });
-                if !placed {
-                    gone.push((t.forest, k.to_vec()));
                 }
             }
         }
@@ -1744,41 +1792,6 @@ impl KvTxn<'_> {
             }
         }
     }
-
-    /// Writes into every forest entry the dense id its metarecord has now:
-    /// after a reindex, which numbers the metarecords again, and for a store
-    /// from before the entries held one. A batch of entries in memory at a
-    /// time.
-    pub(super) fn stamp_forest_ids(&self) -> Result<()> {
-        const BATCH: usize = 10_000;
-        let t = self.t;
-        let mut after: Option<Vec<u8>> = None;
-        loop {
-            let batch: Vec<(Vec<u8>, Vec<u8>)> = {
-                let r = self.txn.borrow();
-                let lo = match &after {
-                    Some(k) => std::ops::Bound::Excluded(k.as_slice()),
-                    None => std::ops::Bound::Unbounded,
-                };
-                let range = (lo, std::ops::Bound::Unbounded);
-                let mut batch = Vec::new();
-                for entry in t.forest.range(&r, &range)?.take(BATCH) {
-                    let (k, v) = entry?;
-                    let id = id_of(&t, &r, &v[..16])?.with_context(|| {
-                        format!("a position of {}, which has no dense id", uuid_of(v))
-                    })?;
-                    batch.push((k.to_vec(), [&v[..16], &id.to_be_bytes()[..]].concat()));
-                }
-                batch
-            };
-            let Some((last, _)) = batch.last() else { return Ok(()) };
-            after = Some(last.clone());
-            let mut w = self.txn.borrow_mut();
-            for (k, v) in &batch {
-                t.forest.put(&mut w, k, v)?;
-            }
-        }
-    }
 }
 
 // ── Rebuilding and checking ─────────────────────────────────────────────────
@@ -1789,16 +1802,18 @@ impl KvTxn<'_> {
 /// comes at its first position; a subtree's ids then follow one another, so
 /// its bitmaps compress to a few runs however its records were discovered
 /// (doc "Store tables").
-fn forest_order(t: &Tables, r: &RoTxn<'_>) -> Result<Vec<Uuid>> {
-    // Each forest's key prefix (its field name, terminated) and its size.
+fn forest_order(t: &Tables, r: &RoTxn<'_>) -> Result<Vec<u32>> {
+    // Each forest's key prefix (its field name, terminated) and its size,
+    // off `index_raw_holder`: an index, so a damaged one costs the order, and
+    // the records it misses are numbered after (doc "Store tables").
     let mut forests: Vec<(Vec<u8>, u64)> = Vec::new();
-    for e in t.forest.iter(r)? {
+    for e in t.index_raw_holder.iter(r)? {
         let (k, _) = e?;
         // The field's end is its `00 00` terminator (an escaped `00` is
         // followed by `FF`).
         let end = (0..k.len().saturating_sub(1))
             .find(|&i| k[i] == 0 && k[i + 1] == 0)
-            .context("a forest key without its field")?;
+            .context("a position key without its field")?;
         match forests.last_mut() {
             Some((prefix, n)) if prefix[..] == k[..end + 2] => *n += 1,
             _ => forests.push((k[..end + 2].to_vec(), 1)),
@@ -1811,15 +1826,16 @@ fn forest_order(t: &Tables, r: &RoTxn<'_>) -> Result<Vec<Uuid>> {
         // Per forest: a node of several parents (`hierarchy_ref`) is walked
         // once.
         let mut walked = BTreeSet::new();
-        let mut stack = vec![super::ROOT];
+        let mut stack = vec![NO_TARGET];
         while let Some(node) = stack.pop() {
-            if node != super::ROOT {
-                order.push(uuid_of(&node));
+            if node != NO_TARGET {
+                order.push(node);
             }
             let mut children = Vec::new();
-            for e in t.forest.prefix_iter(r, &[&field[..], &node].concat())? {
-                let (_, v) = e?;
-                let child: [u8; 16] = v[..16].try_into().expect("a 16-byte uuid");
+            for e in
+                t.index_raw_holder.prefix_iter(r, &[&field[..], &node.to_be_bytes()].concat())?
+            {
+                let child = dense(e?.1);
                 if walked.insert(child) {
                     children.push(child);
                 }
@@ -1866,10 +1882,11 @@ impl KvStore {
             let r = txn.txn.borrow();
             let mut seen = BTreeSet::new();
             let mut order = Vec::new();
-            for u in forest_order(&txn.t, &r)? {
-                let live = id_of(&txn.t, &r, u.as_bytes())?.is_some_and(|id| who.contains_key(&id));
-                if live && seen.insert(u) {
-                    order.push(u);
+            for id in forest_order(&txn.t, &r)? {
+                if let Some(u) = who.get(&id).map(|u| Uuid::from_bytes(*u)) {
+                    if seen.insert(u) {
+                        order.push(u);
+                    }
                 }
             }
             let mut ids: Vec<u32> = who.keys().copied().collect();
@@ -1892,9 +1909,10 @@ impl KvStore {
             txn.derive_created(uuid)?;
         }
         txn.file_records_by_id()?;
-        txn.stamp_forest_ids()?;
         for &uuid in &order {
+            let id = txn.dense_id(uuid.as_bytes())?.context("a metarecord numbered")?;
             for row in Rows::rows(&txn, uuid)? {
+                txn.file_position(&row.name, &row.value, id)?;
                 // Nothing was counted yet: the derived tables were cleared.
                 txn.count_type(&row.name, &row.value, 1)?;
                 txn.derive_row(uuid, &row.name, &row.value, 1, 0)?;
@@ -2144,9 +2162,11 @@ impl KvStore {
                 if let Some(target) = target {
                     group.targets.insert(target);
                 }
-                if let (Some((parent, _)), Some(target)) = (row.value.position(), target) {
+                if let (Some((parent, name)), Some(target)) = (row.value.position(), target) {
                     let parent = &parent;
-                    *group.kids.entry(target).or_default() += 1;
+                    group.raws.insert(
+                        [&target.to_be_bytes()[..], &super::node_key(name.as_bytes())].concat(),
+                    );
                     if let Some(parent_id) = Some(target).filter(|id| live.contains(*id)) {
                         match parents.get_mut(&row.name) {
                             Some(set) => {
@@ -2320,16 +2340,16 @@ impl KvStore {
                 }
             }
         }
-        for entry in t.kids.iter(r)? {
+        for entry in t.index_raw_holder.iter(r)? {
             let (k, v) = entry?;
-            let (name, rest) = unesc(&k[4..])?;
+            let (name, rest) = unesc(k)?;
             let entry = Entry {
-                space: KID,
+                space: RAW,
                 tag: 0,
                 field: std::str::from_utf8(&name).context("a field name")?,
-                key: &k[..4],
-                id: dense(rest),
-                count: from_be(v),
+                key: &rest,
+                id: dense(v),
+                count: 1,
             };
             if !sifted(entry.id) {
                 sink(Side::Got, entry)?;
@@ -2413,7 +2433,7 @@ impl Diff {
 
 /// The key spaces [`KvStore::check_derived`] compares entry by entry, by the
 /// name its lines give them.
-const SPACES: [&str; 5] = ["set", "referrer", "descendant", "part", "kid"];
+const SPACES: [&str; 5] = ["set", "referrer", "descendant", "part", "raw holder"];
 const SET: usize = 0;
 /// The tag of a set holding a bit of the counts ([`COUNT`]): this, plus the
 /// bit's number — past every set kind.
@@ -2421,7 +2441,7 @@ const COUNT_TAG: u8 = 100;
 const REFERRER: usize = 1;
 const DESCENDANT: usize = 2;
 const PART: usize = 3;
-const KID: usize = 4;
+const RAW: usize = 4;
 
 /// How many buckets each key space's entries are spread over. A divergence
 /// costs the content of the buckets it falls in — a 4096th of the key space
@@ -2483,7 +2503,7 @@ impl<'a> Entry<'a> {
         // target's dense id.
         let target = || -> Result<String> {
             let id = dense(self.key);
-            Ok(match t.uuids.get(r, self.key)? {
+            Ok(match t.uuids.get(r, &self.key[..4])? {
                 _ if id == NO_TARGET => "no parent".to_string(),
                 Some(uuid) => uuid_of(uuid).to_string(),
                 None => format!("dense id {id} (no uuid)"),
@@ -2493,7 +2513,11 @@ impl<'a> Entry<'a> {
             SET => format!("({}, {field:?}, {who})", self.tag),
             REFERRER | DESCENDANT => format!("({field:?}, {}, {who})", target()?),
             PART => format!("({field:?}, {}, {:?}, {who}): {}", self.tag, self.key, self.count),
-            _ => format!("({}, {field:?}, {who}): {}", target()?, self.count),
+            _ => format!(
+                "({}, {field:?}, {:?}, {who})",
+                target()?,
+                String::from_utf8_lossy(&self.key[4..])
+            ),
         })
     }
 }
@@ -2505,8 +2529,9 @@ struct Group {
     id: Option<u32>,
     field: String,
     parts: BTreeMap<(u8, Vec<u8>), i64>,
-    /// Rows per parent, by the parent's dense id.
-    kids: BTreeMap<u32, i64>,
+    /// The keys of its positions in `index_raw_holder`, the field aside: the
+    /// parent's dense id · the name.
+    raws: BTreeSet<Vec<u8>>,
     /// Each trigram of the field's short texts, with the text's key
     /// ([`text_part_key`]).
     grams: BTreeSet<([u8; 3], Vec<u8>)>,
@@ -2531,8 +2556,8 @@ impl Group {
         for (part, key) in self.parts.keys() {
             emit(PART, *part, key, 1)?;
         }
-        for (parent, rows) in &self.kids {
-            emit(KID, 0, &parent.to_be_bytes(), *rows)?;
+        for raw in &self.raws {
+            emit(RAW, 0, raw, 1)?;
         }
         for target in &self.targets {
             emit(REFERRER, 0, &target.to_be_bytes(), 1)?;
@@ -2686,7 +2711,7 @@ impl Detail {
     fn report(&self, diff: &mut Diff) {
         // Referrers and descendants first, then the sets, as the lines have
         // always come.
-        for space in [REFERRER, DESCENDANT, SET, PART, KID] {
+        for space in [REFERRER, DESCENDANT, SET, PART, RAW] {
             let (expected, got) = (&self.sides[0][space], &self.sides[1][space]);
             let what = SPACES[space];
             for e in expected.difference(got) {
@@ -2800,14 +2825,18 @@ mod tests {
         let (store, _dir) = populated();
         let key = {
             let r = store.env.read_txn().unwrap();
-            let (k, _) = store.t.kids.iter(&r).unwrap().next().unwrap().unwrap();
+            let (k, _) = store.t.index_raw_holder.iter(&r).unwrap().next().unwrap().unwrap();
             k.to_vec()
         };
         tamper(&store, |t, w| {
-            t.kids.put(w, &key, &be(7)).unwrap();
+            t.index_raw_holder.put(w, &key, &7u32.to_be_bytes()).unwrap();
         });
         let diff = store.check_derived().unwrap();
-        assert!(has(&diff, "kid missing: ") && has(&diff, "kid unexpected: "), "{}", some(&diff));
+        assert!(
+            has(&diff, "raw holder missing: ") && has(&diff, "raw holder unexpected: "),
+            "{}",
+            some(&diff)
+        );
     }
 
     #[test]

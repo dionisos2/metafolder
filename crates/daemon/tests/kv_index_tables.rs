@@ -43,6 +43,18 @@ fn each_kind_of_index_is_a_table_of_its_own() {
     }
     let env = raw_env(dir.path());
     assert!(!has_table(&env, "sets"), "no table of every kind");
+    // The forest is an index: field · parent's dense id · name → child's id.
+    assert!(!has_table(&env, "forest") && !has_table(&env, "kids"));
+    let positions = open_raw(&env, "index_raw_holder");
+    let r = env.read_txn().unwrap();
+    assert_eq!(positions.len(&r).unwrap(), 2, "the root and its child");
+    for entry in positions.iter(&r).unwrap() {
+        let (k, v) = entry.unwrap();
+        assert_eq!(v.len(), 4, "a dense id");
+        // `loc` 00 00, then the parent's id: 0 for the root, 1 for the child.
+        assert!(k.starts_with(b"loc\0\0"), "{k:?}");
+    }
+    drop(r);
     for table in ["index_value_holders", "index_value_counts", "index_descendants"] {
         let db = open_raw(&env, table);
         let r = env.read_txn().unwrap();
