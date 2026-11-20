@@ -438,7 +438,7 @@ impl KvTxn<'_> {
                     // an earlier event of this fold — not in the table yet.
                     let referrers = [&[REFERRERS][..], &name_key(field)].concat();
                     let mut targets: BTreeSet<Vec<u8>> = BTreeSet::new();
-                    for entry in t.sets.prefix_iter(&self.txn.borrow(), &referrers)? {
+                    for entry in t.sets().prefix_iter(&self.txn.borrow(), &referrers)? {
                         let k = entry?.0;
                         if k.len() == referrers.len() + 6 {
                             targets.insert(k[..k.len() - 2].to_vec());
@@ -484,7 +484,7 @@ impl KvTxn<'_> {
         let mut keys = BTreeSet::new();
         {
             let txn = self.txn.borrow();
-            for entry in self.t.sets.prefix_iter(&txn, &posted)? {
+            for entry in self.t.sets().prefix_iter(&txn, &posted)? {
                 let k = entry?.0;
                 keys.insert(k[posted.len()..k.len() - 2].to_vec());
             }

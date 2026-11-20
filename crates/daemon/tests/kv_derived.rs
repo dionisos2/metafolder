@@ -171,7 +171,7 @@ fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
     {
         // Damage: drop every set chunk (the universe, presence, parents).
         let env = common::kv::raw_env(dir.path());
-        let sets = common::kv::open_raw(&env, "sets");
+        let sets = common::kv::open_raw(&env, "index_value_holders");
         let mut w = env.write_txn().unwrap();
         sets.clear(&mut w).unwrap();
         w.commit().unwrap();
@@ -238,11 +238,11 @@ fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
         // As format 4 left it: no descendant bitmap outside `mfr_path` (the
         // populated forest is `loc`), and the format stamped 4.
         let env = common::kv::raw_env(dir.path());
-        let sets = common::kv::open_raw(&env, "sets");
+        let sets = common::kv::open_raw(&env, "index_descendants");
         let meta = common::kv::open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
         let descendants: Vec<Vec<u8>> =
-            sets.iter(&w).unwrap().map(|e| e.unwrap().0.to_vec()).filter(|k| k[0] == 6).collect();
+            sets.iter(&w).unwrap().map(|e| e.unwrap().0.to_vec()).collect();
         assert!(!descendants.is_empty(), "the `loc` forest has descendant bitmaps");
         for k in descendants {
             sets.delete(&mut w, &k).unwrap();
@@ -324,14 +324,21 @@ fn a_reindex_numbers_the_records_in_forest_order() {
 /// gathers.
 fn sets_bytes(dir: &std::path::Path) -> usize {
     let env = common::kv::raw_env(dir);
-    let sets = common::kv::open_raw(&env, "sets");
+    // Every bitmap but the postings.
+    let tables: Vec<_> = [
+        "index_absent",
+        "index_parents",
+        "index_long_texts",
+        "index_referrers",
+        "index_descendants",
+        "index_trigram_pending",
+        "index_value_counts",
+    ]
+    .iter()
+    .map(|n| common::kv::open_raw(&env, n))
+    .collect();
     let r = env.read_txn().unwrap();
-    sets.iter(&r)
-        .unwrap()
-        .map(|e| e.unwrap())
-        .filter(|(k, _)| k[0] != 7 && k[0] != 12)
-        .map(|(_, v)| v.len())
-        .sum()
+    tables.iter().flat_map(|t| t.iter(&r).unwrap().map(|e| e.unwrap().1.len())).sum()
 }
 
 /// Twenty folders discovered interleaved — a file of each in turn — get

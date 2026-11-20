@@ -251,10 +251,10 @@ impl KvSource<'_> {
             };
         let entries: Entries<'_> = if want_max {
             let range = (Bound::Included(prefix.as_slice()), Bound::Excluded(bound.as_slice()));
-            Box::new(self.t.sets.rev_range(&self.r, &range)?)
+            Box::new(self.t.sets().rev_range(&self.r, &range)?)
         } else {
             let range = (Bound::Included(bound.as_slice()), Bound::Unbounded);
-            Box::new(self.t.sets.range(&self.r, &range)?)
+            Box::new(self.t.sets().range(&self.r, &range)?)
         };
         // One value at a time: its chunks come one after the other.
         let mut value: Option<(Vec<u8>, RoaringBitmap)> = None;
@@ -446,7 +446,7 @@ impl KvSource<'_> {
             };
             let prefix = derived::referrers_prefix(field, target);
             let mut out = RoaringBitmap::new();
-            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
@@ -699,7 +699,7 @@ impl KvSource<'_> {
         let read = || -> Result<RoaringBitmap> {
             let mut out = RoaringBitmap::new();
             let range = (lo.as_ref().map(|k| k.as_slice()), hi.as_ref().map(|k| k.as_slice()));
-            for entry in self.t.sets.range(&self.r, &range)? {
+            for entry in self.t.sets().range(&self.r, &range)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if !k.starts_with(&prefix) || k.len() < prefix.len() + 2 {
@@ -719,7 +719,7 @@ impl KvSource<'_> {
         let read = || -> Result<Option<RoaringBitmap>> {
             let prefix = derived::part_posting_prefix(field, part, key);
             let mut out = None;
-            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
@@ -1018,7 +1018,7 @@ impl KvSource<'_> {
         let read = || -> Result<RoaringBitmap> {
             let prefix = [&[derived::REFERRERS][..], &name_key(field)].concat();
             let mut out = RoaringBitmap::new();
-            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
                 let (_, v) = entry?;
                 self.read_keys(1)?;
                 out |= derived::decode_set(v)?;
@@ -1638,7 +1638,7 @@ impl Source for KvSource<'_> {
             };
             let prefix = [&[derived::REFERRERS][..], &name_key(field)].concat();
             let mut out = RoaringBitmap::new();
-            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 6 && except.as_deref() != Some(&k[prefix.len()..][..4])
@@ -1668,7 +1668,7 @@ impl Source for KvSource<'_> {
             let mut out = RoaringBitmap::new();
             for id in of {
                 let prefix = derived::descendants_prefix(field, id);
-                for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+                for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
                     let (k, v) = entry?;
                     self.read_keys(1)?;
                     if k.len() == prefix.len() + 2 {

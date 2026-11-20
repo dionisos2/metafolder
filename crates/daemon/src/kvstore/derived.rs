@@ -54,8 +54,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types.
-pub(super) const DERIVED_VERSION: i64 = 17;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables").
+pub(super) const DERIVED_VERSION: i64 = 18;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -119,7 +119,7 @@ pub(super) fn count_prefix(field: &str, bit: u8) -> Vec<u8> {
 pub(super) fn read_counts(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<RoaringBitmap>> {
     let prefix = set_prefix(COUNT, Some(field));
     let mut out: Vec<RoaringBitmap> = Vec::new();
-    for entry in t.sets.prefix_iter(r, &prefix)? {
+    for entry in t.sets().prefix_iter(r, &prefix)? {
         let (k, v) = entry?;
         // The bit, then the chunk.
         if k.len() == prefix.len() + 3 {
@@ -244,13 +244,131 @@ const GRAMS: u8 = 1;
 /// `live_metarecords`, primary: its key is the chunk alone.
 pub(super) const LIVE: u8 = 2;
 
-/// The table of chunked bitmaps a selector names.
-pub(super) fn chunk_db(t: &Tables, table: u8) -> super::table::Db {
+/// The table of chunked bitmaps a selector names; for [`SETS`], the table of
+/// the kind `key` begins with.
+pub(super) fn chunk_db(t: &Tables, table: u8, key: &[u8]) -> super::table::Db {
     match table {
-        SETS => t.sets,
+        SETS => t.sets().db(key[0]),
         GRAMS => t.grams,
         LIVE => t.live_metarecords,
         other => unreachable!("no chunked table {other}"),
+    }
+}
+
+/// The index tables of the bitmaps, one per kind (doc "Store tables"),
+/// reached by a key that begins with its kind, as the one table `sets` was.
+/// Each table keeps the kind byte at the head of its keys.
+#[derive(Clone, Copy)]
+pub(super) struct SetTables<'a>(&'a Tables);
+
+impl Tables {
+    pub(super) fn sets(&self) -> SetTables<'_> {
+        SetTables(self)
+    }
+}
+
+/// Every kind, in key order.
+const KINDS: [u8; 9] = [
+    ABSENT,
+    PARENTS,
+    LONG_TEXTS,
+    REFERRERS,
+    DESCENDANTS,
+    POSTINGS,
+    GRAM_PENDING,
+    COUNT,
+    NAME_POSTINGS,
+];
+
+impl<'a> SetTables<'a> {
+    pub(super) fn db(self, kind: u8) -> super::table::Db {
+        let t = self.0;
+        match kind {
+            ABSENT => t.index_absent,
+            PARENTS => t.index_parents,
+            LONG_TEXTS => t.index_long_texts,
+            REFERRERS => t.index_referrers,
+            DESCENDANTS => t.index_descendants,
+            POSTINGS => t.index_value_holders,
+            GRAM_PENDING => t.index_trigram_pending,
+            COUNT => t.index_value_counts,
+            NAME_POSTINGS => t.index_name_holders,
+            other => unreachable!("no set kind {other}"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn get<'t>(self, r: &'t RoTxn<'_>, k: &[u8]) -> heed::Result<Option<&'t [u8]>> {
+        self.db(k[0]).get(r, k)
+    }
+
+    #[cfg(test)]
+    pub(super) fn put(
+        self,
+        w: &mut super::table::Wtxn<'_>,
+        k: &[u8],
+        v: &[u8],
+    ) -> heed::Result<()> {
+        self.db(k[0]).put(w, k, v)
+    }
+
+    #[cfg(test)]
+    pub(super) fn delete(self, w: &mut super::table::Wtxn<'_>, k: &[u8]) -> heed::Result<bool> {
+        self.db(k[0]).delete(w, k)
+    }
+
+    pub(super) fn prefix_iter<'t>(
+        self,
+        r: &'t RoTxn<'_>,
+        prefix: &[u8],
+    ) -> heed::Result<heed::RoPrefix<'t, heed::types::Bytes, heed::types::Bytes>> {
+        self.db(prefix[0]).prefix_iter(r, prefix)
+    }
+
+    /// The kind a range is in: that of its bounds' keys.
+    fn kind_of<R: std::ops::RangeBounds<[u8]>>(range: &R) -> u8 {
+        use std::ops::Bound;
+        match (range.start_bound(), range.end_bound()) {
+            (Bound::Included(k) | Bound::Excluded(k), _) if !k.is_empty() => k[0],
+            (_, Bound::Included(k) | Bound::Excluded(k)) if !k.is_empty() => k[0],
+            _ => unreachable!("a range of the sets with no bound"),
+        }
+    }
+
+    pub(super) fn range<'t, R: std::ops::RangeBounds<[u8]>>(
+        self,
+        r: &'t RoTxn<'_>,
+        range: &R,
+    ) -> heed::Result<heed::RoRange<'t, heed::types::Bytes, heed::types::Bytes>> {
+        self.db(Self::kind_of(range)).range(r, range)
+    }
+
+    pub(super) fn rev_range<'t, R: std::ops::RangeBounds<[u8]>>(
+        self,
+        r: &'t RoTxn<'_>,
+        range: &R,
+    ) -> heed::Result<heed::RoRevRange<'t, heed::types::Bytes, heed::types::Bytes>> {
+        self.db(Self::kind_of(range)).rev_range(r, range)
+    }
+
+    /// Every entry of every kind, in key order.
+    pub(super) fn iter<'t>(
+        self,
+        r: &'t RoTxn<'_>,
+    ) -> heed::Result<Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't>> {
+        let mut all: Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't> =
+            Box::new(std::iter::empty());
+        for kind in KINDS {
+            all = Box::new(all.chain(self.db(kind).iter(r)?));
+        }
+        Ok(all)
+    }
+
+    pub(super) fn clear(self, w: &mut super::table::Wtxn<'_>) -> heed::Result<()> {
+        for kind in KINDS {
+            self.db(kind).clear(w)?;
+        }
+        Ok(())
     }
 }
 
@@ -550,7 +668,7 @@ pub(super) fn read_set(
 ) -> Result<RoaringBitmap> {
     let prefix = set_prefix(kind, field);
     let mut out = RoaringBitmap::new();
-    for entry in t.sets.prefix_iter(r, &prefix)? {
+    for entry in t.sets().prefix_iter(r, &prefix)? {
         let (k, v) = entry?;
         // The field name's terminator keeps a longer name out of the prefix;
         // only the 2-byte chunk follows it.
@@ -565,7 +683,7 @@ pub(super) fn read_set(
 /// committed: its chunks unioned.
 pub(super) fn read_prefix_set(t: &Tables, r: &RoTxn<'_>, prefix: &[u8]) -> Result<RoaringBitmap> {
     let mut out = RoaringBitmap::new();
-    for entry in t.sets.prefix_iter(r, prefix)? {
+    for entry in t.sets().prefix_iter(r, prefix)? {
         let (k, v) = entry?;
         if k.len() == prefix.len() + 2 {
             out |= decode_set(v)?;
@@ -680,7 +798,7 @@ impl KvTxn<'_> {
         chunk: u16,
         change: &mut dyn FnMut(&mut RoaringBitmap),
     ) -> Result<()> {
-        let db = chunk_db(&self.t, table);
+        let db = chunk_db(&self.t, table, prefix);
         let k = [&[table][..], prefix, &chunk.to_be_bytes()].concat();
         let mut cache = self.sets.borrow_mut();
         if !cache.contains_key(&k) {
@@ -704,7 +822,7 @@ impl KvTxn<'_> {
     /// A whole bitmap as the transaction sees it: its stored chunks, the
     /// cached ones in their stead.
     pub(super) fn read_chunked(&self, table: u8, prefix: &[u8]) -> Result<RoaringBitmap> {
-        let db = chunk_db(&self.t, table);
+        let db = chunk_db(&self.t, table, prefix);
         let whole = [&[table][..], prefix].concat();
         let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
         let cache = self.sets.borrow();
@@ -774,7 +892,7 @@ impl KvTxn<'_> {
                     }
                 }
             }
-            let db = chunk_db(&self.t, k[0]);
+            let db = chunk_db(&self.t, k[0], &k[1..]);
             if bm.is_empty() {
                 db.delete(&mut w, &k[1..])?;
             } else {
@@ -797,7 +915,7 @@ impl KvTxn<'_> {
     /// Whether a chunked bitmap has any member, as the transaction sees it —
     /// without decoding the stored chunks.
     fn chunked_exists(&self, table: u8, prefix: &[u8]) -> Result<bool> {
-        let db = chunk_db(&self.t, table);
+        let db = chunk_db(&self.t, table, prefix);
         let whole = [&[table][..], prefix].concat();
         let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
         {
@@ -1511,19 +1629,12 @@ impl KvTxn<'_> {
         let t = self.t;
         // The numbering (`ids`, `live_metarecords`) is primary: a reindex
         // renumbers it, as it clears and gives the ids again below.
-        for db in [
-            t.ids,
-            t.uuids,
-            t.live_metarecords,
-            t.field_types,
-            t.sets,
-            t.kids,
-            t.grams,
-            t.hist,
-            t.events,
-        ] {
+        for db in
+            [t.ids, t.uuids, t.live_metarecords, t.field_types, t.kids, t.grams, t.hist, t.events]
+        {
             db.clear(&mut w)?;
         }
+        t.sets().clear(&mut w)?;
         Ok(())
     }
 }
@@ -1843,7 +1954,7 @@ impl KvStore {
             fields.insert(unesc(k)?.0);
         }
         wear.event_fields = fields.len();
-        for entry in self.t.sets.prefix_iter(&r, &[GRAM_PENDING])? {
+        for entry in self.t.sets().prefix_iter(&r, &[GRAM_PENDING])? {
             wear.trigrams_pending += decode_set(entry?.1)?.len();
         }
         // The counter holds the next id to hand out; the first is 1.
@@ -2129,7 +2240,7 @@ impl KvStore {
         }
 
         // Got: the derived tables, as they are.
-        for entry in t.sets.iter(r)? {
+        for entry in t.sets().iter(r)? {
             let (k, v) = entry?;
             let kind = k[0];
             if kind == POSTINGS || kind == NAME_POSTINGS {
@@ -2181,7 +2292,7 @@ impl KvStore {
             for key in events::named(list) {
                 let run = posting_prefix(field, &key);
                 let mut stored = RoaringBitmap::new();
-                for entry in t.sets.prefix_iter(r, &run)? {
+                for entry in t.sets().prefix_iter(r, &run)? {
                     let (k, v) = entry?;
                     if k.len() == run.len() + 2 {
                         stored |= decode_set(v)?;
@@ -2197,7 +2308,7 @@ impl KvStore {
             }
             for key in events::named(by_target) {
                 let mut stored = RoaringBitmap::new();
-                for entry in t.sets.prefix_iter(r, &referrers_prefix(field, dense(&key)))? {
+                for entry in t.sets().prefix_iter(r, &referrers_prefix(field, dense(&key)))? {
                     stored |= decode_set(entry?.1)?;
                 }
                 for id in events::replay(by_target, &key, stored.clone()) - stored {
@@ -2249,7 +2360,7 @@ impl KvStore {
         let settled = |key: &[u8]| unesc(key).is_ok_and(|(name, _)| !behind.contains(&name));
         // The posting keys of each bucket, counted from the postings.
         let mut expected = expected;
-        for entry in self.t.sets.prefix_iter(r, &[POSTINGS])? {
+        for entry in self.t.sets().prefix_iter(r, &[POSTINGS])? {
             let (k, _) = entry?;
             let (name, rest) = unesc(&k[1..])?;
             if let (Some(bucket), Ok(field)) =
@@ -2465,7 +2576,7 @@ impl GramCheck {
         if !self.fields.contains_key(field) {
             let state = GramState::decode(t.grams.get(r, &gram_state_key(field))?)?;
             let mut pending = RoaringBitmap::new();
-            for entry in t.sets.prefix_iter(r, &set_prefix(GRAM_PENDING, Some(field)))? {
+            for entry in t.sets().prefix_iter(r, &set_prefix(GRAM_PENDING, Some(field)))? {
                 pending |= decode_set(entry?.1)?;
             }
             self.fields.insert(field.to_string(), (state, pending));
@@ -2627,7 +2738,7 @@ mod tests {
 
     fn first_key(
         store: &KvStore,
-        db: impl Fn(&Tables) -> &super::super::Db,
+        db: impl Fn(&Tables) -> super::super::Db,
         prefix: &[u8],
     ) -> Vec<u8> {
         let r = store.env.read_txn().unwrap();
@@ -2674,7 +2785,7 @@ mod tests {
     #[test]
     fn test_a_lost_trigram_chunk_is_named() {
         let (store, _dir) = populated();
-        let key = first_key(&store, |t| &t.grams, &gram_values_prefix("title", b"num"));
+        let key = first_key(&store, |t| t.grams, &gram_values_prefix("title", b"num"));
         tamper(&store, |t, w| {
             t.grams.delete(w, &key).unwrap();
         });
@@ -2708,9 +2819,9 @@ mod tests {
         ];
         for (expected, prefix) in cases {
             let (store, _dir) = populated();
-            let key = first_key(&store, |t| &t.sets, &prefix);
+            let key = first_key(&store, |t| t.sets().db(prefix[0]), &prefix);
             tamper(&store, |t, w| {
-                t.sets.delete(w, &key).unwrap();
+                t.sets().delete(w, &key).unwrap();
             });
             let diff = store.check_derived().unwrap();
             assert!(
@@ -2725,19 +2836,19 @@ mod tests {
     fn test_postings_are_held_to_the_rows() {
         let (store, _dir) = populated();
         let posting = posting_prefix("kind", &value_key(&Value::String("text".into())).unwrap());
-        let key = first_key(&store, |t| &t.sets, &posting);
+        let key = first_key(&store, |t| t.sets().db(posting[0]), &posting);
 
         // One holder short: that holder's entry is missing.
         let short = {
             let r = store.env.read_txn().unwrap();
-            let mut set = decode_set(store.t.sets.get(&r, &key).unwrap().unwrap()).unwrap();
+            let mut set = decode_set(store.t.sets().get(&r, &key).unwrap().unwrap()).unwrap();
             set.remove(set.max().unwrap());
             let mut bytes = Vec::new();
             set.serialize_into(&mut bytes).unwrap();
             bytes
         };
         tamper(&store, |t, w| {
-            t.sets.put(w, &key, &short).unwrap();
+            t.sets().put(w, &key, &short).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "part missing: "), "{}", some(&diff));
@@ -2745,7 +2856,7 @@ mod tests {
 
         // Gone: every holder's entry is.
         tamper(&store, |t, w| {
-            t.sets.delete(w, &key).unwrap();
+            t.sets().delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "part missing: "), "{}", some(&diff));
@@ -2755,8 +2866,8 @@ mod tests {
             [&posting_prefix("kind", &value_key(&Value::Bool(true)).unwrap())[..], &[0, 0]]
                 .concat();
         tamper(&store, |t, w| {
-            t.sets.put(w, &key, &short).unwrap();
-            t.sets.put(w, &orphan, &short).unwrap();
+            t.sets().put(w, &key, &short).unwrap();
+            t.sets().put(w, &orphan, &short).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "part unexpected: "), "{}", some(&diff));
@@ -2765,7 +2876,7 @@ mod tests {
     #[test]
     fn test_a_histogram_is_required_and_exact() {
         let (store, _dir) = populated();
-        let key = first_key(&store, |t| &t.hist, &name_key("size"));
+        let key = first_key(&store, |t| t.hist, &name_key("size"));
 
         // A count off by one.
         let n = {
@@ -2849,7 +2960,7 @@ mod tests {
         stray.serialize_into(&mut bytes).unwrap();
         tamper(&store, |t, w| {
             let key = [&count_prefix("kind", 0)[..], &61u16.to_be_bytes()].concat();
-            t.sets.put(w, &key, &bytes).unwrap();
+            t.sets().put(w, &key, &bytes).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "set unexpected: "), "{}", some(&diff));

@@ -248,7 +248,7 @@ fn a_value_held_once_is_a_posting() {
         .uuid;
     w.commit().unwrap();
     let written = store.last_write_keys();
-    assert!(written.get("sets").copied().unwrap_or(0) > 0, "{written:?}");
+    assert!(written.get("index_value_holders").copied().unwrap_or(0) > 0, "{written:?}");
     check(&store);
     assert_eq!(holders(&store, "unique").0, 1);
 

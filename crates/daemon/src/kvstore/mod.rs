@@ -106,7 +106,15 @@ struct Tables {
     global_derived_state: Db,
     ids: Db,
     uuids: Db,
-    sets: Db,
+    index_absent: Db,
+    index_parents: Db,
+    index_long_texts: Db,
+    index_referrers: Db,
+    index_descendants: Db,
+    index_value_holders: Db,
+    index_trigram_pending: Db,
+    index_value_counts: Db,
+    index_name_holders: Db,
     kids: Db,
     grams: Db,
     hist: Db,
@@ -136,7 +144,15 @@ const NAMES: [&str; table::TABLES] = [
     "global_derived_state",
     "ids",
     "uuids",
-    "sets",
+    "index_absent",
+    "index_parents",
+    "index_long_texts",
+    "index_referrers",
+    "index_descendants",
+    "index_value_holders",
+    "index_trigram_pending",
+    "index_value_counts",
+    "index_name_holders",
     "kids",
     "grams",
     "hist",
@@ -161,7 +177,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, sets, kids, grams, hist, events, label_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, index_absent, index_parents, index_long_texts, index_referrers, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_name_holders, kids, grams, hist, events, label_reverts] =
             dbs;
         Ok(Tables {
             version,
@@ -184,7 +200,15 @@ impl Tables {
             global_derived_state,
             ids,
             uuids,
-            sets,
+            index_absent,
+            index_parents,
+            index_long_texts,
+            index_referrers,
+            index_descendants,
+            index_value_holders,
+            index_trigram_pending,
+            index_value_counts,
+            index_name_holders,
             kids,
             grams,
             hist,
@@ -216,7 +240,15 @@ impl Tables {
             self.global_derived_state,
             self.ids,
             self.uuids,
-            self.sets,
+            self.index_absent,
+            self.index_parents,
+            self.index_long_texts,
+            self.index_referrers,
+            self.index_descendants,
+            self.index_value_holders,
+            self.index_trigram_pending,
+            self.index_value_counts,
+            self.index_name_holders,
             self.kids,
             self.grams,
             self.hist,
@@ -761,7 +793,7 @@ impl KvStore {
             mass: Default::default(),
             deletes: Default::default(),
             thawed: Default::default(),
-            written: Default::default(),
+            written: std::sync::Mutex::new([0; table::TABLES]),
             generation: Default::default(),
             stub_memo: Default::default(),
             memory: None,
@@ -2076,8 +2108,9 @@ impl KvStore {
     /// layout holds no data in them, so this runs at every open, and does
     /// nothing when there are none.
     fn remove_older_tables(&self) -> Result<()> {
-        const OLDER: [&str; 11] = [
+        const OLDER: [&str; 12] = [
             "meta",
+            "sets",
             "records",
             "parts",
             "cells",
@@ -2097,7 +2130,7 @@ impl KvStore {
                 for name in OLDER {
                     found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
                 }
-                let found: [_; 11] = found.try_into().expect("one per name");
+                let found: [_; 12] = found.try_into().expect("one per name");
                 Ok(CommitOrAbort::<_, ()>::Commit(found))
             })?
             .commit()

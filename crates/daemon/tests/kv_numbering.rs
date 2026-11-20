@@ -80,13 +80,10 @@ fn the_live_metarecords_are_a_table_of_their_own() {
     store(&dir);
     let env = raw_env(dir.path());
     let live = open_raw(&env, "live_metarecords");
-    let sets = open_raw(&env, "sets");
     let r = env.read_txn().unwrap();
     assert_eq!(live.len(&r).unwrap(), 1, "one chunk");
-    for entry in sets.iter(&r).unwrap() {
-        let (k, _) = entry.unwrap();
-        assert!(k[0] != 0 && k[0] != 10, "no universe or reserved set in sets: {k:?}");
-    }
+    drop(r);
+    assert!(!has_table(&env, "sets"), "no set table of every kind: no universe or reserved set");
 }
 
 /// `uuids`, `field_types` and the sets lost: a reindex rebuilds them from
@@ -98,8 +95,10 @@ fn a_reindex_rebuilds_the_indexes_from_the_numbering() {
     let before = state(&KvStore::open_unsynced(dir.path()).unwrap());
     {
         let env = raw_env(dir.path());
-        let tables: Vec<_> =
-            ["uuids", "field_types", "sets"].iter().map(|n| open_raw(&env, n)).collect();
+        let tables: Vec<_> = ["uuids", "field_types", "index_value_holders", "index_value_counts"]
+            .iter()
+            .map(|n| open_raw(&env, n))
+            .collect();
         let mut w = env.write_txn().unwrap();
         for t in tables {
             t.clear(&mut w).unwrap();

@@ -73,7 +73,7 @@ fn a_damaged_store_leaves_the_previous_backup_in_place() {
     let kv = metafolder.join("internal/kv");
     {
         let env = common::kv::raw_env(&kv);
-        let sets = common::kv::open_raw(&env, "sets");
+        let sets = common::kv::open_raw(&env, "index_value_holders");
         let mut w = env.write_txn().unwrap();
         sets.clear(&mut w).unwrap();
         w.commit().unwrap();
@@ -206,7 +206,7 @@ fn a_restore_refuses_a_damaged_backup() {
     {
         let kv = dest.join("kv");
         let env = common::kv::raw_env(&kv);
-        let sets = common::kv::open_raw(&env, "sets");
+        let sets = common::kv::open_raw(&env, "index_value_holders");
         let mut w = env.write_txn().unwrap();
         sets.clear(&mut w).unwrap();
         w.commit().unwrap();

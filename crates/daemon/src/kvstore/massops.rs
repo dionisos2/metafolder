@@ -847,7 +847,7 @@ impl KvTxn<'_> {
     fn fields_with_sets(&self, kind: u8) -> Result<Vec<String>> {
         let txn = self.txn.borrow();
         let mut out: Vec<String> = Vec::new();
-        for e in self.t.sets.prefix_iter(&txn, &[kind])? {
+        for e in self.t.sets().prefix_iter(&txn, &[kind])? {
             let (k, _) = e?;
             let (name, _) = super::derived::unesc(&k[1..])?;
             let name = String::from_utf8(name).context("a field name")?;
@@ -1028,7 +1028,7 @@ impl KvTxn<'_> {
             let mut groups: BTreeMap<u32, RoaringBitmap> = BTreeMap::new();
             {
                 let txn = self.txn.borrow();
-                for e in self.t.sets.prefix_iter(&txn, &prefix)? {
+                for e in self.t.sets().prefix_iter(&txn, &prefix)? {
                     let (k, v) = e?;
                     if k.len() == prefix.len() + 6 {
                         *groups.entry(dense(&k[prefix.len()..])).or_default() |= decode_set(v)?;
@@ -1161,7 +1161,7 @@ impl KvTxn<'_> {
         let mut chunks: BTreeMap<(u32, u16), RoaringBitmap> = BTreeMap::new();
         {
             let txn = self.txn.borrow();
-            for e in self.t.sets.prefix_iter(&txn, &prefix)? {
+            for e in self.t.sets().prefix_iter(&txn, &prefix)? {
                 let (k, v) = e?;
                 if k.len() == prefix.len() + 6 {
                     let at = (
