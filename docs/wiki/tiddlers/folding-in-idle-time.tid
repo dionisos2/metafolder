@@ -4,8 +4,8 @@ kind: rationale
 audience: dev
 summary: What writes to many records leave pending is folded into the store by a thread of the repository, after thirty seconds without activity, one list per step, the biggest first.
 
-A write to many records leaves lists pending — the entries of a part, the events of a
-field, the trigrams kept by metarecord ([[Mass writes in the store]],
+A write to many records leaves lists pending — the pending writes of a part, the
+pending index writes of a field, the trigrams kept by metarecord ([[Mass writes in the store]],
 [[Text search in the store]]) — and every read pays for them until they are folded. The fold is work
 the user did not ask for at that moment, so it waits for a moment when nobody is
 asking for anything.
@@ -30,16 +30,23 @@ a file touched every few seconds must not keep the repository busy for ever.
 
 !! How
 
-One ''list'' per step — a part's entries, a field's events, a field's pending
-trigrams — the biggest first (bytes for the first two, ids for the third), each in a
+One ''list'' per step — a part's pending writes, a field's pending index writes, a
+field's pending trigrams, the log entries not yet indexed by metarecord — the biggest first (bytes for the first two, ids for the third), each in a
 transaction of its own (`KvStore::fold_step`): a read or a write that arrives
 waits for one list, not for all of them. After a fold the next step is one second
 later (`NEXT`) if the repository is still quiet; with nothing left, the thread looks
 again when it could be idle. No chunk size to tune: a list is the unit.
 
 A deletion of many records waiting for its fold ([[Mass operations in the log]]) comes
-before every other list, whatever the sizes: its records are read with the entries of
-their parts still applied.
+before every other list, whatever the sizes: its records are read with the older
+pending writes of their parts still applied. The idle fold takes a `delete`'s records
+that are still deleted; those given back by an undo wait for a write to them
+([[Mass writes in the store]]) — undoing a deletion at once is the common
+case, and a copy of every record at idle time would be paid for nothing.
+
+The log entries written since the last fold are indexed by metarecord last
+(`log_entries_by_metarecord`, [[Log storage]]): a read of a metarecord's history
+reads the entries not yet indexed directly, so nothing waits on it.
 
 A step is not made while a coordinated revert holds the repository or the root is
 absent. `mf repo fold` folds at once what is pending ([[POST /repos/:repo/fold]]), and `mf repo reindex` folds everything. A list has ''no limit'': a

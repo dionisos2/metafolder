@@ -11,19 +11,20 @@ two counters, and `GET /repos/:repo/wear` ([[GET /repos/:repo/wear]]) serves it,
 !! What is pending: a fold cures it
 
 |!Field |!Means |
-|`mass_entries`, `mass_parts`, `mass_bytes` |entries of the parts' lists ([[Mass writes in the store]]), the parts they are in, their size |
-|`events`, `event_fields`, `event_bytes` |pending events of the fields' values, the fields, their size |
+|`mass_entries`, `mass_parts`, `mass_bytes` |pending writes of the parts (`pending_writes`, [[Mass writes in the store]]), the parts they are in, their size |
+|`events`, `event_fields`, `event_bytes` |pending index writes of the fields' values (`index_pending_writes`), the fields, their size |
 |`trigrams_pending` |ids whose trigrams a fold has still to build ([[Text search in the store]]) |
 
-Every read of a record pays for the entries of its part and every read of a field's
-values for the field's events, so the cost of reading grows with these. The idle fold
+Every read of a record pays for the pending writes of its part and every read of a
+field's values for the field's pending index writes, so the cost of reading grows with these. The idle fold
 ([[Folding in idle time]]) writes them in; nothing else limits them.
 
 !! Ids nobody holds: a reindex cures it
 
-`ids_allocated` is the number of dense ids ever handed out, `ids_live` those of
-metarecords that exist; `dead_ids` is the difference — deleted metarecords, and ids reserved for a uuid
-something points at ([[Store tables]]) — and `dead_fraction` its share. A deleted
+`ids_allocated` is the number of dense ids handed out since the last reindex
+(`next_metarecord_id`), `ids_live` those of metarecords that exist; `dead_ids` is the
+difference — deleted metarecords, and ids reserved for the parent of a position not
+yet created ([[Store tables]]) — and `dead_fraction` its share. A deleted
 metarecord's id stays in every bitmap, and its record in the store, until a reindex
 numbers the metarecords again ([[Checking and reindexing a repository]]), so bitmaps hold more ids than they
 have holders, and a subtree's ids are scattered over the years.

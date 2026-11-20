@@ -1,7 +1,7 @@
 title: Deleting a metarecord in the store
 tags: Storage
 kind: rationale
-summary: A deletion takes a metarecord's id out of the universe and keeps its record, and leaves what the indexes hold about it until a reindex: on a hard disk each index entry is a seek, so every answer is sifted through the universe instead.
+summary: A deletion takes a metarecord's id out of live_metarecords and keeps its record, and leaves what the indexes hold about it until a reindex: on a hard disk each index entry is a seek, so every answer is sifted through `live_metarecords` instead.
 audience: dev
 
 
@@ -17,31 +17,29 @@ in memory.
 !! What a deletion writes
 
 |!Written |!Why |
-|its existence (`metarecords`, one key); its record (`records`) stays |the primary data: the record is what a restoration finds |
-|its id out of the ''universe'' set |what makes it gone from every answer |
+|its id out of `live_metarecords`; its record (`metarecords`) stays |what makes it gone from every answer; the record is what a restoration finds |
 |`field_types`, the histograms |they count rows, and no reader can sift a count; both are small tables |
 |its parent out of the `parents` set, if it was the last child |a fact about ''another'' metarecord |
 |the operation and its snapshots |the log, appended ([[The operation log]]) |
 
-Everything else stays: the postings and name postings, the trigrams, the
-count and `absent` sets, the referrers and descendants, the
-`kids`, the id's mapping to its uuid — and, in the primary tables, its key in
-`forest`. The same file of eight rows now writes its record's key and its chunk of
-the universe outside the log and those small tables.
+Everything else stays: the postings (`nothing` included), the trigrams, the counts,
+the parent holders and descendants, its `index_raw_holder` keys, the id's mapping to
+its uuid. The same file of eight rows now writes its chunk of `live_metarecords`
+outside the log and those small tables.
 
 !! Why what is left is harmless
 
-* ''A record keeps its dense id between two reindexes.'' What still names a deleted id names nothing until the metarecord comes back, and it comes back under that same id: a revert of the deletion (`Writer::restore_metarecord`) gives back what the deletion took — the record's numbers, its place in the universe, the counts, the forest keys and the parents (`KvTxn::restore_deleted`) — and the entries that stayed are right again. What they describe is in the record itself, which a deletion does not remove: it stays, with the rows it held, until a reindex frees it (`kept` in `meta` says that one may be stored, and a read of a record then sifts it through the universe). No search of the log is needed, and none can fail: a prune forgets nothing a restoration reads. A creation under a uuid the store knows restores it the same way, then removes its rows in the ordinary way, which unpicks what the indexes held of them; a revert of an older deletion restores, then changes the rows into the ones it wants. A deletion of many records still pending is given back for one operation by `mass_undelete_log`, the operation being the id's rank in its mark.
-* ''Every answer is sifted through the universe.'' The query source intersects each bitmap it hands the evaluator with the universe, read once per query (`KvSource::sift`); a walk of the postings steps over the ids that are not in it. An entry is about one id, so a deleted id's entries cannot change what is said of another.
-* ''The primary leftover names a record that is gone.'' A `forest` entry holds its metarecord's dense id beside its uuid, so listing a folder or resolving a path tests the id against the universe without another read; a new position written on such a key replaces it.
+* ''A record keeps its dense id between two reindexes.'' What still names a deleted id names nothing until the metarecord comes back, and it comes back under that same id: a revert of the deletion (`Writer::restore_metarecord`) gives back what the deletion took — its place in `live_metarecords`, the counts and the parents (`KvTxn::restore_deleted`) — and the entries that stayed are right again. What they describe is in the record itself, which a deletion does not remove: it stays, with the rows it held, until a reindex frees it, and a read of a record is always sifted through `live_metarecords` (one read more per chunk and per request at most, the chunk being kept by the transaction). An id of `ids` outside `live_metarecords` is a deleted metarecord's if it has a record, a reserved one if not ([[Store tables]]). No search of the log is needed, and none can fail: a prune forgets nothing a restoration reads. A creation under a uuid the store knows restores it the same way, then removes its rows in the ordinary way, which unpicks what the indexes held of them; a revert of an older deletion restores, then changes the rows into the ones it wants. A deletion of many records still pending is given back for one operation by `mass_undelete_log`, the operation being the id's rank among the targets of its log entry.
+* ''Every answer is sifted through `live_metarecords`.'' The query source intersects each bitmap it hands the evaluator with it, read once per query (`KvSource::sift`); a walk of the postings steps over the ids that are not in it. An entry is about one id, so a deleted id's entries cannot change what is said of another.
+* ''An `index_raw_holder` entry names a record that is gone.'' It holds its metarecord's dense id, so listing a folder or resolving a path tests the id against `live_metarecords` without another read; a new position written on such a key replaces it.
 
-What the universe cannot sift is kept exact at the deletion: the counts above, and
-the `parents` set. A metarecord that still has children that exist is taken the same short way: the `Writer` refuses to commit that (`check_forest_integrity`), and a write that deletes the folder before its files leaves, once they are gone too, nothing to unpick.
+What `live_metarecords` cannot sift is kept exact at the deletion: the counts above, and
+`index_parents`. A metarecord that still has children that exist is taken the same short way: the `Writer` refuses to commit that (`check_forest_integrity`), and a write that deletes the folder before its files leaves, once they are gone too, nothing to unpick.
 
 !! What it costs
 
-* Each query reads the universe (one key per 65 536 metarecords) and intersects its leaves with it.
-* The leftovers take room, and slow the scans that cross them, until `mf repo reindex` drops them: it rebuilds the indexes from the rows, removes the primary leftovers, and writes the new ids into `forest` ([[Checking and reindexing a repository]]). So [[Compacting a repository]] gives back the room of a large deletion only after a reindex.
+* Each query reads `live_metarecords` (one key per 65 536 metarecords) and intersects its leaves with it.
+* The leftovers take room, and slow the scans that cross them, until `mf repo reindex` drops them: it renumbers the live metarecords, drops the deleted ones' records and ids, and rebuilds the indexes from the rows ([[Checking and reindexing a repository]]). So [[Compacting a repository]] gives back the room of a large deletion only after a reindex.
 * `mf repo check` holds the indexes to the rows ''on the ids of the metarecords that exist''; an id that was never given is still reported.
 
 The tests are `tests/kv_delete.rs`: which tables a deletion writes
@@ -50,6 +48,7 @@ deletions, reverts and a reindex.
 
 !! Deleting many records
 
-A deletion of many records at once does less still: the records stay in their keys and
-the key of each uuid in `metarecords`, until an idle fold, and only the universe, the type
-counts and the parents change ([[Mass operations in the log]]).
+A deletion of many records at once does less still: a pending write of kind `delete`
+says that the records hold the before of the deletion until an idle fold copies it into
+the log, and only `live_metarecords`, the type counts and the parents change
+([[Mass writes in the store]], [[Mass operations in the log]]).
