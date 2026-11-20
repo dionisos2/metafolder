@@ -56,7 +56,7 @@ fn a_mass_add_is_one_entry_that_reads_as_one_operation_per_record() {
     assert_eq!(written.get("snaps"), None, "no snapshot is written: {written:?}");
     assert_eq!(written.get("ops_by_label"), Some(&1), "{written:?}");
     assert_eq!(written.get("ops_by_entity"), Some(&1), "{written:?}");
-    assert_eq!(written.get("records"), None, "{written:?}");
+    assert_eq!(written.get("metarecords"), None, "{written:?}");
     // The log is counted by entry (doc "Log storage"); it reads as a record's
     // operation each.
     assert_eq!(store.counts().unwrap().0, ops_before + 1);
@@ -334,7 +334,7 @@ fn a_mass_replace_is_one_entry_that_reads_with_what_it_replaced() {
     let written = store.last_write_keys();
     assert_eq!(written.get("ops"), Some(&1), "{written:?}");
     assert_eq!(written.get("snaps"), None, "{written:?}");
-    assert_eq!(written.get("records"), None, "{written:?}");
+    assert_eq!(written.get("metarecords"), None, "{written:?}");
     let ops = store.ops_after(head).unwrap();
     assert_eq!(ops.len(), 40);
     for op in &ops {

@@ -113,6 +113,20 @@ impl Db {
         self.raw.prefix_iter(r, prefix)
     }
 
+    /// The entries under `prefix`, the whole table for an empty one (which
+    /// LMDB refuses as a key).
+    pub(super) fn scan<'t>(
+        &self,
+        r: &'t RoTxn<'_>,
+        prefix: &[u8],
+    ) -> heed::Result<Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't>> {
+        Ok(if prefix.is_empty() {
+            Box::new(self.raw.iter(r)?)
+        } else {
+            Box::new(self.raw.prefix_iter(r, prefix)?)
+        })
+    }
+
     pub(super) fn range<'t, R: std::ops::RangeBounds<[u8]>>(
         &self,
         r: &'t RoTxn<'_>,

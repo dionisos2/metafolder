@@ -991,13 +991,17 @@ fn test_the_version_before_a_label_is_computed_back_from_the_log() {
 
 #[test]
 fn test_a_field_write_does_not_write_the_metarecord_itself() {
-    // The version is computed when read: a write to a field leaves the
-    // metarecord's own key alone — on a hard disk, one place less to seek.
+    // The version is computed when read: a write to a field writes the record
+    // and leaves the numbering alone — on a hard disk, places less to seek.
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("a", Value::Int(1))]);
-    assert_eq!(conn.last_write_keys().get("metarecords"), Some(&1));
+    assert_eq!(conn.last_write_keys().get("live_metarecords"), Some(&1));
     set_field(&mut conn, m.uuid, "a", Value::Int(2));
-    assert_eq!(conn.last_write_keys().get("metarecords"), None, "{:?}", conn.last_write_keys());
+    let written = conn.last_write_keys();
+    assert!(written.get("metarecords").is_some(), "its record: {written:?}");
+    for table in ["live_metarecords", "ids", "uuids"] {
+        assert_eq!(written.get(table), None, "{table}: {written:?}");
+    }
     assert_eq!(conn.version(m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
 }
 

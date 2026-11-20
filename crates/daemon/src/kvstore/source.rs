@@ -109,7 +109,7 @@ impl KvSource<'_> {
     /// partition until a reindex (doc "Deleting a metarecord in the store"),
     /// so an answer is what the indexes say *of the universe*.
     fn live(&self) -> &RoaringBitmap {
-        self.live.get_or_init(|| self.set(derived::UNIVERSE, None))
+        self.live.get_or_init(|| self.live_set())
     }
 
     /// `ids` without those of deleted metarecords.
@@ -129,8 +129,7 @@ impl KvSource<'_> {
         if let std::collections::btree_map::Entry::Vacant(slot) = seen.entry(chunk) {
             let read = || -> Result<RoaringBitmap> {
                 self.read_keys(1)?;
-                let k = derived::set_key(derived::UNIVERSE, None, chunk);
-                Ok(match self.t.sets.get(&self.r, &k)? {
+                Ok(match self.t.live_metarecords.get(&self.r, &chunk.to_be_bytes())? {
                     Some(bytes) => derived::decode_set(bytes)?,
                     None => RoaringBitmap::new(),
                 })
@@ -148,7 +147,7 @@ impl KvSource<'_> {
             for entry in self.t.field_types.iter(&self.r)? {
                 let (k, _) = entry?;
                 let (name, ty) = derived::unesc(k)?;
-                let ty = String::from_utf8(ty.to_vec())?;
+                let ty = super::codec::field_type(&ty)?.to_string();
                 if type_filter.is_none_or(|want| want == ty) {
                     out.push((String::from_utf8(name)?, ty));
                 }
@@ -558,6 +557,15 @@ impl KvSource<'_> {
     }
 
     /// A whole set; a read per chunk of 65 536 ids it spans.
+    /// Every live metarecord: `live_metarecords` whole.
+    fn live_set(&self) -> RoaringBitmap {
+        let bm = self.ok(derived::read_live(&self.t, &self.r), RoaringBitmap::new());
+        if !self.counted(1 + bm.max().map_or(0, |m| u64::from(m >> 16))) {
+            return RoaringBitmap::new();
+        }
+        bm
+    }
+
     fn set(&self, kind: u8, field: Option<&str>) -> RoaringBitmap {
         let bm = self.ok(read_set(&self.t, &self.r, kind, field), RoaringBitmap::new());
         if !self.counted(1 + bm.max().map_or(0, |m| u64::from(m >> 16))) {
@@ -839,7 +847,7 @@ impl KvSource<'_> {
         let mut out = Vec::new();
         for e in self.t.field_types.prefix_iter(&self.r, &prefix)? {
             self.read_keys(1)?;
-            out.push(String::from_utf8(e?.0[prefix.len()..].to_vec())?);
+            out.push(super::codec::field_type(&e?.0[prefix.len()..])?.to_string());
         }
         Ok(out)
     }
@@ -952,7 +960,7 @@ impl KvSource<'_> {
 
     /// Up to `limit` metarecords with no `field` row at all.
     pub(crate) fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
-        let ids = self.set(derived::UNIVERSE, None) - self.holders(field);
+        let ids = self.live_set() - self.holders(field);
         self.uuids_of(ids.iter(), limit)
     }
 
@@ -1274,8 +1282,8 @@ impl Source for KvSource<'_> {
             for entry in self.t.field_types.prefix_iter(&self.r, &prefix)? {
                 let (k, _) = entry?;
                 self.read_keys(1)?;
-                let ty = &k[prefix.len()..];
-                if let Some(t) = TYPES.iter().find(|t| t.as_bytes() == ty) {
+                let ty = super::codec::field_type(&k[prefix.len()..])?;
+                if let Some(t) = TYPES.iter().find(|t| **t == ty) {
                     return Ok(Some(t));
                 }
             }

@@ -33,7 +33,7 @@ use uuid::Uuid;
 
 use super::derived::{
     count_prefix, decode_set, dense, referrers_prefix, set_prefix, COUNT_BITS, NO_TARGET, PARENTS,
-    REFERRERS, SETS, UNIVERSE,
+    REFERRERS, SETS,
 };
 use super::mass::{entry_key, read_part, Listed, DELETES_PART, THAWED_PART};
 use super::{
@@ -630,7 +630,7 @@ impl KvTxn<'_> {
         // Nothing may name a deleted record: what it left in the indexes
         // would come back to life with it (doc "Deleting a metarecord in the
         // store").
-        let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
+        let universe = self.read_chunked(super::derived::LIVE, &[])?;
         let ids = &(ids & &universe);
         let mut before = Vec::new();
         let changed = match kind {
@@ -743,7 +743,7 @@ impl KvTxn<'_> {
         for e in self.t.field_types.iter(&txn)? {
             let (name, ty) = super::derived::unesc(e?.0)?;
             let name = String::from_utf8(name).context("a field name")?;
-            if matches!(ty, b"tree_ref" | b"hierarchy_ref") {
+            if super::codec::is_position_type(&ty) {
                 positional.push(name.clone());
             }
             if all.last() != Some(&name) {
@@ -770,7 +770,7 @@ impl KvTxn<'_> {
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
-        let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
+        let universe = self.read_chunked(super::derived::LIVE, &[])?;
         let changed = ids & &universe;
         if changed.is_empty() {
             return Ok(Some(MassApplied { changed, last_op: 0, touches_watch: false }));
@@ -808,7 +808,7 @@ impl KvTxn<'_> {
         for field in ["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED] {
             touches_watch |= !(&self.holder_ids_now(field)? & &changed).is_empty();
         }
-        self.chunk_apply(SETS, &set_prefix(UNIVERSE, None), &changed, false)?;
+        self.chunk_apply(super::derived::LIVE, &[], &changed, false)?;
         let stub = Stub {
             first: self.next_op_id()?,
             label,
@@ -890,7 +890,7 @@ impl KvTxn<'_> {
         // A record deleted since, then given back, is alive under another id
         // (the id it had stays in the holders, which only the universe
         // sifts): the revert by ids would miss it, and say it did it.
-        let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
+        let universe = self.read_chunked(super::derived::LIVE, &[])?;
         if !ids.is_subset(&universe) {
             return Ok(None);
         }
@@ -952,7 +952,7 @@ impl KvTxn<'_> {
         };
         let (a, n) = ((first_op - stub.first) as usize, (last_op - first_op + 1) as usize);
         let ids: RoaringBitmap = all.iter().skip(a).take(n).collect();
-        let universe = self.read_chunked(SETS, &set_prefix(UNIVERSE, None))?;
+        let universe = self.read_chunked(super::derived::LIVE, &[])?;
         if ids.len() != n as u64 || !(&ids & &universe).is_empty() {
             return Ok(None);
         }
@@ -998,9 +998,7 @@ impl KvTxn<'_> {
                         r.name == field
                             && !matches!(r.value, metafolder_core::metarecord::Value::Nothing)
                     }) {
-                        found.insert(
-                            crate::rows::encode_value(&row.value).value_type.as_bytes().to_vec(),
-                        );
+                        found.insert(vec![super::codec::type_code(&row.value)]);
                     }
                 }
                 found.into_iter().collect()
@@ -1020,8 +1018,7 @@ impl KvTxn<'_> {
         // given back told it above.
         let (typed, mut positional) = self.fields_held()?;
         for (field, types, _) in &counts {
-            let placed =
-                types.iter().any(|t| matches!(t.as_slice(), b"tree_ref" | b"hierarchy_ref"));
+            let placed = types.iter().any(|t| super::codec::is_position_type(t));
             if placed && !typed.contains(field) {
                 positional.push(field.clone());
             }
@@ -1058,7 +1055,6 @@ impl KvTxn<'_> {
             // Not as plain rows: entries of a write to many records may still
             // name the id, older than the rows the deletion took.
             self.put_given_back(*id, rows)?;
-            self.t.metarecords.put(&mut self.txn.borrow_mut(), uuid.as_bytes(), &[])?;
             for row in rows {
                 self.add_hist(&row.name, &row.value)?;
                 if let Some(k) = Self::forest_key(&row.name, &row.value) {
@@ -1067,7 +1063,7 @@ impl KvTxn<'_> {
                 }
             }
         }
-        self.chunk_apply(SETS, &set_prefix(UNIVERSE, None), &ids, true)?;
+        self.chunk_apply(super::derived::LIVE, &[], &ids, true)?;
         for (field, types, back) in counts {
             for ty in types {
                 self.count_type_named(&field, &ty, back as i64)?;
@@ -1133,9 +1129,7 @@ impl KvTxn<'_> {
             let Some(uuid) = self.t.uuids.get(&txn, &id.to_be_bytes())? else { return Ok(None) };
             let Ok(uuid) = Uuid::from_slice(uuid) else { return Ok(None) };
             let named = self.t.ids.get(&txn, uuid.as_bytes())?;
-            if named != Some(&id.to_be_bytes()[..])
-                || self.t.metarecords.get(&txn, uuid.as_bytes())?.is_some()
-            {
+            if named != Some(&id.to_be_bytes()[..]) || self.live_in(&txn, id)? {
                 return Ok(None);
             }
             let prefix = key(&[&be(op), &[0u8]]);
@@ -1246,7 +1240,6 @@ impl KvTxn<'_> {
                     .read_in(&txn, &mut |read: &Read| read.stub_at(op_id))?
                     .filter(|s| s.delete);
             }
-            let uuid = self.t.uuids.get(&self.txn.borrow(), &id.to_be_bytes())?.map(<[u8]>::to_vec);
             let mut w = self.txn.borrow_mut();
             if let Some(stub) = &covering {
                 for (n, row) in rows.iter().enumerate() {
@@ -1254,13 +1247,6 @@ impl KvTxn<'_> {
                     self.t.snaps.put(&mut w, &k, &enc_row(row))?;
                 }
                 marked.entry(stub.first).or_insert_with(|| stub.clone());
-            }
-            // The key of a uuid is the metarecord's, if it is back by now. The
-            // record stays: it is what a restoration finds.
-            if let Some(uuid) = uuid {
-                if super::derived::id_of(&self.t, &w, &uuid)? == Some(id) {
-                    self.t.metarecords.delete(&mut w, &uuid)?;
-                }
             }
         }
         for (at, mut stub) in marked {

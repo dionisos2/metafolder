@@ -207,7 +207,7 @@ impl KvTxn<'_> {
     ) -> Result<bool> {
         for entry in self.t.field_types.prefix_iter(&self.txn.borrow(), &name_key(field))? {
             let (_, ty) = unesc(entry?.0)?;
-            if matches!(ty, b"tree_ref" | b"hierarchy_ref") {
+            if super::super::codec::is_position_type(&ty) {
                 return Ok(false);
             }
         }

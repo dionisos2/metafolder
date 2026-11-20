@@ -125,9 +125,10 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
     for table in ["forest", "ids", "uuids", "kids", "grams"] {
         assert_eq!(written.get(table), None, "a deletion wrote to {table}: {written:?}");
     }
-    assert_eq!(written.get("records"), None, "the record keeps its key: {written:?}");
-    // The universe, and nothing else: the folder still has children.
-    assert_eq!(written.get("sets"), Some(&1), "{written:?}");
+    assert_eq!(written.get("metarecords"), None, "the record keeps its key: {written:?}");
+    // The live metarecords, and nothing else: the folder still has children.
+    assert_eq!(written.get("live_metarecords"), Some(&1), "{written:?}");
+    assert_eq!(written.get("sets"), None, "{written:?}");
     check(&r.store);
 }
 
@@ -254,7 +255,7 @@ fn a_reindex_removes_what_the_deletions_left_behind() {
     let Repo { store, dir, .. } = r;
     drop(store);
     // One key per record: the root, the folder and the two files left.
-    assert_eq!(entries(dir.path(), "records"), 4);
+    assert_eq!(entries(dir.path(), "metarecords"), 4);
     // One position each: the root, the folder and the two files left.
     assert_eq!(entries(dir.path(), "forest"), 4);
     assert_eq!(entries(dir.path(), "ids"), 4);

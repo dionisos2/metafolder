@@ -9,6 +9,39 @@ use uuid::Uuid;
 
 use crate::rows::FieldRow;
 
+/// The name of the type of `code` (`rows::encode_value`'s `value_type`),
+/// as `field_types` keys a field by `code` (doc "Store tables").
+pub(crate) fn type_name(code: u8) -> Option<&'static str> {
+    Some(match code {
+        NOTHING => "nothing",
+        1 => "bool",
+        2 => "int",
+        3 => "float",
+        4 => "string",
+        5 => "datetime",
+        6 => "ref",
+        7 => "refbase",
+        8 => "externalref",
+        9 => "tree_ref",
+        10 => "hierarchy_ref",
+        _ => return None,
+    })
+}
+
+/// The type code of a `field_types` key's last byte, as its name: the type
+/// a field holds rows of.
+pub(crate) fn field_type(key_tail: &[u8]) -> Result<&'static str> {
+    match key_tail {
+        [code] => type_name(*code).ok_or_else(|| anyhow::anyhow!("a type code of {code}")),
+        other => bail!("a field type of {} bytes", other.len()),
+    }
+}
+
+/// Whether a `field_types` key's type is a position's.
+pub(crate) fn is_position_type(key_tail: &[u8]) -> bool {
+    matches!(key_tail, [9] | [10])
+}
+
 /// The code of a value's type, the byte written before a field's values.
 pub(crate) fn type_code(v: &Value) -> u8 {
     match v {

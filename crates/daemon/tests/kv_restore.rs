@@ -387,7 +387,7 @@ fn a_store_of_the_version_before_is_derived_again_when_it_opens() {
     {
         // As the version before left it: no record, an older `derived`, no flag.
         let env = raw_env(_dir.path());
-        let records = open_raw(&env, "records");
+        let records = open_raw(&env, "metarecords");
         let meta = open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
         assert!(records.delete(&mut w, &id.to_be_bytes()).unwrap(), "the record was kept");

@@ -175,7 +175,7 @@ fn a_store_of_layout_7_converts_when_it_opens() {
     for name in ["field_cells", "row_owner", "by_field"] {
         assert!(!has_table(&env, name), "{name} is removed");
     }
-    let records = open_raw(&env, "records");
+    let records = open_raw(&env, "metarecords");
     let forest = open_raw(&env, "forest");
     let r = env.read_txn().unwrap();
     // One key per record that holds a row: the root, the thirty, and the one

@@ -60,7 +60,7 @@ use uuid::Uuid;
 
 use crate::error::DomainError;
 use crate::log::{OpRow, Retention};
-use crate::rows::{self, FieldRow, TreeRow};
+use crate::rows::{FieldRow, TreeRow};
 use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Rows, WriteTxn};
 
 mod codec;
@@ -88,7 +88,7 @@ struct Tables {
     version: Db,
     global_primary_state: Db,
     metarecords: Db,
-    records: Db,
+    live_metarecords: Db,
     mass: Db,
     field_types: Db,
     forest: Db,
@@ -119,7 +119,7 @@ const NAMES: [&str; table::TABLES] = [
     "version",
     "global_primary_state",
     "metarecords",
-    "records",
+    "live_metarecords",
     "mass",
     "field_types",
     "forest",
@@ -161,13 +161,13 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, sets, kids, grams, hist, events, label_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, sets, kids, grams, hist, events, label_reverts] =
             dbs;
         Ok(Tables {
             version,
             global_primary_state,
             metarecords,
-            records,
+            live_metarecords,
             mass,
             field_types,
             forest,
@@ -199,7 +199,7 @@ impl Tables {
             self.version,
             self.global_primary_state,
             self.metarecords,
-            self.records,
+            self.live_metarecords,
             self.mass,
             self.field_types,
             self.forest,
@@ -862,9 +862,6 @@ struct Read<'a> {
     /// Whether any part has entries pending, which a record is read with
     /// applied ([`mass`]).
     mass: bool,
-    /// Whether a deletion of many records is pending: the records it deleted
-    /// are still stored, and a read of one sifts it through the universe.
-    deletes: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
     /// The store's memo of decoded stubs, and the generation the read sees;
@@ -877,21 +874,9 @@ impl Read<'_> {
         key.get(self.t, self.r)
     }
 
+    /// Whether a metarecord exists: its uuid has a dense id, which is live
+    /// (doc "Store tables").
     fn exists(&self, uuid: Uuid) -> Result<bool> {
-        self.count(1)?;
-        if self.t.metarecords.get(self.r, uuid.as_bytes())?.is_none() {
-            return Ok(false);
-        }
-        self.holds(uuid)
-    }
-
-    /// Whether a metarecord whose key is stored still exists: with a deletion
-    /// pending, a deleted one's key stays until the fold, and its id is out of
-    /// the universe.
-    fn holds(&self, uuid: Uuid) -> Result<bool> {
-        if !self.deletes {
-            return Ok(true);
-        }
         self.count(1)?;
         match derived::id_of(self.t, self.r, uuid.as_bytes())? {
             Some(id) => self.live(id),
@@ -910,8 +895,7 @@ impl Read<'_> {
         let mut seen = self.universe.borrow_mut();
         if let std::collections::hash_map::Entry::Vacant(slot) = seen.entry(chunk) {
             self.count(1)?;
-            let k = derived::set_key(derived::UNIVERSE, None, chunk);
-            slot.insert(match self.t.sets.get(self.r, &k)? {
+            slot.insert(match self.t.live_metarecords.get(self.r, &chunk.to_be_bytes())? {
                 Some(bytes) => derived::decode_set(bytes)?,
                 None => roaring::RoaringBitmap::new(),
             });
@@ -1307,26 +1291,23 @@ macro_rules! kv_reads {
             fn metarecord_count(&self) -> Result<usize> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    if $read.deletes {
-                        // The keys of the metarecords a deletion took out stay.
-                        let universe =
-                            derived::read_set($read.t, $read.r, derived::UNIVERSE, None)?;
-                        return Ok(universe.len() as usize);
-                    }
-                    Ok($read.t.metarecords.len($read.r)? as usize)
+                    let live = derived::read_live($read.t, $read.r)?;
+                    $read.count(1 + live.max().map_or(0, |m| u64::from(m >> 16)))?;
+                    Ok(live.len() as usize)
                 })
             }
             fn metarecords(&self) -> Result<Vec<Uuid>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    let mut out = Vec::new();
-                    for e in $read.t.metarecords.iter($read.r)? {
+                    let live = derived::read_live($read.t, $read.r)?;
+                    let mut out = Vec::with_capacity(live.len() as usize);
+                    for id in &live {
                         $read.count(1)?;
-                        let uuid = uuid_of(e?.0);
-                        if $read.holds(uuid)? {
-                            out.push(uuid);
-                        }
+                        out.push($read.uuid_of_id(id)?);
                     }
+                    // In uuid order, as the store kept them before the
+                    // numbering was primary.
+                    out.sort_unstable();
                     Ok(out)
                 })
             }
@@ -1355,7 +1336,7 @@ macro_rules! kv_reads {
                     for e in $read.t.field_types.prefix_iter($read.r, &prefix)? {
                         $read.count(1)?;
                         let (k, _) = e?;
-                        out.push(String::from_utf8(k[prefix.len()..].to_vec())?);
+                        out.push(codec::field_type(&k[prefix.len()..])?.to_string());
                     }
                     Ok(out)
                 })
@@ -1681,7 +1662,6 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         holders: None,
         values: None,
         mass: me.mass_pending(),
-        deletes: me.deletes_pending(),
         universe: Default::default(),
         stubs: Some((&me.stub_memo, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
     })
@@ -1782,7 +1762,6 @@ impl KvTxn<'_> {
             holders: Some(&holders),
             values: Some(&values),
             mass: self.mass_pending(),
-            deletes: self.deletes_pending(),
             universe: Default::default(),
             stubs: None,
         })
@@ -2097,8 +2076,9 @@ impl KvStore {
     /// layout holds no data in them, so this runs at every open, and does
     /// nothing when there are none.
     fn remove_older_tables(&self) -> Result<()> {
-        const OLDER: [&str; 10] = [
+        const OLDER: [&str; 11] = [
             "meta",
+            "records",
             "parts",
             "cells",
             "field_cells",
@@ -2117,7 +2097,7 @@ impl KvStore {
                 for name in OLDER {
                     found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
                 }
-                let found: [_; 10] = found.try_into().expect("one per name");
+                let found: [_; 11] = found.try_into().expect("one per name");
                 Ok(CommitOrAbort::<_, ()>::Commit(found))
             })?
             .commit()
@@ -2141,6 +2121,8 @@ impl KvStore {
         // heed opens a database in a transaction of its own.
         const GONE: [&str; 4] = ["op_children", "restorations", "ops_by_rev", "revisions"];
         const ROWS: [&str; 4] = ["cells", "field_cells", "row_owner", "by_field"];
+        // `records` of layouts 8 to 10: the table `metarecords` is now.
+        let old_records = open_old_table(&self.env, "records")?;
         let r = self.env.read_txn()?;
         let (rows, gone) = self
             .env
@@ -2160,7 +2142,6 @@ impl KvStore {
             .commit()
             .expect("the databases are committed");
         let txn = KvTxn::new(self)?;
-        let mut assigned = false;
         // The counters `meta` kept, in the state tables (layout 11) — not
         // what the log's, which is emptied below, nor the versions.
         let old = |name: &[u8]| old_meta.iter().find(|(k, _)| k == name).map(|(_, v)| *v);
@@ -2182,17 +2163,21 @@ impl KvStore {
             txn.meta_put(State::DerivedVersion, n)?;
         }
         {
-            let w = txn.txn.borrow_mut();
+            let mut w = txn.txn.borrow_mut();
             let t = txn.t;
-            // Every metarecord has a dense id from here on.
+            // `metarecords` said which metarecords exist (a uuid each, up to
+            // layout 10): read, then emptied, the table holding the records
+            // from layout 11 (doc "Store tables").
             let uuids: Vec<[u8; 16]> = {
                 let mut out = Vec::new();
                 for e in t.metarecords.iter(&w)? {
-                    out.push(e?.0.try_into().expect("a 16-byte uuid"));
+                    out.push(e?.0.try_into().context("a 16-byte uuid in the older metarecords")?);
                 }
                 out
             };
+            t.metarecords.clear(&mut w)?;
             drop(w);
+            let existing: std::collections::HashSet<[u8; 16]> = uuids.iter().copied().collect();
             for uuid in &uuids {
                 if txn.dense_id(uuid)?.is_none() {
                     let id = u32::try_from(txn.next(State::NextMetarecordId)?)
@@ -2200,24 +2185,23 @@ impl KvStore {
                     let mut w = txn.txn.borrow_mut();
                     t.ids.put(&mut w, uuid, &id.to_be_bytes())?;
                     t.uuids.put(&mut w, &id.to_be_bytes(), uuid)?;
-                    assigned = true;
                 }
             }
             let mut w = txn.txn.borrow_mut();
             // Layouts 8 to 10 kept the records and the pending writes, their
             // values in the column form: written again in the compact one, a
             // field's nothing beside values dropped (layout 11).
-            if from.is_some_and(|layout| layout >= 8) {
-                reencode(t.records, &mut w, |_, v| {
+            if let Some(old) = old_records.filter(|_| from.is_some_and(|layout| layout >= 8)) {
+                copy_reencoded(old, t.metarecords, &mut w, |v| {
                     let mut record = v10::dec_record(v)?;
                     record.drop_mixed_nothing();
                     Ok(record.encode())
                 })?;
+                old.clear(w.unjournaled())?;
                 reencode(t.mass, &mut w, |k, v| {
                     let op = u64::from_be_bytes(k[4..12].try_into()?);
                     Ok(v10::dec_listed(op, v)?.encode())
                 })?;
-                assigned = true;
             }
             // The rows, a metarecord's together (both tables keep them in
             // uuid order).
@@ -2246,7 +2230,7 @@ impl KvStore {
                             Some((u, rows)) if *u == uuid => rows.push((id, row)),
                             _ => {
                                 if let Some((u, rows)) = group.take() {
-                                    file_converted(&t, &mut w, &u, rows)?;
+                                    file_converted(&t, &mut w, &existing, &u, rows)?;
                                 }
                                 group = Some((uuid, vec![(id, row)]));
                             }
@@ -2254,7 +2238,7 @@ impl KvStore {
                     }
                 }
                 if let Some((u, rows)) = group.take() {
-                    file_converted(&t, &mut w, &u, rows)?;
+                    file_converted(&t, &mut w, &existing, &u, rows)?;
                 }
             }
             for old in rows.iter().flatten() {
@@ -2280,13 +2264,52 @@ impl KvStore {
                 for (k, v) in &batch {
                     // A position of a metarecord no longer there is dropped.
                     match derived::id_of(&t, &w, &v[..16])? {
-                        Some(id) if t.metarecords.get(&w, &v[..16])?.is_some() => {
+                        Some(id) if existing.contains(&v[..16]) => {
                             t.forest.put(&mut w, k, &[&v[..16], &id.to_be_bytes()[..]].concat())?;
                         }
                         _ => {
                             t.forest.delete(&mut w, k)?;
                         }
                     }
+                }
+            }
+            // The live metarecords, primary from layout 11: those that existed,
+            // less the ids a deletion of many records still pending took out
+            // (their key stayed until its fold); each has a record.
+            let mut live = roaring::RoaringBitmap::new();
+            for uuid in &existing {
+                if let Some(id) = derived::id_of(&t, &w, uuid)? {
+                    live.insert(id);
+                }
+            }
+            let pending_deletes: Vec<(Vec<u8>, Vec<u8>)> = t
+                .mass
+                .prefix_iter(&w, &mass::DELETES_PART.to_be_bytes())?
+                .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())))
+                .collect::<heed::Result<_>>()?;
+            for (k, v) in pending_deletes {
+                let op = u64::from_be_bytes(k[4..12].try_into()?);
+                live -= &mass::Listed::decode(op, &v)?.ids;
+            }
+            for id in &live {
+                let k = id.to_be_bytes();
+                if t.metarecords.get(&w, &k)?.is_none() {
+                    t.metarecords.put(&mut w, &k, &mass::Record::plain(Vec::new()).encode())?;
+                }
+            }
+            t.live_metarecords.clear(&mut w)?;
+            if let (Some(lo), Some(hi)) = (live.min(), live.max()) {
+                for chunk in (lo >> 16)..=(hi >> 16) {
+                    let mut part = roaring::RoaringBitmap::new();
+                    part.insert_range((chunk << 16)..=((chunk << 16) | 0xFFFF));
+                    part &= &live;
+                    if part.is_empty() {
+                        continue;
+                    }
+                    part.optimize();
+                    let mut bytes = Vec::with_capacity(part.serialized_size());
+                    part.serialize_into(&mut bytes)?;
+                    t.live_metarecords.put(&mut w, &(chunk as u16).to_be_bytes(), &bytes)?;
                 }
             }
             // The log of a store of an older layout is dropped (layout 11
@@ -2318,7 +2341,9 @@ impl KvStore {
         }
         txn.meta_put(State::PrimaryVersion, LAYOUT)?;
         txn.finish()?;
-        Ok(assigned)
+        // The live metarecords and the records are written anew: the indexes
+        // are derived again.
+        Ok(true)
     }
 }
 
@@ -2335,10 +2360,11 @@ type ConvertedRows = Vec<(i64, FieldRow)>;
 fn file_converted(
     t: &Tables,
     w: &mut table::Wtxn<'_>,
+    existing: &std::collections::HashSet<[u8; 16]>,
     uuid: &[u8; 16],
     mut rows: ConvertedRows,
 ) -> Result<()> {
-    if t.metarecords.get(w, uuid)?.is_none() {
+    if !existing.contains(uuid) {
         return Ok(());
     }
     let id = derived::id_of(t, w, uuid)?.context("a metarecord with no dense id")?;
@@ -2346,8 +2372,51 @@ fn file_converted(
     let rows: Vec<FieldRow> = rows.into_iter().map(|(_, row)| row).collect();
     let mut record = mass::Record::plain(rows);
     record.drop_mixed_nothing();
-    t.records.put(w, &id.to_be_bytes(), &record.encode())?;
+    t.metarecords.put(w, &id.to_be_bytes(), &record.encode())?;
     Ok(())
+}
+
+/// A table of an older layout, if the store has one.
+fn open_old_table(
+    env: &Env<WithoutTls>,
+    name: &str,
+) -> Result<Option<heed::Database<'static, Bytes, Bytes>>> {
+    let r = env.read_txn()?;
+    Ok(env
+        .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+            Ok(CommitOrAbort::<_, ()>::Commit(dbo.open_database::<Bytes, Bytes>(r, Some(name))?))
+        })?
+        .commit()
+        .expect("the database is committed"))
+}
+
+/// Copies every entry of `from`, an older table, into `to`, its value
+/// converted by `convert`, a batch at a time.
+fn copy_reencoded(
+    from: heed::Database<'static, Bytes, Bytes>,
+    to: Db,
+    w: &mut table::Wtxn<'_>,
+    convert: impl Fn(&[u8]) -> Result<Vec<u8>>,
+) -> Result<()> {
+    const BATCH: usize = 10_000;
+    let mut after: Option<Vec<u8>> = None;
+    loop {
+        let batch: Vec<(Vec<u8>, Vec<u8>)> = {
+            let lo = match &after {
+                Some(k) => std::ops::Bound::Excluded(k.as_slice()),
+                None => std::ops::Bound::Unbounded,
+            };
+            from.range(w, &(lo, std::ops::Bound::Unbounded))?
+                .take(BATCH)
+                .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())))
+                .collect::<heed::Result<_>>()?
+        };
+        let Some((last, _)) = batch.last() else { return Ok(()) };
+        after = Some(last.clone());
+        for (k, v) in &batch {
+            to.put(w, k, &convert(v)?)?;
+        }
+    }
 }
 
 /// Writes again, in the compact encoding (doc "Value encoding in the
@@ -2460,12 +2529,13 @@ impl KvTxn<'_> {
         if matches!(value, Value::Nothing) {
             return Ok(());
         }
-        self.count_type_named(name, rows::encode_value(value).value_type.as_bytes(), delta)
+        self.count_type_named(name, &[codec::type_code(value)], delta)
     }
 
-    /// [`Self::count_type`] for a type named.
-    fn count_type_named(&self, name: &str, value_type: &[u8], delta: i64) -> Result<()> {
-        let k = key(&[&name_key(name), value_type]);
+    /// [`Self::count_type`] for a type code (one byte: `field_types` keys a
+    /// field's types by their codes, doc "Store tables").
+    fn count_type_named(&self, name: &str, code: &[u8], delta: i64) -> Result<()> {
+        let k = key(&[&name_key(name), code]);
         let mut w = self.txn.borrow_mut();
         let n = self.t.field_types.get(&w, &k)?.map_or(0, from_be) + delta;
         if n <= 0 {
@@ -2476,14 +2546,11 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// Writes a record's rows under its key; a record with none has no key.
+    /// Writes a record's rows under its key — none included: every
+    /// metarecord has a record (doc "Store tables").
     fn put_record(&self, id: u32, rows: &[FieldRow]) -> Result<()> {
         let mut w = self.txn.borrow_mut();
-        if rows.is_empty() {
-            self.t.records.delete(&mut w, &id.to_be_bytes())?;
-        } else {
-            self.t.records.put(&mut w, &id.to_be_bytes(), &enc_rows(rows))?;
-        }
+        self.t.metarecords.put(&mut w, &id.to_be_bytes(), &enc_rows(rows))?;
         Ok(())
     }
 
@@ -2533,7 +2600,6 @@ impl KvTxn<'_> {
                     holders: None,
                     values: None,
                     mass: false,
-                    deletes: false,
                     universe: Default::default(),
                     stubs: None,
                 };
@@ -2656,20 +2722,11 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn create_metarecord(&self, uuid: Uuid) -> Result<()> {
-        let mut w = self.txn.borrow_mut();
-        if self.t.metarecords.get(&w, uuid.as_bytes())?.is_some() {
-            drop(w);
-            // A deleted one's key stays until the fold, which leaves it be if
-            // the metarecord is back by then.
-            if Rows::exists(self, uuid)? {
-                bail!("metarecord {uuid} already exists");
-            }
-            w = self.txn.borrow_mut();
+        if Rows::exists(self, uuid)? {
+            bail!("metarecord {uuid} already exists");
         }
-        // Its existence, and nothing else: the version is computed from the
-        // rows when read (doc "Metarecord version").
-        self.t.metarecords.put(&mut w, uuid.as_bytes(), &[])?;
-        drop(w);
+        // A dense id, live, and an empty record: the version is computed from
+        // the rows when read (doc "Metarecord version").
         self.derive_created(uuid)
     }
 
@@ -2695,7 +2752,6 @@ impl WriteTxn for KvTxn<'_> {
             self.count_type(&row.name, &row.value, -1)?;
             self.derive_dropped(uuid, &row.name, &row.value)?;
         }
-        self.t.metarecords.delete(&mut self.txn.borrow_mut(), uuid.as_bytes())?;
         self.derive_removed(uuid)
     }
 
@@ -2945,7 +3001,7 @@ impl WriteTxn for KvTxn<'_> {
     fn clear_metarecords(&self) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        for db in [t.metarecords, t.records, t.field_types, t.forest] {
+        for db in [t.metarecords, t.live_metarecords, t.ids, t.field_types, t.forest] {
             db.clear(&mut w)?;
         }
         drop(w);

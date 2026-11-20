@@ -74,7 +74,7 @@ fn a_mass_delete_is_one_entry_and_the_records_stay_until_the_fold() {
     let written = store.last_write_keys();
     assert_eq!(written.get("ops"), Some(&1), "one entry: {written:?}");
     assert_eq!(written.get("snaps"), None, "{written:?}");
-    assert_eq!(written.get("records"), None, "no record is written: {written:?}");
+    assert_eq!(written.get("metarecords"), None, "no record is written: {written:?}");
     assert_eq!(written.get("metarecords"), None, "{written:?}");
 
     for u in gone {
@@ -287,7 +287,7 @@ fn undoing_a_pending_mass_delete_only_gives_the_universe_back() {
     w.commit().unwrap();
 
     let written = store.last_write_keys();
-    for table in ["records", "ids", "uuids", "metarecords", "kids", "forest", "snaps"] {
+    for table in ["metarecords", "ids", "uuids", "kids", "forest", "snaps"] {
         assert_eq!(written.get(table), None, "{table} untouched: {written:?}");
     }
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
@@ -883,7 +883,7 @@ fn reverting_a_mass_add_is_one_entry_naming_what_it_reverts() {
     w.commit().unwrap();
     let written = store.last_write_keys();
     assert_eq!(written.get("ops"), Some(&1), "one entry: {written:?}");
-    assert_eq!(written.get("records"), None, "{written:?}");
+    assert_eq!(written.get("metarecords"), None, "{written:?}");
     assert_eq!(holders(&store), 0);
     let undone = store.ops_after(ops.last().unwrap().id).unwrap();
     assert_eq!(undone.len(), 40);
@@ -1240,7 +1240,11 @@ fn giving_back_records_that_hold_a_reference_makes_no_parent_of_its_target() {
         revert::apply(&mut w, &ops).unwrap();
         w.commit().unwrap();
         let written = store.last_write_keys();
-        assert_eq!(written.get("records"), None, "alive: {target_alive}, in one pass: {written:?}");
+        assert_eq!(
+            written.get("metarecords"),
+            None,
+            "alive: {target_alive}, in one pass: {written:?}"
+        );
         for &x in &xs {
             assert!(Rows::exists(&store, x).unwrap());
         }

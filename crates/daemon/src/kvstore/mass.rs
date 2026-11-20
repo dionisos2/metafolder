@@ -271,7 +271,7 @@ pub(crate) fn read_record(
     read: &mut dyn FnMut(u64) -> Result<()>,
 ) -> Result<Vec<FieldRow>> {
     read(1)?;
-    let record = match t.records.get(r, &id.to_be_bytes())? {
+    let record = match t.metarecords.get(r, &id.to_be_bytes())? {
         Some(v) => Record::decode(v)?,
         None => Record::default(),
     };
@@ -291,7 +291,7 @@ pub(crate) fn read_record(
 /// only named has no record yet).
 pub(crate) fn record_ids(t: &Tables, r: &RoTxn<'_>, mass: bool) -> Result<RoaringBitmap> {
     let mut ids = RoaringBitmap::new();
-    for entry in t.records.iter(r)? {
+    for entry in t.metarecords.iter(r)? {
         ids.insert(super::derived::dense(entry?.0));
     }
     if mass {
@@ -317,7 +317,7 @@ impl Parts {
         id: u32,
         mass: bool,
     ) -> Result<Vec<FieldRow>> {
-        let record = match t.records.get(r, &id.to_be_bytes())? {
+        let record = match t.metarecords.get(r, &id.to_be_bytes())? {
             Some(v) => Record::decode(v)?,
             None => Record::default(),
         };
@@ -391,7 +391,7 @@ impl KvTxn<'_> {
     /// The record of dense id `id`, with the entries naming it applied.
     pub(super) fn load_record(&self, id: u32) -> Result<Loaded> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let raw = match self.t.records.get(&self.txn.borrow(), &id.to_be_bytes())? {
+        let raw = match self.t.metarecords.get(&self.txn.borrow(), &id.to_be_bytes())? {
             Some(v) => Record::decode(v)?,
             None => Record::default(),
         };
@@ -453,11 +453,7 @@ impl KvTxn<'_> {
             record
         };
         let mut w = self.txn.borrow_mut();
-        if record.rows.is_empty() && record.tombs.is_empty() && record.cleared.is_empty() {
-            self.t.records.delete(&mut w, &loaded.id.to_be_bytes())?;
-        } else {
-            self.t.records.put(&mut w, &loaded.id.to_be_bytes(), &record.encode())?;
-        }
+        self.t.metarecords.put(&mut w, &loaded.id.to_be_bytes(), &record.encode())?;
         Ok(())
     }
 
@@ -515,7 +511,7 @@ impl KvTxn<'_> {
         // A deleted record is folded too: its record says what the entries it
         // keeps in the indexes describe, which a restoration relies on.
         for id in ids {
-            let raw = match self.t.records.get(&self.txn.borrow(), &id.to_be_bytes())? {
+            let raw = match self.t.metarecords.get(&self.txn.borrow(), &id.to_be_bytes())? {
                 Some(v) => Record::decode(v)?,
                 None => Record::default(),
             };

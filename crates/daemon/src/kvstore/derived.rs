@@ -54,8 +54,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex.
-pub(super) const DERIVED_VERSION: i64 = 16;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types.
+pub(super) const DERIVED_VERSION: i64 = 17;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -241,6 +241,28 @@ pub(super) fn hist_chunks_key(field: &str, bucket: &[u8]) -> Vec<u8> {
 /// tells them apart.
 pub(super) const SETS: u8 = 0;
 const GRAMS: u8 = 1;
+/// `live_metarecords`, primary: its key is the chunk alone.
+pub(super) const LIVE: u8 = 2;
+
+/// The table of chunked bitmaps a selector names.
+pub(super) fn chunk_db(t: &Tables, table: u8) -> super::table::Db {
+    match table {
+        SETS => t.sets,
+        GRAMS => t.grams,
+        LIVE => t.live_metarecords,
+        other => unreachable!("no chunked table {other}"),
+    }
+}
+
+/// The live metarecords, as committed: the union of the chunks of
+/// `live_metarecords`.
+pub(super) fn read_live(t: &Tables, r: &RoTxn<'_>) -> Result<RoaringBitmap> {
+    let mut out = RoaringBitmap::new();
+    for entry in t.live_metarecords.iter(r)? {
+        out |= decode_set(entry?.1)?;
+    }
+    Ok(out)
+}
 
 /// The longest text (lower-cased, in bytes) split in trigrams. A longer one —
 /// a note, lyrics — would write a key per trigram on every edit; its id joins
@@ -577,14 +599,14 @@ impl KvTxn<'_> {
         chunk: u16,
         f: impl FnOnce(&RoaringBitmap) -> T,
     ) -> Result<T> {
-        let k = set_key(UNIVERSE, None, chunk);
-        let cached = [&[SETS][..], &k].concat();
+        let k = chunk.to_be_bytes();
+        let cached = [&[LIVE][..], &k].concat();
         if let Some(bm) = self.sets.borrow().get(&cached) {
             return Ok(f(bm));
         }
         let mut seen = self.universe.borrow_mut();
         if let std::collections::hash_map::Entry::Vacant(slot) = seen.entry(chunk) {
-            slot.insert(match self.t.sets.get(r, &k)? {
+            slot.insert(match self.t.live_metarecords.get(r, &k)? {
                 Some(bytes) => decode_set(bytes)?,
                 None => RoaringBitmap::new(),
             });
@@ -658,7 +680,7 @@ impl KvTxn<'_> {
         chunk: u16,
         change: &mut dyn FnMut(&mut RoaringBitmap),
     ) -> Result<()> {
-        let db = if table == SETS { self.t.sets } else { self.t.grams };
+        let db = chunk_db(&self.t, table);
         let k = [&[table][..], prefix, &chunk.to_be_bytes()].concat();
         let mut cache = self.sets.borrow_mut();
         if !cache.contains_key(&k) {
@@ -682,12 +704,12 @@ impl KvTxn<'_> {
     /// A whole bitmap as the transaction sees it: its stored chunks, the
     /// cached ones in their stead.
     pub(super) fn read_chunked(&self, table: u8, prefix: &[u8]) -> Result<RoaringBitmap> {
-        let db = if table == SETS { self.t.sets } else { self.t.grams };
+        let db = chunk_db(&self.t, table);
         let whole = [&[table][..], prefix].concat();
         let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
         let cache = self.sets.borrow();
         let mut out = RoaringBitmap::new();
-        for entry in db.prefix_iter(&self.txn.borrow(), prefix)? {
+        for entry in db.scan(&self.txn.borrow(), prefix)? {
             let (k, v) = entry?;
             if k.len() == prefix.len() + 2 {
                 let chunk = u16::from_be_bytes([k[k.len() - 2], k[k.len() - 1]]);
@@ -752,7 +774,7 @@ impl KvTxn<'_> {
                     }
                 }
             }
-            let db = if k[0] == SETS { self.t.sets } else { self.t.grams };
+            let db = chunk_db(&self.t, k[0]);
             if bm.is_empty() {
                 db.delete(&mut w, &k[1..])?;
             } else {
@@ -775,7 +797,7 @@ impl KvTxn<'_> {
     /// Whether a chunked bitmap has any member, as the transaction sees it —
     /// without decoding the stored chunks.
     fn chunked_exists(&self, table: u8, prefix: &[u8]) -> Result<bool> {
-        let db = if table == SETS { self.t.sets } else { self.t.grams };
+        let db = chunk_db(&self.t, table);
         let whole = [&[table][..], prefix].concat();
         let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
         {
@@ -785,7 +807,7 @@ impl KvTxn<'_> {
                 return Ok(true);
             }
         }
-        for entry in db.prefix_iter(&self.txn.borrow(), prefix)? {
+        for entry in db.scan(&self.txn.borrow(), prefix)? {
             let (k, _) = entry?;
             if k.len() == prefix.len() + 2 {
                 let chunk = u16::from_be_bytes([k[k.len() - 2], k[k.len() - 1]]);
@@ -830,9 +852,7 @@ impl KvTxn<'_> {
         if let Some(id) = self.id(target)? {
             return Ok(id);
         }
-        let id = self.new_id(target)?;
-        self.set_member(RESERVED, None, id, true)?;
-        Ok(id)
+        self.new_id(target)
     }
 
     /// The next dense id, given to `uuid`.
@@ -845,13 +865,12 @@ impl KvTxn<'_> {
         Ok(id)
     }
 
-    /// Whether `id` was reserved for a uuid no metarecord has had.
+    /// Whether `id` was reserved for a uuid no metarecord has had: not live,
+    /// and no record — a deleted metarecord's stays until a reindex (doc
+    /// "Store tables").
     pub(super) fn reserved(&self, id: u32) -> Result<bool> {
-        let mut found = false;
-        self.with_chunk(SETS, &set_prefix(RESERVED, None), (id >> 16) as u16, &mut |bm| {
-            found = bm.contains(id);
-        })?;
-        Ok(found)
+        let txn = self.txn.borrow();
+        Ok(!self.live_in(&txn, id)? && self.t.metarecords.get(&txn, &id.to_be_bytes())?.is_none())
     }
 
     /// A metarecord was created: it gets a dense id, in the universe, and
@@ -864,14 +883,17 @@ impl KvTxn<'_> {
     /// under the new id.
     pub(super) fn derive_created(&self, uuid: Uuid) -> Result<()> {
         let id = match self.id(uuid.as_bytes())? {
-            Some(reserved) if self.reserved(reserved)? => {
-                self.set_member(RESERVED, None, reserved, false)?;
-                reserved
-            }
+            Some(reserved) if self.reserved(reserved)? => reserved,
             Some(_) => bail!("metarecord {uuid} was deleted: it is given back, not created"),
             None => self.new_id(uuid.as_bytes())?,
         };
-        self.set_member(UNIVERSE, None, id, true)?;
+        self.chunk_member(LIVE, &[], id, true)?;
+        // Every metarecord has a record, an empty one included.
+        let k = id.to_be_bytes();
+        if self.t.metarecords.get(&self.txn.borrow(), &k)?.is_none() {
+            let empty = super::mass::Record::plain(Vec::new()).encode();
+            self.t.metarecords.put(&mut self.txn.borrow_mut(), &k, &empty)?;
+        }
         for field in self.parent_fields(id)? {
             if self.has_live_kids(id, &field, None)? {
                 self.set_member(PARENTS, Some(&field), id, true)?;
@@ -888,7 +910,7 @@ impl KvTxn<'_> {
     /// again under the same uuid (a revert) gets a new id.
     pub(super) fn derive_removed(&self, uuid: Uuid) -> Result<()> {
         let Some(id) = self.id(uuid.as_bytes())? else { return Ok(()) };
-        self.set_member(UNIVERSE, None, id, false)
+        self.chunk_member(LIVE, &[], id, false)
     }
 
     /// A deleted metarecord comes back under the id it had (doc "Deleting a
@@ -938,7 +960,6 @@ impl KvTxn<'_> {
             }
         }
         self.put_given_back(id, rows)?;
-        self.t.metarecords.put(&mut self.txn.borrow_mut(), uuid.as_bytes(), &[])?;
         for row in rows {
             self.count_type(&row.name, &row.value, 1)?;
             self.add_hist(&row.name, &row.value)?;
@@ -954,7 +975,7 @@ impl KvTxn<'_> {
                 }
             }
         }
-        self.set_member(UNIVERSE, None, id, true)?;
+        self.chunk_member(LIVE, &[], id, true)?;
         for field in self.parent_fields(id)? {
             if self.has_live_kids(id, &field, None)? {
                 self.set_member(PARENTS, Some(&field), id, true)?;
@@ -971,11 +992,9 @@ impl KvTxn<'_> {
         let entries = if self.mass_pending() { self.load_record(id)?.entries } else { Vec::new() };
         let mut w = self.txn.borrow_mut();
         if entries.is_empty() {
-            if rows.is_empty() {
-                self.t.records.delete(&mut w, &id.to_be_bytes())?;
-            } else {
+            {
                 let record = super::mass::Record::plain(rows.to_vec());
-                self.t.records.put(&mut w, &id.to_be_bytes(), &record.encode())?;
+                self.t.metarecords.put(&mut w, &id.to_be_bytes(), &record.encode())?;
             }
             return Ok(());
         }
@@ -988,7 +1007,7 @@ impl KvTxn<'_> {
             tombs: Vec::new(),
             cleared: fields.into_iter().map(|f| (f.to_string(), n)).collect(),
         };
-        self.t.records.put(&mut self.txn.borrow_mut(), &id.to_be_bytes(), &record.encode())?;
+        self.t.metarecords.put(&mut self.txn.borrow_mut(), &id.to_be_bytes(), &record.encode())?;
         Ok(())
     }
 
@@ -1490,7 +1509,19 @@ impl KvTxn<'_> {
         self.events.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        for db in [t.ids, t.uuids, t.sets, t.kids, t.grams, t.hist, t.events] {
+        // The numbering (`ids`, `live_metarecords`) is primary: a reindex
+        // renumbers it, as it clears and gives the ids again below.
+        for db in [
+            t.ids,
+            t.uuids,
+            t.live_metarecords,
+            t.field_types,
+            t.sets,
+            t.kids,
+            t.grams,
+            t.hist,
+            t.events,
+        ] {
             db.clear(&mut w)?;
         }
         Ok(())
@@ -1509,14 +1540,10 @@ impl KvTxn<'_> {
             let r = self.txn.borrow();
             // The records of the metarecords that are gone, which stayed for a
             // restoration: held against the primary key of each uuid.
-            for entry in t.records.iter(&r)? {
+            for entry in t.metarecords.iter(&r)? {
                 let (k, _) = entry?;
-                let exists = match t.uuids.get(&r, k)? {
-                    Some(uuid) => t.metarecords.get(&r, uuid)?.is_some(),
-                    None => false,
-                };
-                if !exists {
-                    gone.push((t.records, k.to_vec()));
+                if !self.live_in(&r, dense(k))? {
+                    gone.push((t.metarecords, k.to_vec()));
                 }
             }
             // What the forest holds is read from the records that remain.
@@ -1526,7 +1553,7 @@ impl KvTxn<'_> {
                 let (k, v) = entry?;
                 let (field, _) = unesc(k)?;
                 let field = String::from_utf8(field).context("a field name")?;
-                let record = match t.records.get(&r, &v[super::FOREST_ID..])? {
+                let record = match t.metarecords.get(&r, &v[super::FOREST_ID..])? {
                     Some(rows) if !records_gone.contains(&v[super::FOREST_ID..]) => dec_rows(rows)?,
                     _ => Vec::new(),
                 };
@@ -1548,9 +1575,9 @@ impl KvTxn<'_> {
     /// Re-files every record under its metarecord's uuid (16 bytes, where a
     /// dense id is 4): the first half of a renumbering, while the ids still
     /// say whose each record is. A batch of records in memory at a time.
-    pub(super) fn file_records_by_uuid(&self) -> Result<()> {
-        self.refile_records(4, |t, r, k| {
-            let uuid = t.uuids.get(r, k)?.context("a record of no metarecord")?;
+    pub(super) fn file_records_by_uuid(&self, who: &HashMap<u32, [u8; 16]>) -> Result<()> {
+        self.refile_records(4, |_, _, k| {
+            let uuid = who.get(&dense(k)).context("a record of no live metarecord")?;
             Ok(uuid.to_vec())
         })
     }
@@ -1584,7 +1611,7 @@ impl KvTxn<'_> {
                 let range = (lo, std::ops::Bound::Unbounded);
                 let mut moves = Vec::new();
                 let mut last = None;
-                for entry in t.records.range(&r, &range)? {
+                for entry in t.metarecords.range(&r, &range)? {
                     let (k, v) = entry?;
                     last = Some(k.to_vec());
                     if k.len() != len {
@@ -1601,8 +1628,8 @@ impl KvTxn<'_> {
             after = Some(last);
             let mut w = self.txn.borrow_mut();
             for (from, new, value) in &moves {
-                t.records.delete(&mut w, from)?;
-                t.records.put(&mut w, new, value)?;
+                t.metarecords.delete(&mut w, from)?;
+                t.metarecords.put(&mut w, new, value)?;
             }
         }
     }
@@ -1710,25 +1737,34 @@ impl KvStore {
         // Before the ids are numbered again.
         txn.stubs_to_uuids()?;
         txn.drop_left_behind()?;
+        // Whose each live id is, off the primary numbering (`ids`), not off
+        // its index.
+        let who: HashMap<u32, [u8; 16]> = {
+            let r = txn.txn.borrow();
+            let live = read_live(&txn.t, &r)?;
+            let mut who = HashMap::with_capacity(live.len() as usize);
+            for entry in txn.t.ids.iter(&r)? {
+                let (uuid, id) = entry?;
+                if live.contains(dense(id)) {
+                    who.insert(dense(id), uuid.try_into().expect("a 16-byte uuid"));
+                }
+            }
+            who
+        };
         let order = {
             let r = txn.txn.borrow();
             let mut seen = BTreeSet::new();
             let mut order = Vec::new();
             for u in forest_order(&txn.t, &r)? {
-                if seen.insert(u) {
+                let live = id_of(&txn.t, &r, u.as_bytes())?.is_some_and(|id| who.contains_key(&id));
+                if live && seen.insert(u) {
                     order.push(u);
                 }
             }
-            for entry in txn.t.records.iter(&r)? {
-                let (id, _) = entry?;
-                let uuid = txn.t.uuids.get(&r, id)?.context("a record of no metarecord")?;
-                let u = uuid_of(uuid);
-                if seen.insert(u) {
-                    order.push(u);
-                }
-            }
-            for entry in txn.t.metarecords.iter(&r)? {
-                let u = uuid_of(entry?.0);
+            let mut ids: Vec<u32> = who.keys().copied().collect();
+            ids.sort_unstable();
+            for id in ids {
+                let u = Uuid::from_bytes(who[&id]);
                 if seen.insert(u) {
                     order.push(u);
                 }
@@ -1737,7 +1773,7 @@ impl KvStore {
         };
         // The records are filed under their uuid while the ids are numbered
         // again, then under the new dense ids.
-        txn.file_records_by_uuid()?;
+        txn.file_records_by_uuid(&who)?;
         txn.clear_derived()?;
         txn.meta_put(super::State::NextMetarecordId, 1)?;
         txn.next(super::State::NextReindex)?;
@@ -1749,6 +1785,7 @@ impl KvStore {
         for &uuid in &order {
             for row in Rows::rows(&txn, uuid)? {
                 // Nothing was counted yet: the derived tables were cleared.
+                txn.count_type(&row.name, &row.value, 1)?;
                 txn.derive_row(uuid, &row.name, &row.value, 1, 0)?;
             }
         }
@@ -1812,8 +1849,7 @@ impl KvStore {
         // The counter holds the next id to hand out; the first is 1.
         wear.ids_allocated =
             (super::State::NextMetarecordId.get(&self.t, &r)?.unwrap_or(1) - 1).max(0) as u64;
-        let live = self.t.metarecords.len(&r)?;
-        wear.ids_live = live;
+        wear.ids_live = read_live(&self.t, &r)?.len();
         Ok(wear)
     }
 
@@ -1897,25 +1933,13 @@ impl KvStore {
         // metarecord keeps its id and its entries everywhere else (doc
         // "Deleting a metarecord in the store"), so the derived tables are
         // held to the rows *on those ids*.
-        let mut metarecords = 0u64;
-        let mut live = RoaringBitmap::new();
-        // A deletion of many records leaves their keys until the fold: those
-        // whose id is out of the universe are not metarecords any more.
-        let deleting = self.deletes_pending();
-        let stored = if deleting { read_set(t, r, UNIVERSE, None)? } else { RoaringBitmap::new() };
-        for entry in t.metarecords.iter(r)? {
-            let (k, _) = entry?;
-            match id_of(t, r, &k[..16])? {
-                Some(id) if deleting && !stored.contains(id) => continue,
-                _ => {}
-            }
-            metarecords += 1;
-            match id_of(t, r, &k[..16])? {
-                Some(id) => {
-                    live.insert(id);
-                    sink(Side::Expected, Entry::set(UNIVERSE, "", id))?
-                }
-                None => diff.push(format!("ids: {} has no dense id", uuid_of(k))),
+        // `live_metarecords` is primary (doc "Store tables"): each live id
+        // must have its uuid in `uuids`, the index of `ids`.
+        let live = read_live(t, r)?;
+        let metarecords = live.len();
+        for id in &live {
+            if t.uuids.get(r, &id.to_be_bytes())?.is_none() {
+                diff.push(format!("uuids: the live dense id {id} names no metarecord"));
             }
         }
         let mut mapped = 0u64;
@@ -1958,7 +1982,7 @@ impl KvStore {
                 continue;
             };
             // An id only an entry names may be a metarecord's that is gone.
-            if t.metarecords.get(r, named)?.is_none() || (deleting && !live.contains(record_id)) {
+            if !live.contains(record_id) {
                 continue;
             }
             let uuid: [u8; 16] = named.try_into().expect("a 16-byte uuid");
