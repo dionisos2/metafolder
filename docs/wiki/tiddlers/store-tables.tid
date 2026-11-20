@@ -141,6 +141,11 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`index_pending_writes` |F · write number |kind · content · bitmap |a write to many records' values not yet in the postings ([[Mass writes in the store]]) |
 |`log_entries_by_metarecord` |uuid · op id |— |a metarecord's history; written at the idle fold, the entries past the pointer read directly ([[Log storage]]) |
 
+The tables that were kinds of one table — the sets, the trigrams — keep the byte
+that told the kinds apart at the head of their keys, and `index_histogram_keys` keeps
+the `FF` that told its keys from the rows' after the field: a byte per key, which
+the code that names a kind reaches its table by.
+
 A ''set'' is a bitmap cut in chunks of 65 536 ids (the high 16 bits), one key per
 chunk: a write rewrites one chunk, a read unions a few. The files of one folder
 mostly get consecutive ids, so a folder's bitmaps compress to a few runs. A deleted
