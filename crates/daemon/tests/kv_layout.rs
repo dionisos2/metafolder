@@ -15,6 +15,9 @@ use common::TempDir;
 
 use common::kv::{create_raw, open_raw, raw_env};
 
+/// The layout this code writes.
+const LAYOUT: i64 = 11;
+
 /// A copy of the layout-7 fixture, not opened. 30 records `n0`…`n29` below a
 /// root (`b`: `i` and `i + 100`, `a`: a text of growing length, `tag`: `even`
 /// or `odd`), the seventh with a `lucky` tag and a `nothing` note.
@@ -147,7 +150,7 @@ fn a_store_of_layout_7_converts_when_it_opens() {
     );
     drop(kv);
 
-    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(LAYOUT.to_be_bytes().to_vec()));
     let env = raw_env(dir.path());
     for name in ["field_cells", "row_owner", "by_field"] {
         assert!(!has_table(&env, name), "{name} is removed");
@@ -173,7 +176,7 @@ fn a_converted_store_is_not_converted_again() {
     drop(KvStore::open(dir.path()).unwrap());
     let after = std::fs::read(dir.path().join("data.mdb")).unwrap();
     assert_eq!(before.len(), after.len());
-    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(LAYOUT.to_be_bytes().to_vec()));
 }
 
 /// A metarecord of a store from before has no dense id when the derived data
@@ -241,15 +244,8 @@ fn a_store_of_layout_6_converts_and_drops_its_log() {
 #[test]
 fn a_store_of_layout_8_opens_with_an_empty_log_and_its_metarecords() {
     use metafolder_daemon::store::Log;
-    let dir = TempDir::new("kv-layout-8");
-    let before = {
-        let mut kv = KvStore::open(dir.path()).unwrap();
-        let mut w = Writer::begin(&mut kv, None).unwrap();
-        w.create_metarecord(vec![Field::new("a", Value::String("kept".into()))]).unwrap();
-        w.commit().unwrap();
-        assert!(kv.head().unwrap().is_some(), "there is a log to lose");
-        kv.metarecords().unwrap().len()
-    };
+    // A layout-8 store's records are in the form layout 10 kept.
+    let dir = fixture10();
     {
         let env = raw_env(dir.path());
         let meta = open_raw(&env, "meta");
@@ -259,12 +255,12 @@ fn a_store_of_layout_8_opens_with_an_empty_log_and_its_metarecords() {
     }
     let kv = KvStore::open(dir.path()).unwrap();
     assert_eq!(kv.head().unwrap(), None, "the log is dropped");
-    assert_eq!(kv.metarecords().unwrap().len(), before, "the metarecords are kept");
+    assert_eq!(state(&kv), expected10(), "the metarecords are kept");
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
     drop(kv);
-    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(LAYOUT.to_be_bytes().to_vec()));
     let again = KvStore::open(dir.path()).unwrap();
-    assert_eq!(again.metarecords().unwrap().len(), before, "converted once");
+    assert_eq!(state(&again), expected10(), "converted once");
 }
 
 /// A store of layout 9 is the one the layout 10 change reaches alone (an
@@ -274,15 +270,8 @@ fn a_store_of_layout_8_opens_with_an_empty_log_and_its_metarecords() {
 #[test]
 fn a_store_of_layout_9_opens_with_an_empty_log_and_its_metarecords() {
     use metafolder_daemon::store::Log;
-    let dir = TempDir::new("kv-layout-9");
-    let before = {
-        let mut kv = KvStore::open(dir.path()).unwrap();
-        let mut w = Writer::begin(&mut kv, None).unwrap();
-        w.create_metarecord(vec![Field::new("a", Value::String("kept".into()))]).unwrap();
-        w.commit().unwrap();
-        assert!(kv.head().unwrap().is_some(), "there is a log to lose");
-        kv.metarecords().unwrap().len()
-    };
+    // A layout-9 store's records are in the form layout 10 kept.
+    let dir = fixture10();
     {
         let env = raw_env(dir.path());
         let meta = open_raw(&env, "meta");
@@ -292,10 +281,12 @@ fn a_store_of_layout_9_opens_with_an_empty_log_and_its_metarecords() {
     }
     let kv = KvStore::open(dir.path()).unwrap();
     assert_eq!(kv.head().unwrap(), None, "the log is dropped");
-    assert_eq!(kv.metarecords().unwrap().len(), before, "the metarecords are kept");
+    assert_eq!(state(&kv), expected10(), "the metarecords are kept");
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
     drop(kv);
-    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(LAYOUT.to_be_bytes().to_vec()));
+    let again = KvStore::open(dir.path()).unwrap();
+    assert_eq!(state(&again), expected10(), "converted once");
 }
 
 /// A new store is written in the current layout, and says so.
@@ -303,7 +294,7 @@ fn a_store_of_layout_9_opens_with_an_empty_log_and_its_metarecords() {
 fn a_new_store_records_its_layout() {
     let dir = TempDir::new("kv-layout-new");
     drop(KvStore::open(dir.path()).unwrap());
-    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()));
+    assert_eq!(layout(dir.path()), Some(LAYOUT.to_be_bytes().to_vec()));
 }
 
 /// A store of the first layout is migrated when it opens: every record and
@@ -456,4 +447,85 @@ fn the_older_tables_are_removed_when_a_store_opens() {
     drop(KvStore::open(dir.path()).expect("the store opens"));
     let env = raw_env(dir.path());
     assert!(!has_table(&env, "cells"), "cells is removed at the next open");
+}
+
+// ── Layout 10 to 11 ──────────────────────────────────────────────────────────
+
+/// A copy of the layout-10 fixture, not opened: written by the daemon of
+/// November 20th, 2026 (`main` at dddf9437) — 40 records under a root with a
+/// value of every scalar type, a reference and a position each, the eighth
+/// holding a `nothing` beside a value in `note` (which layout 10 allowed), a
+/// write to many records still pending (`tag` = `bulk` on 30 of them), a
+/// record written by hand after it, and one deleted. `expected.txt` is every
+/// row the daemon of then read, as `uuid name value`.
+fn fixture10() -> TempDir {
+    let dir = TempDir::new("kv-layout-10");
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/layout10/data.mdb");
+    std::fs::copy(source, dir.path().join("data.mdb")).unwrap();
+    dir
+}
+
+/// What the fixture must read once converted: what layout 10 read, the
+/// `nothing` of a field that holds values dropped (doc "Nothing versus
+/// unknown").
+fn expected10() -> Vec<String> {
+    let text = include_str!("fixtures/layout10/expected.txt");
+    let lines: Vec<&str> = text.lines().collect();
+    let valued: std::collections::BTreeSet<(&str, &str)> = lines
+        .iter()
+        .filter(|l| !l.ends_with(" Nothing"))
+        .map(|l| {
+            let mut p = l.splitn(3, ' ');
+            (p.next().unwrap(), p.next().unwrap())
+        })
+        .collect();
+    lines
+        .into_iter()
+        .filter(|l| {
+            let mut p = l.splitn(3, ' ');
+            let key = (p.next().unwrap(), p.next().unwrap());
+            !(l.ends_with(" Nothing") && valued.contains(&key))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// Every row of the store, as the fixture's `expected.txt` writes them.
+fn state(kv: &KvStore) -> Vec<String> {
+    let mut lines = Vec::new();
+    for uuid in kv.metarecords().unwrap() {
+        for row in kv.rows(uuid).unwrap() {
+            lines.push(format!("{} {} {:?}", uuid.simple(), row.name, row.value));
+        }
+    }
+    lines.sort();
+    lines
+}
+
+/// A store of layout 10 is converted when it opens (doc "Persisted format
+/// changes"): its records and its pending writes in the compact encoding,
+/// a field's `nothing` beside values dropped, the log emptied. Every record
+/// reads back the same, before and after a fold, and the indexes agree.
+#[test]
+fn a_store_of_layout_10_converts_its_records_and_empties_its_log() {
+    use metafolder_daemon::store::Log;
+    let dir = fixture10();
+    assert_eq!(layout(dir.path()), Some(10i64.to_be_bytes().to_vec()), "the fixture is layout 10");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    assert_eq!(state(&kv), expected10());
+    // The pending write was converted, then folded by the reindex that
+    // follows a conversion (doc "Checking and reindexing a repository").
+    assert_eq!(kv.pending_mass().unwrap(), 0);
+    assert_eq!(kv.head().unwrap(), None, "the log is emptied (user decision)");
+    assert_eq!(kv.check().unwrap(), Vec::<String>::new());
+    assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
+    kv.fold().unwrap();
+    assert_eq!(state(&kv), expected10(), "the same once folded");
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let after =
+        w.create_metarecord(vec![Field::new("a", Value::String("after".into()))]).unwrap().uuid;
+    w.commit().unwrap();
+    assert_eq!(kv.rows(after).unwrap().len(), 1, "it takes writes");
+    drop(kv);
+    assert_eq!(layout(dir.path()), Some(LAYOUT.to_be_bytes().to_vec()));
 }

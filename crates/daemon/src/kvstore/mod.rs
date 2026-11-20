@@ -60,15 +60,17 @@ use uuid::Uuid;
 
 use crate::error::DomainError;
 use crate::log::{OpRow, Retention};
-use crate::rows::{self, FieldRow, RawValue, TreeRow};
+use crate::rows::{self, FieldRow, TreeRow};
 use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Rows, WriteTxn};
 
+mod codec;
 mod derived;
 mod mass;
 mod massops;
 pub mod memory;
 mod source;
 mod table;
+mod v10;
 
 pub use derived::Wear;
 pub use source::{KvSource, RangeRows};
@@ -336,8 +338,9 @@ fn key(parts: &[&[u8]]) -> Vec<u8> {
 /// · dense id, the rows one key each in `field_cells`; 8: a record's rows under
 /// one key, its dense id, in `records`; 9: the labels a label reverts, in
 /// `label_reverts`; 10: an operation keeps its version delta and not the rows
-/// it left).
-const LAYOUT: i64 = 10;
+/// it left; 11: the review of the store's tables, values in the compact
+/// encoding — doc "Store tables").
+const LAYOUT: i64 = 11;
 
 /// Where the dense id starts in a forest entry's value: uuid · dense id. The
 /// id is what tells a position from one a deleted metarecord left behind,
@@ -449,32 +452,19 @@ impl<'a> In<'a> {
     }
 }
 
-/// A value in its column form (`rows::encode_value` / `decode_value`), so a
-/// name's exact bytes survive.
+/// A value with its type, in the compact encoding (doc "Value encoding in
+/// the store").
 fn put_value(out: &mut Out, v: &Value) {
-    let e = rows::encode_value(v);
-    out.bytes(e.value_type.as_bytes())
-        .opt_bytes(e.text.as_deref().map(str::as_bytes))
-        .opt_int(e.int)
-        .opt_int(e.real.map(|r| r.to_bits() as i64))
-        .opt_bytes(e.uuid.as_deref())
-        .opt_bytes(e.ref_repo.as_deref())
-        .opt_bytes(e.name.as_deref().map(str::as_bytes))
-        .opt_bytes(e.name_bytes.as_deref());
+    let mut e = codec::Enc(std::mem::take(&mut out.0));
+    e.value(v);
+    out.0 = e.0;
 }
 
 fn get_value(r: &mut In) -> Result<Value> {
-    let raw = RawValue {
-        value_type: r.string()?,
-        text: r.opt_string()?,
-        int: r.opt_int()?,
-        real: r.opt_int()?.map(|b| f64::from_bits(b as u64)),
-        uuid: r.opt_bytes()?.map(<[u8]>::to_vec),
-        ref_repo: r.opt_bytes()?.map(<[u8]>::to_vec),
-        name: r.opt_string()?,
-        name_bytes: r.opt_bytes()?.map(<[u8]>::to_vec),
-    };
-    rows::decode_value(raw)
+    let mut d = codec::Dec(r.0);
+    let v = d.value()?;
+    r.0 = d.0;
+    Ok(v)
 }
 
 /// A row as stored. `id` is the store's own handle on a cell, until the cells
@@ -494,26 +484,15 @@ fn dec_row(b: &[u8]) -> Result<FieldRow> {
     Ok(FieldRow { name: r.string()?, value: get_value(&mut r)? })
 }
 
-/// A record's rows, the value of its key in `records`: how many, then each
-/// one's name and value.
+/// A record of rows no pending write names, the value of its key in
+/// `records` ([`mass::Record`]).
 fn enc_rows(rows: &[FieldRow]) -> Vec<u8> {
-    let mut out = Out::default();
-    out.int(rows.len() as i64);
-    for row in rows {
-        out.bytes(row.name.as_bytes());
-        put_value(&mut out, &row.value);
-    }
-    out.0
+    mass::Record::plain(rows.to_vec()).encode()
 }
 
+/// A record's rows, without what pending writes would change in them.
 fn dec_rows(b: &[u8]) -> Result<Vec<FieldRow>> {
-    let mut r = In(b);
-    let n = r.int()?;
-    let mut rows = Vec::with_capacity(n.max(0) as usize);
-    for _ in 0..n {
-        rows.push(FieldRow { name: r.string()?, value: get_value(&mut r)? });
-    }
-    Ok(rows)
+    Ok(mass::Record::decode(b)?.rows)
 }
 
 fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
@@ -2116,6 +2095,21 @@ impl KvStore {
                 }
             }
             let mut w = txn.txn.borrow_mut();
+            // Layouts 8 to 10 kept the records and the pending writes, their
+            // values in the column form: written again in the compact one, a
+            // field's nothing beside values dropped (layout 11).
+            if from.is_some_and(|layout| layout >= 8) {
+                reencode(t.records, &mut w, |_, v| {
+                    let mut record = v10::dec_record(v)?;
+                    record.drop_mixed_nothing();
+                    Ok(record.encode())
+                })?;
+                reencode(t.mass, &mut w, |k, v| {
+                    let op = u64::from_be_bytes(k[4..12].try_into()?);
+                    Ok(v10::dec_listed(op, v)?.encode())
+                })?;
+                assigned = true;
+            }
             // The rows, a metarecord's together (both tables keep them in
             // uuid order).
             for old in rows.iter().take(2).flatten() {
@@ -2138,7 +2132,7 @@ impl KvStore {
                     for (k, v) in &batch {
                         let uuid: [u8; 16] = k[..16].try_into().expect("a 16-byte uuid");
                         let id = i64::from_be_bytes(v[..8].try_into().expect("a row id"));
-                        let row = dec_row(v)?;
+                        let row = v10::dec_row(v)?;
                         match &mut group {
                             Some((u, rows)) if *u == uuid => rows.push((id, row)),
                             _ => {
@@ -2186,11 +2180,11 @@ impl KvStore {
                     }
                 }
             }
-            // The log of a store of an older layout is dropped (layout 9 added
-            // what a label says of the labels it reverts, which an older log has
-            // not: the log is emptied rather than converted, user decision,
-            // November 2026).
-            if from.is_none_or(|layout| layout <= 9) {
+            // The log of a store of an older layout is dropped (layout 11
+            // writes it in one form of entry, which an older log has not: the
+            // log is emptied rather than converted, user decision, November
+            // 2026).
+            {
                 for old in gone.into_iter().flatten() {
                     old.clear(w.unjournaled())?;
                 }
@@ -2242,8 +2236,41 @@ fn file_converted(
     let id = derived::id_of(t, w, uuid)?.context("a metarecord with no dense id")?;
     rows.sort_by_key(|(row_id, _)| *row_id);
     let rows: Vec<FieldRow> = rows.into_iter().map(|(_, row)| row).collect();
-    t.records.put(w, &id.to_be_bytes(), &enc_rows(&rows))?;
+    let mut record = mass::Record::plain(rows);
+    record.drop_mixed_nothing();
+    t.records.put(w, &id.to_be_bytes(), &record.encode())?;
     Ok(())
+}
+
+/// Writes again, in the compact encoding (doc "Value encoding in the
+/// store"), the values of `table` that layout 10 and before wrote — a
+/// record's, or a pending write's — read by `convert`, a batch at a time.
+fn reencode(
+    table: Db,
+    w: &mut table::Wtxn<'_>,
+    convert: impl Fn(&[u8], &[u8]) -> Result<Vec<u8>>,
+) -> Result<()> {
+    const BATCH: usize = 10_000;
+    let mut after: Option<Vec<u8>> = None;
+    loop {
+        let batch: Vec<(Vec<u8>, Vec<u8>)> = {
+            let lo = match &after {
+                Some(k) => std::ops::Bound::Excluded(k.as_slice()),
+                None => std::ops::Bound::Unbounded,
+            };
+            table
+                .range(w, &(lo, std::ops::Bound::Unbounded))?
+                .take(BATCH)
+                .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())))
+                .collect::<heed::Result<_>>()?
+        };
+        let Some((last, _)) = batch.last() else { return Ok(()) };
+        after = Some(last.clone());
+        for (k, v) in &batch {
+            let new = convert(k, v)?;
+            table.put(w, k, &new)?;
+        }
+    }
 }
 
 impl<'e> KvTxn<'e> {

@@ -1,0 +1,72 @@
+// How data.mdb and expected.txt were written: this file, as a test of the
+// daemon crate at main dddf9437 (layout 10), run with MF_FIXTURE_OUT=<dir>.
+
+//! Writes a store of layout 10 for the conversion test of layout 11 (not part
+//! of the suite: run by hand with MF_FIXTURE_OUT set).
+
+use metafolder_core::metarecord::{Field, TreeName, Value};
+use metafolder_daemon::kvstore::KvStore;
+use metafolder_daemon::log::Writer;
+use uuid::Uuid;
+
+#[test]
+fn make() {
+    let Ok(out) = std::env::var("MF_FIXTURE_OUT") else { return };
+    let dir = std::path::Path::new(&out);
+    let mut store = KvStore::open_unsynced(dir).unwrap();
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let root = w
+        .create_metarecord_with_uuid(
+            Uuid::from_u128(1000),
+            vec![Field::new("loc", Value::TreeRef { parent: None, name: TreeName::from("r") })],
+        )
+        .unwrap()
+        .uuid;
+    let mut uuids = Vec::new();
+    for i in 0..40i64 {
+        let mut fields = vec![
+            Field::new("loc", Value::TreeRef { parent: Some(root), name: TreeName::from(format!("c{i:02}").as_str()) }),
+            Field::new("n", Value::Int(i - 20)),
+            Field::new("f", Value::Float(i as f64 / 4.0)),
+            Field::new("when", Value::DateTime(i * 86_400_000)),
+            Field::new("flag", Value::Bool(i % 3 == 0)),
+            Field::new("tag", Value::String(if i % 2 == 0 { "even" } else { "odd" }.into())),
+            Field::new("link", Value::Ref(root)),
+        ];
+        if i == 7 {
+            // Mixed: a nothing beside a value, which layout 10 allowed.
+            fields.push(Field::new("note", Value::Nothing));
+            fields.push(Field::new("note", Value::String("x".into())));
+        }
+        if i == 8 {
+            fields.push(Field::new("note", Value::Nothing));
+        }
+        uuids.push(
+            w.create_metarecord_with_uuid(Uuid::from_u128(2000 + i as u128), fields).unwrap().uuid,
+        );
+    }
+    w.commit().unwrap();
+    // A write to many records left pending (threshold 0), not folded.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.set_mass_threshold(0);
+    w.mass_add("tag", Value::String("bulk".into()), &uuids[..30]).unwrap();
+    w.commit().unwrap();
+    // A record written by hand after it: its row numbers and a tomb.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.delete_fields_valued(uuids[3], "tag", &Value::String("bulk".into())).unwrap();
+    w.commit().unwrap();
+    // A deleted metarecord, its record kept.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.delete_metarecord(uuids[9]).unwrap();
+    w.commit().unwrap();
+    assert!(store.pending_mass().unwrap() > 0, "an entry stays pending");
+    use metafolder_daemon::store::Rows as _;
+    let mut lines = Vec::new();
+    for uuid in store.metarecords().unwrap() {
+        for row in store.rows(uuid).unwrap() {
+            lines.push(format!("{} {} {:?}", uuid.simple(), row.name, row.value));
+        }
+    }
+    lines.sort();
+    std::fs::write(dir.join("expected.txt"), lines.join("\n") + "\n").unwrap();
+}

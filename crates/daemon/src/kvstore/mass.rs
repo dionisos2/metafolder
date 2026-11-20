@@ -32,6 +32,7 @@ use heed::RoTxn;
 use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
 
+use super::codec::{self, Dec, Enc};
 use super::derived::decode_set;
 use super::{get_value, put_value, In, KvStore, KvTxn, Out, Tables};
 use crate::rows::FieldRow;
@@ -76,52 +77,41 @@ impl Record {
         Record { rows, ops, tombs: Vec::new(), cleared: Vec::new() }
     }
 
+    /// `rows` ([`codec::put_rows`]), then — only when it has any — `varint
+    /// count · { kind · … }`: a row's number (`0` · varint row · varint
+    /// number), a tomb (`1` · name · value · varint number), a cleared field
+    /// (`2` · name · varint number).
     pub(crate) fn encode(&self) -> Vec<u8> {
-        let mut out = Out::default();
-        out.int(self.rows.len() as i64);
-        for row in &self.rows {
-            out.bytes(row.name.as_bytes());
-            put_value(&mut out, &row.value);
-        }
-        let mut extras = Out::default();
-        let mut n = 0i64;
-        for (i, op) in self.ops.iter().enumerate().filter(|(_, op)| **op != 0) {
-            extras.int(0).int(i as i64).int(*op as i64);
-            n += 1;
-        }
-        for (name, value, op) in &self.tombs {
-            extras.int(1).bytes(name.as_bytes());
-            put_value(&mut extras, value);
-            extras.int(*op as i64);
-            n += 1;
-        }
-        for (name, op) in &self.cleared {
-            extras.int(2).bytes(name.as_bytes()).int(*op as i64);
-            n += 1;
-        }
+        let mut out = Enc::default();
+        let order = codec::put_rows(&mut out, &self.rows);
+        let numbered: Vec<_> = self.ops.iter().enumerate().filter(|(_, op)| **op != 0).collect();
+        let n = numbered.len() + self.tombs.len() + self.cleared.len();
         if n > 0 {
-            out.int(n);
-            out.0.extend_from_slice(&extras.0);
+            out.varint(n as u64);
+            for (i, op) in numbered {
+                out.raw(&[0]).varint(order[i] as u64).varint(*op);
+            }
+            for (name, value, op) in &self.tombs {
+                out.raw(&[1]).bytes(name.as_bytes()).value(value).varint(*op);
+            }
+            for (name, op) in &self.cleared {
+                out.raw(&[2]).bytes(name.as_bytes()).varint(*op);
+            }
         }
         out.0
     }
 
     pub(crate) fn decode(b: &[u8]) -> Result<Record> {
-        let mut r = In(b);
-        let n = r.int()?;
-        let mut rows = Vec::with_capacity(n.max(0) as usize);
-        for _ in 0..n {
-            rows.push(FieldRow { name: r.string()?, value: get_value(&mut r)? });
-        }
-        let mut record = Record::plain(rows);
-        if r.0.is_empty() {
+        let mut r = Dec(b);
+        let mut record = Record::plain(codec::get_rows(&mut r)?);
+        if r.is_empty() {
             return Ok(record);
         }
-        for _ in 0..r.int()? {
-            match r.int()? {
+        for _ in 0..r.varint()? {
+            match r.take(1)?[0] {
                 0 => {
-                    let i = r.int()? as usize;
-                    let op = r.int()? as u64;
+                    let i = r.varint()? as usize;
+                    let op = r.varint()?;
                     match record.ops.get_mut(i) {
                         Some(slot) => *slot = op,
                         None => bail!("a row number for a row a record does not have"),
@@ -129,17 +119,42 @@ impl Record {
                 }
                 1 => {
                     let name = r.string()?;
-                    let value = get_value(&mut r)?;
-                    record.tombs.push((name, value, r.int()? as u64));
+                    let value = r.value()?;
+                    record.tombs.push((name, value, r.varint()?));
                 }
                 2 => {
                     let name = r.string()?;
-                    record.cleared.push((name, r.int()? as u64));
+                    record.cleared.push((name, r.varint()?));
                 }
                 other => bail!("an extra of kind {other} in a record"),
             }
         }
         Ok(record)
+    }
+
+    /// Takes the `nothing` out of a field that also holds values: a field
+    /// holds one or the other (doc "Nothing versus unknown"), which records
+    /// written before November 2026 did not keep. Whether it changed.
+    pub(crate) fn drop_mixed_nothing(&mut self) -> bool {
+        let valued: BTreeSet<String> = self
+            .rows
+            .iter()
+            .filter(|r| !matches!(r.value, Value::Nothing))
+            .map(|r| r.name.clone())
+            .collect();
+        let keep: Vec<bool> = self
+            .rows
+            .iter()
+            .map(|r| !(matches!(r.value, Value::Nothing) && valued.contains(&r.name)))
+            .collect();
+        if keep.iter().all(|k| *k) {
+            return false;
+        }
+        let mut k = keep.iter();
+        self.rows.retain(|_| *k.next().expect("one per row"));
+        let mut k = keep.iter();
+        self.ops.retain(|_| *k.next().expect("one per row"));
+        true
     }
 }
 

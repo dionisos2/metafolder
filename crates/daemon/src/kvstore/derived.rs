@@ -55,7 +55,7 @@ use crate::store::Rows;
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
 /// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex.
-pub(super) const DERIVED_VERSION: i64 = 15;
+pub(super) const DERIVED_VERSION: i64 = 16;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
