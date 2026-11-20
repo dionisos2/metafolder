@@ -15,8 +15,8 @@ metarecord 3f2a… would hold two positions in the 'path' forest: a metarecord h
 ```
 
 Moving a node is a `set` of its one position. A retype to `tree_ref` keeps the first
-row of a metarecord that converts to a position and demotes the others to `nothing`,
-reporting the metarecord like any value that fell back ([[Changing a field's type]]).
+row of a metarecord that converts to a position and removes the others, reporting the
+metarecord like any value that does not convert ([[Changing a field's type]]).
 `mfr_path` is stricter still: a metarecord holds at most one `mfr_path` row of any
 kind, `nothing` included — a file tracks one path.
 

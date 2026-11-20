@@ -597,6 +597,8 @@ impl Value {
     /// (because the source could not be meaningfully converted) — the sentinels
     /// are chosen to be easily found afterwards: scalars `""`/`0`/`0.0`/`false`/
     /// the Unix epoch, the reference types `Nothing` (findable via IS ABSENT).
+    /// The daemon's retype removes a value that fell back rather than write
+    /// the sentinel (doc "Changing a field's type").
     ///
     /// `String` is the universal hub: every type ↔ `String` is lossless and
     /// reversible (display form ⇄ parse). Other lossless scalar coercions are

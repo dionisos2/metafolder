@@ -9,7 +9,7 @@ repository:
 
 ```
 mf -n music retype rating float
-retyped rating to float: 1204 value(s) converted, 0 removed
+retyped rating to float: 1204 value(s) converted, 0 metarecord(s) lost a value that did not convert
 ```
 
 Any type can be reached from any other: a mistyped field is never stuck. The

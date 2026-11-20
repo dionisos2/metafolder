@@ -383,7 +383,10 @@ fn a_nothing_and_a_long_text_are_written_in_bulk() {
     let cut = s(&"k".repeat(300)); // its key cut and hashed
     let huge = s(&"h".repeat(600)); // too long for trigrams
     let entries = |store: &KvStore| store.pending_mass().unwrap();
-    for (value, ids) in [(&Value::Nothing, &all[..40]), (&cut, &all[10..50]), (&huge, &all[20..60])]
+    // Disjoint from the texts: a Nothing takes the place of the values
+    // (doc "Nothing versus unknown"), one set in bulk.
+    for (value, ids) in
+        [(&cut, &all[10..50]), (&huge, &all[20..60]), (&Value::Nothing, &all[60..90])]
     {
         let before = entries(&store);
         let changed = write(&mut store, |w| w.mass_add("tag", value.clone(), ids).unwrap());
@@ -391,7 +394,7 @@ fn a_nothing_and_a_long_text_are_written_in_bulk() {
         assert_eq!(entries(&store), before + 1, "added in bulk: {value:?}");
         check(&store);
     }
-    for (value, ids) in [(&Value::Nothing, &all[..20]), (&cut, &all[10..30])] {
+    for (value, ids) in [(&Value::Nothing, &all[60..80]), (&cut, &all[10..30])] {
         let before = entries(&store);
         let changed = write(&mut store, |w| w.mass_remove("tag", value, ids).unwrap());
         assert_eq!(changed.len(), ids.len());

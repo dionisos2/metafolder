@@ -121,11 +121,9 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
     use metafolder_core::metarecord::FieldType;
     let (mut conn, _dir) = test_conn();
     let m1 = create(&mut conn, vec![Field::new("rating", Value::Int(3))]);
-    // Nothing coexists and must survive the retype untouched.
-    let m2 = create(
-        &mut conn,
-        vec![Field::new("rating", Value::Int(5)), Field::new("rating", Value::Nothing)],
-    );
+    let m2 = create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
+    // Absence has no type: a Nothing survives the retype untouched.
+    let m3 = create(&mut conn, vec![Field::new("rating", Value::Nothing)]);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("rating", FieldType::String).unwrap();
@@ -136,8 +134,9 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
     let g1 = conn.metarecord(m1.uuid).unwrap().unwrap();
     assert_eq!(g1.get("rating"), Some(&Value::String("3".into())));
     let g2 = conn.metarecord(m2.uuid).unwrap().unwrap();
-    assert!(g2.get_all("rating").contains(&&Value::String("5".into())));
-    assert!(g2.get_all("rating").contains(&&Value::Nothing), "Nothing preserved");
+    assert_eq!(g2.get("rating"), Some(&Value::String("5".into())));
+    let g3 = conn.metarecord(m3.uuid).unwrap().unwrap();
+    assert_eq!(g3.get("rating"), Some(&Value::Nothing), "Nothing preserved");
 
     // The field is now String repo-wide: a conflicting Int write is rejected.
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -151,22 +150,41 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
 }
 
 #[test]
-fn test_retype_field_records_fallbacks() {
+fn test_retype_field_removes_what_does_not_convert() {
     use metafolder_core::metarecord::FieldType;
     let (mut conn, _dir) = test_conn();
     let good = create(&mut conn, vec![Field::new("code", Value::String("42".into()))]);
     let bad = create(&mut conn, vec![Field::new("code", Value::String("oops".into()))]);
+    let half = create(
+        &mut conn,
+        vec![
+            Field::new("code", Value::String("7".into())),
+            Field::new("code", Value::String("seven".into())),
+        ],
+    );
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("code", FieldType::Int).unwrap();
     w.commit().unwrap();
 
-    assert_eq!(summary.converted, 2);
-    assert_eq!(summary.fallback_uuids, vec![bad.uuid], "only the un-parsable value fell back");
+    assert_eq!(summary.converted, 2, "the values that convert");
+    let mut removed = vec![bad.uuid, half.uuid];
+    removed.sort();
+    assert_eq!(summary.fallback_uuids, removed, "the metarecords that lost a value");
     let g = conn.metarecord(good.uuid).unwrap().unwrap();
     assert_eq!(g.get("code"), Some(&Value::Int(42)));
+    // No default stands in, and no Nothing: the field is unknown (doc
+    // "Changing a field's type").
     let b = conn.metarecord(bad.uuid).unwrap().unwrap();
-    assert_eq!(b.get("code"), Some(&Value::Int(0)), "un-parsable → sentinel 0");
+    assert_eq!(b.get("code"), None, "nothing converts: the field goes");
+    let h = conn.metarecord(half.uuid).unwrap().unwrap();
+    assert_eq!(h.get_all("code"), vec![&Value::Int(7)], "the one that converts stays");
+
+    // An undo gives back what was removed.
+    revert_last_revision(&mut conn);
+    let b = conn.metarecord(bad.uuid).unwrap().unwrap();
+    assert_eq!(b.get("code"), Some(&Value::String("oops".into())));
+    assert_eq!(conn.metarecord(half.uuid).unwrap().unwrap().get_all("code").len(), 2);
 }
 
 #[test]
@@ -177,16 +195,16 @@ fn test_retype_string_to_reference_types() {
     let target = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
     let hex = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
 
-    // String → Ref: a valid hex uuid parses; junk falls back to Nothing.
+    // String → Ref: a valid hex uuid parses; junk is removed.
     let good = create(&mut conn, vec![Field::new("link", Value::String(hex.into()))]);
     let bad = create(&mut conn, vec![Field::new("link", Value::String("nope".into()))]);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("link", FieldType::Ref).unwrap();
     w.commit().unwrap();
-    assert_eq!(summary.converted, 2);
+    assert_eq!(summary.converted, 1);
     assert_eq!(summary.fallback_uuids, vec![bad.uuid]);
     assert_eq!(conn.metarecord(good.uuid).unwrap().unwrap().get("link"), Some(&Value::Ref(target)));
-    assert_eq!(conn.metarecord(bad.uuid).unwrap().unwrap().get("link"), Some(&Value::Nothing));
+    assert_eq!(conn.metarecord(bad.uuid).unwrap().unwrap().get("link"), None);
 }
 
 #[test]
@@ -194,7 +212,7 @@ fn test_retype_string_to_tree_ref_validates_forest() {
     use metafolder_core::metarecord::FieldType;
     let (mut conn, _dir) = test_conn();
     // A root form "/tags" is always valid; a parented form whose parent does not
-    // exist violates the forest and is demoted to Nothing (not an abort).
+    // exist violates the forest and is removed (not an abort).
     let root = create(&mut conn, vec![Field::new("cat", Value::String("/tags".into()))]);
     let orphan = create(
         &mut conn,
@@ -205,17 +223,13 @@ fn test_retype_string_to_tree_ref_validates_forest() {
     let summary = w.retype_field("cat", FieldType::TreeRef).unwrap();
     w.commit().unwrap();
 
-    assert_eq!(summary.converted, 2);
-    assert_eq!(
-        summary.fallback_uuids,
-        vec![orphan.uuid],
-        "the orphan parent falls back to Nothing"
-    );
+    assert_eq!(summary.converted, 1);
+    assert_eq!(summary.fallback_uuids, vec![orphan.uuid], "the orphan parent is removed");
     assert_eq!(
         conn.metarecord(root.uuid).unwrap().unwrap().get("cat"),
         Some(&Value::TreeRef { parent: None, name: "tags".into() })
     );
-    assert_eq!(conn.metarecord(orphan.uuid).unwrap().unwrap().get("cat"), Some(&Value::Nothing));
+    assert_eq!(conn.metarecord(orphan.uuid).unwrap().unwrap().get("cat"), None);
 }
 
 #[test]

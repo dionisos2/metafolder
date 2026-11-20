@@ -89,18 +89,15 @@ fn a_position_is_replaced_in_place_and_a_rename_makes_no_second_one() {
 }
 
 #[test]
-fn a_position_beside_a_nothing_row_is_still_one() {
+fn a_position_added_over_a_nothing_takes_its_place() {
     let (mut conn, _dir) = repo();
     let (_, red, _) = forest(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let rec = w
-        .create_metarecord(vec![
-            Field::new("tag", Value::Nothing),
-            Field::new("tag", tree(Some(red), "y")),
-        ])
-        .unwrap()
-        .uuid;
-    w.append_field(rec, "other", Value::Nothing).unwrap();
+    let rec = w.create_metarecord(vec![Field::new("tag", Value::Nothing)]).unwrap().uuid;
+    // A field holds nothing or values (doc "Nothing versus unknown").
+    w.append_field(rec, "tag", tree(Some(red), "y")).unwrap();
+    let rows = w.store().rows_named(rec, "tag").unwrap();
+    assert_eq!(rows.len(), 1, "one position, the nothing gone: {rows:?}");
     w.commit().unwrap();
 }
 

@@ -878,6 +878,7 @@ impl<'c> Writer<'c> {
         // Repeated (name, value) pairs are written once (doc "No duplicate rows");
         // the record returned mirrors what is stored.
         let fields = collapse_duplicate_fields(fields);
+        refuse_mixed_nothing_fields(&fields)?;
         validate_one_position_each(uuid, fields.iter().map(|f| (f.name.as_str(), &f.value)))?;
         for f in &fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
@@ -974,6 +975,7 @@ impl<'c> Writer<'c> {
     /// every old row is dropped, including reserved ones not in `fields`.
     pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
         let fields = collapse_duplicate_fields(fields); // doc "No duplicate rows"
+        refuse_mixed_nothing_fields(&fields)?;
         validate_one_position_each(uuid, fields.iter().map(|f| (f.name.as_str(), &f.value)))?;
         self.must_exist(uuid)?;
         let before = self.tx.rows(uuid)?;
@@ -1046,6 +1048,7 @@ impl<'c> Writer<'c> {
         name: &str,
         values: Vec<Value>,
     ) -> Result<()> {
+        refuse_mixed_nothing(name, &values.iter().collect::<Vec<_>>())?;
         validate_one_position_each(uuid, values.iter().map(|v| (name, v)))?;
         for value in &values {
             self.validate_tree_ref(uuid, name, value)?;
@@ -1078,8 +1081,17 @@ impl<'c> Writer<'c> {
         self.validate_one_position(uuid, name, &value, None)?;
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
-        if self.tx.rows_named(uuid, name)?.iter().any(|r| r.value == value) {
+        let rows = self.tx.rows_named(uuid, name)?;
+        if rows.iter().any(|r| r.value == value) {
             return Ok(Appended::AlreadyPresent);
+        }
+        // A field holds `nothing` or values (doc "Nothing versus unknown"): a
+        // value takes the `nothing` away, and `nothing` the values — a set
+        // of the field, whose before is what goes.
+        let nothing = matches!(value, Value::Nothing);
+        if !rows.is_empty() && (nothing || rows.iter().any(|r| matches!(r.value, Value::Nothing))) {
+            self.set_field_multi(uuid, name, vec![value])?;
+            return Ok(Appended::Created);
         }
         self.must_exist(uuid)?;
         self.tx.insert_row(uuid, name, &value)?;
@@ -1117,13 +1129,12 @@ impl<'c> Writer<'c> {
     /// Converts every non-`Nothing` row of field `name` to the type `to`,
     /// repository-wide, in this one write (doc "Changing a field's type"). The target may be any
     /// type, including the reference variants.
-    /// Row-scoped (each row keeps its id) and
-    /// bypasses the per-write type check (it *is* the type change). `Nothing`
-    /// rows are left untouched (explicit absence is preserved). A `String →
-    /// TreeRef` result that would violate the forest (missing parent, cycle,
-    /// depth) is demoted to `Nothing` rather than aborting the whole retype, so
-    /// one bad path never blocks the rest. Returns how many rows changed and the
-    /// metarecords whose values fell back to the sentinel.
+    /// Bypasses the per-write type check (it *is* the type change). `Nothing`
+    /// rows are left untouched (explicit absence is preserved). A value that
+    /// does not convert — or a `TreeRef` result that would violate the forest
+    /// (missing parent, cycle, depth) — is removed rather than aborting the
+    /// whole retype, so one bad path never blocks the rest. Returns how many
+    /// rows converted and the metarecords that lost a value.
     pub fn retype_field(&mut self, name: &str, to: FieldType) -> Result<RetypeSummary> {
         // The field's established type changes here; drop any cached entry so a
         // later checked write in this write re-probes.
@@ -1135,30 +1146,34 @@ impl<'c> Writer<'c> {
                 if matches!(row.value, Value::Nothing) {
                     continue;
                 }
-                let (mut new_value, mut fell_back) = row.value.convert_to(to);
+                let (new_value, mut fell_back) = row.value.convert_to(to);
                 // A converted TreeRef must satisfy the forest invariants like any
-                // other write; a violating value is demoted to the Nothing
-                // sentinel (and reported) so the retype as a whole still succeeds.
-                if new_value.position().is_some() {
+                // other write; a violating value is removed (and reported) so
+                // the retype as a whole still succeeds.
+                if !fell_back && new_value.position().is_some() {
                     let valid = self
                         .validate_one_position(uuid, &row.name, &new_value, Some(&row.value))
                         .and_then(|()| self.validate_tree_ref(uuid, &row.name, &new_value));
                     if let Err(e) = valid {
                         if e.downcast_ref::<DomainError>().is_some() {
-                            new_value = Value::Nothing;
                             fell_back = true;
                         } else {
                             return Err(e); // a genuine DB error, not a forest violation
                         }
                     }
                 }
+                let name = row.name.clone();
+                // A value that does not convert is removed, never replaced by
+                // a default or by Nothing: the field goes when none converts
+                // (doc "Changing a field's type").
+                if fell_back {
+                    fallback.insert(uuid);
+                    self.delete_field_rows(uuid, &name, vec![row])?;
+                    continue;
+                }
                 if new_value == row.value {
                     continue; // already the target type
                 }
-                if fell_back {
-                    fallback.insert(uuid);
-                }
-                let name = row.name.clone();
                 // Two values the conversion made equal are one row afterwards,
                 // not a duplicate (doc "No duplicate rows"). The
                 // probe reads the transaction's own state, so rows converted
@@ -1232,6 +1247,12 @@ impl<'c> Writer<'c> {
         if rows.iter().any(|r| r.value == to) {
             return self.delete_field_rows(uuid, name, vec![old]).map(|_| ());
         }
+        if matches!(to, Value::Nothing) && rows.len() > 1 {
+            return Err(DomainError::BadRequest(format!(
+                "field '{name}' of {uuid} holds other values: nothing cannot stand beside them"
+            ))
+            .into());
+        }
         self.validate_one_position(uuid, name, &to, Some(from))?;
         self.validate_tree_ref(uuid, name, &to)?;
         self.validate_value_type(name, &to)?;
@@ -1275,16 +1296,44 @@ impl<'c> Writer<'c> {
     /// changed.
     pub fn mass_add(&mut self, name: &str, value: Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
         self.validate_value_type(name, &value)?;
-        let ids = self.tx.dense_ids(uuids, true)?;
+        let Some(ids) = self.tx.dense_ids(uuids, true)? else {
+            return self.add_each(name, &value, uuids);
+        };
+        let (set, ids) = self.add_over_nothing(name, &value, &ids)?;
         let one = std::slice::from_ref(&value);
-        match self.mass_or_each(MassKind::Add, name, one, ids.as_ref())? {
-            Mass::Done(changed) => self.in_request_order(uuids, &changed),
-            Mass::Each(Some(few)) => {
-                let few = self.in_request_order(uuids, &few)?;
-                self.add_each(name, &value, &few)
+        let added = match self.mass_or_each(MassKind::Add, name, one, Some(&ids))? {
+            Mass::Done(changed) => changed,
+            Mass::Each(few) => {
+                let few = self.in_request_order(uuids, few.as_ref().unwrap_or(&ids))?;
+                let added = self.add_each(name, &value, &few)?;
+                self.tx.dense_ids(&added, false)?.unwrap_or_default()
             }
-            Mass::Each(None) => self.add_each(name, &value, uuids),
+        };
+        self.in_request_order(uuids, &(set | added))
+    }
+
+    /// The part of an add of `value` to `ids` that is a set: the records
+    /// holding `nothing` get the value in its place, and for an add of
+    /// `nothing` the records holding values get it in theirs — a field holds
+    /// `nothing` or values (doc "Nothing versus unknown"). Answers the ids so
+    /// set, and those left to an ordinary add.
+    fn add_over_nothing(
+        &mut self,
+        name: &str,
+        value: &Value,
+        ids: &RoaringBitmap,
+    ) -> Result<(RoaringBitmap, RoaringBitmap)> {
+        let nothing = crate::store::Rows::value_holder_ids(&*self.tx, name, &Value::Nothing)?;
+        let over = if matches!(value, Value::Nothing) {
+            (ids & crate::store::Rows::holder_ids(&*self.tx, name)?) - nothing
+        } else {
+            ids & nothing
+        };
+        if over.is_empty() {
+            return Ok((over, ids.clone()));
         }
+        let set = self.mass_set_ids(name, vec![value.clone()], &over)?;
+        Ok((set, ids - over))
     }
 
     /// Removes `value` from `name` on every one of `uuids` that holds it; the
@@ -1313,6 +1362,7 @@ impl<'c> Writer<'c> {
         values: Vec<Value>,
         uuids: &[Uuid],
     ) -> Result<Vec<Uuid>> {
+        refuse_mixed_nothing(name, &values.iter().collect::<Vec<_>>())?;
         let kept = collapse_duplicates(&values);
         if !kept.is_empty() {
             for value in &kept {
@@ -1361,13 +1411,14 @@ impl<'c> Writer<'c> {
         ids: &RoaringBitmap,
     ) -> Result<RoaringBitmap> {
         self.validate_value_type(name, &value)?;
+        let (set, ids) = self.add_over_nothing(name, &value, ids)?;
         let one = std::slice::from_ref(&value);
-        let uuids = match self.mass_or_each(MassKind::Add, name, one, Some(ids))? {
-            Mass::Done(changed) => return Ok(changed),
-            Mass::Each(few) => self.tx.uuids_of(few.as_ref().unwrap_or(ids))?,
+        let uuids = match self.mass_or_each(MassKind::Add, name, one, Some(&ids))? {
+            Mass::Done(changed) => return Ok(set | changed),
+            Mass::Each(few) => self.tx.uuids_of(few.as_ref().unwrap_or(&ids))?,
         };
         let changed = self.add_each(name, &value, &uuids)?;
-        Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
+        Ok(set | self.tx.dense_ids(&changed, false)?.unwrap_or_default())
     }
 
     /// Removes `value` from `name` on the records `ids` that hold it:
@@ -1398,6 +1449,7 @@ impl<'c> Writer<'c> {
         values: Vec<Value>,
         ids: &RoaringBitmap,
     ) -> Result<RoaringBitmap> {
+        refuse_mixed_nothing(name, &values.iter().collect::<Vec<_>>())?;
         let kept = collapse_duplicates(&values);
         if !kept.is_empty() {
             for value in &kept {
@@ -2018,6 +2070,29 @@ fn collapse_duplicates(values: &[Value]) -> Vec<Value> {
 
 /// The fields to write for a whole-record write: the first occurrence of each
 /// `(name, value)` pair, in the order given.
+/// Refuses `values` for one field when they mix `nothing` with values: a
+/// field holds `nothing` or values, never both (doc "Nothing versus
+/// unknown").
+fn refuse_mixed_nothing(name: &str, values: &[&Value]) -> Result<()> {
+    let nothing = values.iter().any(|v| matches!(v, Value::Nothing));
+    if nothing && values.iter().any(|v| !matches!(v, Value::Nothing)) {
+        return Err(DomainError::BadRequest(format!(
+            "field '{name}' cannot hold nothing and values together"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+/// [`refuse_mixed_nothing`] for each field name of a whole record.
+fn refuse_mixed_nothing_fields(fields: &[Field]) -> Result<()> {
+    let mut by_name: std::collections::BTreeMap<&str, Vec<&Value>> = Default::default();
+    for f in fields {
+        by_name.entry(f.name.as_str()).or_default().push(&f.value);
+    }
+    by_name.into_iter().try_for_each(|(name, values)| refuse_mixed_nothing(name, &values))
+}
+
 fn collapse_duplicate_fields(fields: Vec<Field>) -> Vec<Field> {
     let mut kept: Vec<Field> = Vec::with_capacity(fields.len());
     for f in fields {

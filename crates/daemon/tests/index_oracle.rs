@@ -310,10 +310,9 @@ fn three_valued_present_absent_unknown() {
 
 #[test]
 fn three_valued_present_absent_overlap() {
-    // One metarecord carries BOTH a real value and a Nothing for "rating":
-    // it must appear in IsPresent AND IsAbsent, and NOT in IsUnknown.
+    // A field holds nothing or values, never both (doc "Nothing versus
+    // unknown"): each metarecord is in exactly one of the three answers.
     let mut o = Oracle::new();
-    o.create(vec![Field::new("rating", Value::Int(5)), Field::new("rating", Value::Nothing)]);
     o.create(vec![Field::new("rating", Value::Nothing)]);
     o.create(vec![Field::new("rating", Value::Int(9))]);
     o.create(vec![Field::new("elsewhere", Value::Int(1))]);
@@ -1862,6 +1861,8 @@ fn a_comparison_checked_on_its_candidates_answers_like_the_walk() {
         ];
         if n % 7 == 0 {
             fields.push(Field::new("size", i(1000 - n)));
+            // A field holds nothing or values (doc "Nothing versus unknown").
+            fields.retain(|f| f.name != "name");
             fields.push(Field::new("name", Value::Nothing));
         }
         if n % 9 == 0 {

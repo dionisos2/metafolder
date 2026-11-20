@@ -867,7 +867,7 @@ export async function mount(root, metafolder) {
       const fell = resp.fallback_count ?? 0;
       void statusBar.message(
         `Retyped "${name}" to ${to}: ${converted} value(s) converted` +
-          (fell > 0 ? `, ${fell} fell back to the default` : '') + '.',
+          (fell > 0 ? `, ${fell} metarecord(s) lost a value that did not convert` : '') + '.',
         7000,
       );
       // Other panels reading this repo should refresh.

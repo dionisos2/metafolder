@@ -45,7 +45,7 @@ pub fn retype(ctx: &Ctx, name: &str, to: &str) -> Result<i32, CliError> {
     let resp = ctx.client.post(&format!("{base}/retype"), &json!({"name": name, "to": to}))?;
     let converted = resp["converted"].as_u64().unwrap_or(0);
     let fallbacks = resp["fallback_count"].as_u64().unwrap_or(0);
-    println!("retyped {name} to {to}: {converted} value(s) converted, {fallbacks} fell back to the default");
+    println!("retyped {name} to {to}: {converted} value(s) converted, {fallbacks} metarecord(s) lost a value that did not convert");
     Ok(0)
 }
 

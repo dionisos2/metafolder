@@ -59,4 +59,4 @@ Both are asked again every 1.5 s (`task-poll-ms`, [[GUI configuration]]).
 !! Unloading and retyping
 
 * ''Unload'' on a row, or `repos:unload` followed by a name (completed over the loaded ones), unloads the repository from the daemon. What the daemon refuses — a task still running — is said in the status bar.
-* ''Retype…'' on a row, or `repos:open-retype` for the active repository, opens the form converting every value of a field to another type: it counts the metarecords holding the field, asks, then reports how many values were converted and how many fell back to the type's default ([[Changing a field's type]]).
+* ''Retype…'' on a row, or `repos:open-retype` for the active repository, opens the form converting every value of a field to another type: it counts the metarecords holding the field, asks, then reports how many values were converted and how many metarecords lost a value that did not convert ([[Changing a field's type]]).
