@@ -22,6 +22,11 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   postings, …) told apart by a first byte become tables of their own (user
   decision, 18 November 2026), and the tables' names are to be gone over at the
   same time.
+- The sync store (=sync.rs=, one LMDB per pair of repositories: =meta=, =links=,
+  =by_a=, =by_b=, =snaps=) was left out of the review of the store's tables
+  (user decision, 20 November 2026): independent, with a migration of its own. To
+  go over later on the same principles: compact encoding, snapshot fields in the
+  record value format rather than JSON, the tables' names.
 - The mass-write threshold (=mass-write-threshold=, 20 to start) is one number for
   every operation: a way to derive better values from the repository is to come
   (doc "Mass writes in the store").
