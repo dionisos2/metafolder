@@ -2,89 +2,125 @@ title: Log storage
 tags: [[Event log]]
 kind: reference
 audience: dev
-summary: What an operation records — the rows it took off, the value an append added, the version it added — and how one write lays it all down.
+summary: How the log is stored — one form of entry for one or many metarecords, its targets and its before in chunks, the indexes beside it — and how one write lays it down.
 
 The log lives in the repository's store, beside the data it describes — one transaction
-writes both ([[Store tables]]): a ''label'' holds its name, description, parent and
-creation time ([[Labels and contexts]]); an ''operation'' the fields below; each operation the ''snapshot'' rows it took off;
-HEAD — the newest operation, the change feed's cursor — is a record of its own. (Watcher
-events are not here: they are buffered in memory.) The log is a sequence: operations are
-numbered in the order they were written, and none names a parent ([[The operation log]],
-[[Why the log stops being a tree]]). The names below — `operation`, `op_snapshot`,
-`log_head` — are those of the SQLite tables of before September 2026.
+writes both ([[Store tables]]). (Watcher events are not here: they are buffered in
+memory.) The log is a sequence: operations are numbered in the order they were
+written, and none names a parent ([[The operation log]],
+[[Why the log stops being a tree]]). HEAD — the newest operation, the change feed's
+cursor — is `log_head` in `global_primary_state`.
 
-|!Operation field |!Holds |
-|`id` |never reused; its order is the log's |
-|`label_id` |its innermost label |
-|`timestamp` |when it was written (Unix ms): one write's operations share it |
-|`origin` |who asked for it ([[Operations and their origin]]) |
-|`op_type` |[[Operations and their origin]] |
-|`entity_uuid` |the metarecord it changed |
-|`field_name` |for a field operation |
-|`delta` |what the operation added to its entity's version, modulo 2^53 (a stub has none: its records' deltas are computed from its rows) |
-|`reverts_op_id` |for an operation a revert wrote: the one it undid |
+!! One form of entry
 
-The store also keeps each label's operations in order, each label's children, each
-metarecord's operations and each origin's, so a label's listing, its nesting, a
-metarecord's history and the oldest operations of an origin are each a prefix read; the
-newest operations are a backward range, and the operation at a time a binary search over
-them (timestamps grow with the ids).
+Every entry of the log is ''one operation on a list of metarecords'', its
+''targets''; an operation on one metarecord is a list of one. An entry takes as many
+operation ids as it has targets: the operation on the `k`-th target is `first + k`,
+and what reads the log is given, for that id, the operation a write to that target
+alone would have logged — a revert, the history, the change feed and the trash
+correlation know nothing of entries. Ids are never reused. The log is ''counted by
+entry'', one key each, which is what it costs.
 
-`reverts_op_id` is read by displays and by the undo selection — which is why a revert
-records it rather than merely looking like one. Nothing on the write path branches on it,
-and it may dangle: pruning and retention may remove the operation it names.
+```
+log_entries  first op id → log context · timestamp · origin · effect · file action
+                           · [first reverted op] · parameters · target count
+log_targets  first op id · chunk number → { uuid } · before of the chunk
+```
 
-!! Snapshots
+A chunk holds a fixed number of targets (4096): an operation on one metarecord is two
+keys, with no case of its own. The targets are ''uuids'', never dense ids: one form,
+nothing for a reindex to rewrite. A write to many records, which holds its records as
+a bitmap of dense ids, turns them into uuids as it writes (`uuids`, one key per id, in
+the order of the ids).
 
-Each operation stores the rows it took off its record, in the column form of a field row
-([[The column form of a value]]) — its ''before''. The state it left, its ''after'', is
-not stored (layout 10, November 2026): nothing needs it, and a write costs a key less.
-Of an append alone the value it added is kept, which a revert takes off:
+|!Header part |!Holds |
+|log context |the innermost context of the write ([[Labels and contexts]]) |
+|timestamp |when it was written (Unix ms): one write's entries share it |
+|origin |one byte: client, watcher, trash ([[Operations and their origin]]) — not read off the context: a command can mix ordinary writes and trashing |
+|effect |one byte, below |
+|file action |one byte: none, `file_deleted`, `file_moved`, `file_modified` — what an undo does to the files ([[Filesystem coordination]]) |
+|first reverted op |for an entry a revert wrote: the operation `first + k` reverts `reverted + k`, the reverted ids being consecutive, in the order of the targets |
+|parameters |those of the effect, below; values in the compact form ([[The column form of a value]]) |
 
-|!Type |!Before |!Added (append only) |
-|`create_metarecord` |— |— |
-|`delete_metarecord` |every row of the deleted one |— |
-|`set_field` |the previous rows of the name |— |
-|`append_field` |— |the appended row |
-|`delete_field` |the deleted rows |— |
-|`file_deleted` |the `mfr_path` row |— |
-|`file_moved` |the previous `mfr_path` row |— |
-|`file_modified` |`mfr_size`, `mfr_mtime` and the hash rows |— |
+The wire still names an operation by its type ([[Operations and their origin]]): the
+file action when there is one, else the effect's (`create_metarecord`,
+`delete_metarecord`, `set_metarecord`, `append_field`, `delete_field`, `set_field`).
 
-What reads an operation's ''after'' therefore asks elsewhere: the revert plan's
-`changed_since` warning looks for a later operation on the cell, a redo of the operation (a revert of its revert) excepted (an append and a removal
-compare the rows with the value they added or took); the move a revert of `file_moved`
-makes goes from where the file is recorded after the move — what the next operation on
-its `mfr_path` took off, or the row now ([[Filesystem coordination]]) — to the row the
-move took off. The log panel and `mf log show` show the before alone, and
-`snapshots_after` is gone from the API ([[Log endpoints]]).
+!! Effects, and the before
+
+An operation keeps what it found, its ''before'', and nothing of the state it left: a
+revert applies its inverse to the current state ([[Reverting onto the current state]]).
+The before of a chunk is grouped by value: `{ field · type · value · the ranks, in the
+chunk, of the targets that held it }`.
+
+|!Effect |!Parameters |!Before |
+|create |— |— |
+|delete |— |every row of each target |
+|set_record |every row |every row of each target |
+|add |field · value |the targets that held `nothing` in the field (an add takes it away, [[Nothing versus unknown]]) |
+|remove |field · value |— (undone by an add) |
+|set |field · values (one or more) |the field's previous values |
+|unset |field |the field's previous values |
+
+The before of a ''deletion of many records'' is not written when the deletion is: it
+is in the records, which its pending `delete` keeps as they were, and the fold copies
+it into the chunks, chunk by chunk, without rewriting the header or another chunk
+([[Mass writes in the store]]).
 
 A directory's `file_deleted` gives each descendant its own operation in the same write.
 
-A write that adds a value to, or removes it from, a field of many records logs one entry,
-which reads as these operations, one per record ([[Mass operations in the log]]).
+!! Compaction
+
+An operation that differs from the last entry of the log only by its targets is added
+to it — its last chunk rewritten, or a new chunk — when that entry is the last of the
+log, of the same context, and the targets are disjoint. A revert's entry is extended
+only by the revert of the next operation (first reverted = last reverted + 1). So a
+loop of `mf … field add` over a thousand files, inside one context, is one entry.
+
+Compaction happens at the append only, where nothing is to be rewritten. Compacting
+entries afterwards stays possible: every key of the absorbed entry (`log_targets`,
+`log_entries_by_label`, `log_reverted_by`) would then be rewritten under the id of the
+one that stays.
+
+!! Beside the entries
+
+|!Table |!Key |!Kept |
+|`log_entries_by_label` |context · first op id → target count |at the append; a compaction updates the count. A context's operations, their number, its first and last |
+|`log_reverted_by` |reverted entry's first op id · first reverted · last reverted · revert's first op id |at the append, one key per pair of entries; a revert of a whole context writes one per entry it covers |
+|`log_watcher_entries`, `log_user_entries` |first op id |at the append: the two retention classes ([[Automatic retention]]) |
+|`log_entries_by_metarecord` |uuid · op id |at the idle fold ([[Folding in idle time]]), one key per target, up to `log_entries_by_metarecord_indexed_up_to` in `global_derived_state` |
+
+Whether `X` is reverted: the entry holding `X` is known; its keys in
+`log_reverted_by` are read, and if first ≤ `X` ≤ last, `X` is reverted by the revert's
+`first + (X − first reverted)`. A revert's entry that grows replaces its key; a prune of
+the revert removes its keys.
+
+A metarecord's history after an id reads `log_entries_by_metarecord`, then the entries
+not yet indexed, searching their targets (in any order: a compaction appends to them).
+Its cost is loading those entries; the idle fold keeps them few. A reindex touches
+none of the log: it holds no dense id.
+
+The first reverted op is read by displays and by the undo selection — which is why a
+revert records it rather than merely looking like one. Nothing on the write path
+branches on it, and it may dangle: pruning and retention may remove the operation it
+names.
 
 !! Versions recomputed
 
-A snapshot row carries no id. The version is never restored from the log either: it is a hash of the content
-([[Metarecord version]]), so the state a revert writes has the version it should.
-An operation records ''no version'', but the number it added to it: its `delta`, the sum of the
-terms of the rows it wrote minus those of the rows it took off, computed from the rows
-the write already holds. The one reader — a revert matching a trash entry on the version a
-file had before the watcher's flush ([[Filesystem coordination]]) — computes the version
-back: the metarecord's version now, with the delta of each of its operations since the
-label's first subtracted, newest first. The version being a sum of row terms
-([[Metarecord version]]), this is exact, and costs the operations on that one metarecord.
-A store of an older layout has no deltas: it is opened with an empty log.
+The version is never restored from the log: it is a hash of the content
+([[Metarecord version]]), so the state a revert writes has the version it should. An
+entry records no version, nor what it added to one. The one reader of a past version —
+a revert matching a trash entry on the version a file had before the watcher's flush
+([[Filesystem coordination]]) — rebuilds the metarecord's state before the context by
+undoing its operations since, newest first, from the current state, as a revert would,
+and computes the version of that state. It costs the operations on that one
+metarecord.
 
 !! One write
 
 Every request that changes metadata goes through one `log::Writer`, in one transaction:
-its label is checked or opened ([[Labels and contexts]]); for each change, the affected rows and
-the version are read (the before snapshot), the change is applied (the version updated
-incrementally), and an operation appended;
-finally HEAD is recorded and the transaction commits. Every writer — reconcile included — follows it, which is what
-keeps the data and HEAD consistent ([[Writes and atomicity]]).
-
-(An `unknown` operation type exists for an unlogged write — no snapshots, so nothing can
-revert it. No endpoint writes one: the `no_log` option it was meant for was never needed.)
+its context is checked ([[Labels and contexts]]); for each change, the affected rows
+are read (the before), the change is applied, and the operation appended — to the last
+entry when it can be; finally HEAD is recorded and the transaction commits. Every
+writer — reconcile included — follows it, which is what keeps the data and HEAD
+consistent ([[Writes and atomicity]]).

@@ -13,7 +13,7 @@ mf -n music log prune before --timestamp 2026-09-01T00:00:00Z
 
 ''Irreversible'': deleted operations cannot be reverted any more. It asks for confirmation
 (unless `--force`; `--silent` does not skip it). The target — a label id, `--id` or
-`--timestamp` — is kept; every operation strictly older goes, with the labels left empty
+`--timestamp` — is kept; every entry of the log whose operations are all strictly older goes ([[Log storage]]), with the labels left empty
 (no operation, no child label left in them; never the watcher's). A label is kept
 ''whole'': the cut is its oldest operation, its children's included. `Pruned 47
 operations; 3 label(s) left empty went with them.`

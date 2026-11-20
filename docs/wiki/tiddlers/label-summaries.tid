@@ -15,14 +15,14 @@ the keys of the log say alone.
 `GET /repos/:repo/log/labels` ([[GET /repos/:repo/log/labels]]) lists labels, newest
 first, each with:
 
-* its own `operations`, counted off `ops_by_label` — one key per operation, one per stub, which says where its operations end — and its `first_op` and `last_op`;
+* its own `operations`, counted off `log_entries_by_label` — one key per entry, which holds its number of targets — and its `first_op` and `last_op`;
 * when it was last written in (`updated`), its `origin` and whether it is the `watcher`'s, read off its first and last operations;
 * how many `children` it has;
 * `reverts` and `reverted_by`: the labels it undid and the labels that undid it, each with `whole` (the label and its children undone, or some of its operations);
 * `undone`: `null`, `partly` or `fully`, worked out from those marks alone.
 
 The cost is a few keys per label, whatever the number of operations in it. A log of ten
-thousand operations written as one stub costs what a log of one operation does.
+thousand operations written as one entry costs what a log of one operation does.
 
 !! The marks
 

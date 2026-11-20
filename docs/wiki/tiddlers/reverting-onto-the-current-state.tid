@@ -58,6 +58,6 @@ again by the watcher.
 !! Identities
 
 * ''A metarecord keeps its uuid'': recreating a deleted one restores it. A uuid is unique by construction, so it cannot collide.
-* ''A metarecord keeps its dense id'' too, between two reindexes: its revert restores the id and what the deletion took ([[Deleting a metarecord in the store]]), so a stub that names it by id still names it.
+* ''A metarecord keeps its dense id'' too, between two reindexes: its revert restores the id and what the deletion took ([[Deleting a metarecord in the store]]), so what the indexes file under its id names it again.
 * ''A field row has no id'': it is its name and value, so what a revert puts back is the same row as before. Clients re-read on the change anyway ([[Daemon data in panels]]).
 * Hence an `append_field` is undone ''by value'': after undo, redo, undo, the value it appended is the one the redo wrote, and the metarecord's content, and its version, are what they were (doc "Metarecord version").

@@ -2,15 +2,15 @@ title: Automatic retention
 tags: [[Event log]]
 kind: reference
 aliases: retention log-retention-watcher-ops log-retention-user-ops
-summary: The log keeps the last 50 000 operations of the watcher and the last million of everything else; the trim rides the write that triggers it.
+summary: The log keeps the last 50 000 entries of the watcher and the last million of everything else; the trim rides the write that triggers it.
 
 A watched repository records every change the watcher sees and would keep them for ever;
 most of that history is of no interest. Retention is pruning as a standing policy, counted
-in ''operations, per origin''. Two settings, per repository (its `config.json`) or
+in ''entries of the log, per origin'' — an entry being one operation on one or many metarecords ([[Log storage]]): what the log costs is its entries. Two settings, per repository (its `config.json`) or
 daemon-wide (`[settings]`, [[Daemon configuration]]):
 
-* ''`log-retention-watcher-ops`'' — how many of the watcher's operations to keep; default 50 000, `0` keeps them all.
-* ''`log-retention-user-ops`'' — how many of every other operation to keep: what the user wrote from the command line, the GUI or a script (a trashing included); default 1 000 000, `0` keeps them all.
+* ''`log-retention-watcher-ops`'' — how many of the watcher's entries to keep; default 50 000, `0` keeps them all.
+* ''`log-retention-user-ops`'' — how many of every other entry to keep: what the user wrote from the command line, the GUI or a script (a trashing included); default 1 000 000, `0` keeps them all.
 
 Two budgets because the volumes are not comparable: a watched tree writes operations all
 day, and a limit shared with them would let that churn push the user's own history out.
@@ -18,8 +18,9 @@ Nothing in the log depends on an older operation being there — a revert applie
 current state ([[Reverting onto the current state]]) — so each origin can lose its oldest
 operations without making any other one impossible to revert ([[The operation log]]).
 
-A write that adds a value to many records, or removes it, is one entry in the log, which
-counts once and goes whole ([[Mass operations in the log]]).
+A write to many records is one entry, and so are the operations of one context that
+followed each other and differ only by their targets ([[Log storage]]): each counts
+once and goes whole ([[Mass operations in the log]]).
 
 The limits being on by default, a repository is trimmed on its first write after the
 setting takes effect — permanently, without asking. That is the point (an unbounded log is
@@ -33,17 +34,18 @@ startup; a repository's `config.json` drops them silently the next time it is wr
 
 !! What a trim does
 
-For each origin past its limit, the trim deletes the oldest operations down to the limit,
-with their snapshots, and the revisions left with no operation ([[Pruning the log]]).
+For each origin past its limit, the trim deletes the oldest entries down to the limit,
+with their targets and their keys in the log's indexes ([[Pruning the log]]).
 It never reaches into the write that triggered it: a write larger than the limit — a
 reconcile of more than a million files — is kept whole, and the log stays past its limit
 until the next write trims it. Cut by its own commit, such a write lost its oldest
 operations, and undoing it undid only part of it, without a word. The
-log keeps the operations of each origin in a table of its own ([[Store tables]]), so
+log keeps the entries of each origin in a table of its own (`log_watcher_entries`,
+`log_user_entries`, [[Store tables]]), so
 finding the oldest ones reads only what is deleted (`tests/log_cost.rs`). The trim runs
 ''inside the transaction of the write that triggered it'': cheaper than the append that
 triggered it, riding a commit that was being paid for anyway. It does not run at every
-write: an origin may drift a tenth of its limit past it (at least one operation) first — so
+write: an origin may drift a tenth of its limit past it (at least one entry) first — so
 the oldest, coldest pages are dirtied once per slack, not at every commit.
 
 A trim happens only on a write: a repository nobody writes to keeps what it has.
