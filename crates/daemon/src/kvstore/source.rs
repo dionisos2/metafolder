@@ -429,9 +429,15 @@ impl KvSource<'_> {
         self.ok(read(), RoaringBitmap::new())
     }
 
-    /// The ids pointing at `target` in `field` (a folder's children): one
-    /// bitmap, a read per chunk.
+    /// The ids pointing at `target` in `field`: a folder's children, its
+    /// parent holders — one bitmap, a read per chunk; a `ref`'s referrers,
+    /// the holders of its value (doc "Store tables").
     fn referrers_of(&self, field: &str, target: &[u8; 16]) -> RoaringBitmap {
+        if self.value_type(field) == Some("ref") {
+            let value = Value::Ref(Uuid::from_bytes(*target));
+            let key = value_key(&value).expect("a reference has a value key");
+            return self.bucket(field, VALUE, &key);
+        }
         let read = || -> Result<RoaringBitmap> {
             // Filed under the target's dense id; nothing points at a uuid
             // that has none.
@@ -453,17 +459,7 @@ impl KvSource<'_> {
                     out |= derived::decode_set(v)?;
                 }
             }
-            // A reference's referrers are its value's holders: behind by the
-            // field's pending events, as the value partition is.
-            let pending = self.events(field);
-            if pending.is_empty() {
-                return Ok(out);
-            }
-            let by_target = events::by_target(&pending, |uuid| {
-                self.read_keys(1)?;
-                Ok(self.t.ids.get(&self.r, uuid)?.map(dense))
-            })?;
-            Ok(events::replay(&by_target, &target.to_be_bytes(), out))
+            Ok(out)
         };
         self.ok(read(), RoaringBitmap::new())
     }

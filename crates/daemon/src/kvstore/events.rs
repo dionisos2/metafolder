@@ -31,9 +31,8 @@ use roaring::RoaringBitmap;
 
 use super::super::{get_value, name_key, put_value, In, KvStore, KvTxn, Out, Tables};
 use super::{
-    count_prefix, decode_set, hist_bucket, hist_key, posting_prefix, referrers_prefix, search_text,
-    set_prefix, unesc, value_key, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS, POSTINGS,
-    REFERRERS, SETS, TRIGRAM_MAX,
+    count_prefix, decode_set, hist_bucket, hist_key, posting_prefix, search_text, set_prefix,
+    unesc, value_key, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS, POSTINGS, SETS, TRIGRAM_MAX,
 };
 
 pub(crate) use crate::store::MassKind as Kind;
@@ -149,27 +148,6 @@ pub(crate) fn replaced(events: &[Event]) -> RoaringBitmap {
         out |= &e.ids;
     }
     out
-}
-
-/// `events` as they read on a field's referrers: keyed by the dense id of
-/// the metarecord a `ref` value points at, as the referrers are.
-pub(crate) fn by_target(
-    events: &[Event],
-    mut id_of: impl FnMut(&[u8; 16]) -> Result<Option<u32>>,
-) -> Result<Vec<Event>> {
-    let mut out = Vec::with_capacity(events.len());
-    for e in events {
-        let mut keys = Vec::new();
-        for v in &e.values {
-            if let Value::Ref(u) = v {
-                if let Some(id) = id_of(u.as_bytes())? {
-                    keys.push(id.to_be_bytes().to_vec());
-                }
-            }
-        }
-        out.push(Event { kind: e.kind, values: e.values.clone(), keys, ids: e.ids.clone() });
-    }
-    Ok(out)
 }
 
 impl KvStore {
@@ -395,11 +373,8 @@ impl KvTxn<'_> {
         ids: &RoaringBitmap,
         add: bool,
     ) -> Result<()> {
+        let _ = value;
         self.chunk_apply(SETS, &posting_prefix(field, key), ids, add)?;
-        if let Some(Value::Ref(target)) = value {
-            let tid = self.target_id(target.as_bytes())?;
-            self.chunk_apply(SETS, &referrers_prefix(field, tid), ids, add)?;
-        }
         Ok(())
     }
 
@@ -432,26 +407,6 @@ impl KvTxn<'_> {
                         }
                         self.store_holders(field, None, &key, &gone, false)?;
                         self.hist_bump(field, &key, -(gone.len() as i64))?;
-                    }
-                    // Whatever the records pointed at, they no longer do.
-                    // The targets stored, and those this transaction filed —
-                    // an earlier event of this fold — not in the table yet.
-                    let referrers = [&[REFERRERS][..], &name_key(field)].concat();
-                    let mut targets: BTreeSet<Vec<u8>> = BTreeSet::new();
-                    for entry in t.sets().prefix_iter(&self.txn.borrow(), &referrers)? {
-                        let k = entry?.0;
-                        if k.len() == referrers.len() + 6 {
-                            targets.insert(k[..k.len() - 2].to_vec());
-                        }
-                    }
-                    let whole = [&[SETS][..], &referrers[..]].concat();
-                    for k in self.sets.borrow().keys() {
-                        if k.starts_with(&whole) && k.len() == whole.len() + 6 {
-                            targets.insert(k[1..k.len() - 2].to_vec());
-                        }
-                    }
-                    for target in targets {
-                        self.chunk_apply(SETS, &target, &e.ids, false)?;
                     }
                     for (value, key) in valued.zip(&e.keys) {
                         let have = self.stored_holders(field, key)?;

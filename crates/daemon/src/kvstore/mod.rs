@@ -108,7 +108,7 @@ struct Tables {
     index_absent: Db,
     index_parents: Db,
     index_long_texts: Db,
-    index_referrers: Db,
+    index_parent_holders: Db,
     index_descendants: Db,
     index_value_holders: Db,
     index_trigram_pending: Db,
@@ -145,7 +145,7 @@ const NAMES: [&str; table::TABLES] = [
     "index_absent",
     "index_parents",
     "index_long_texts",
-    "index_referrers",
+    "index_parent_holders",
     "index_descendants",
     "index_value_holders",
     "index_trigram_pending",
@@ -175,7 +175,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, index_absent, index_parents, index_long_texts, index_referrers, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_name_holders, index_raw_holder, grams, hist, events, label_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, index_absent, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_name_holders, index_raw_holder, grams, hist, events, label_reverts] =
             dbs;
         Ok(Tables {
             version,
@@ -200,7 +200,7 @@ impl Tables {
             index_absent,
             index_parents,
             index_long_texts,
-            index_referrers,
+            index_parent_holders,
             index_descendants,
             index_value_holders,
             index_trigram_pending,
@@ -239,7 +239,7 @@ impl Tables {
             self.index_absent,
             self.index_parents,
             self.index_long_texts,
-            self.index_referrers,
+            self.index_parent_holders,
             self.index_descendants,
             self.index_value_holders,
             self.index_trigram_pending,

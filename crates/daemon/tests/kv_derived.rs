@@ -329,7 +329,7 @@ fn sets_bytes(dir: &std::path::Path) -> usize {
         "index_absent",
         "index_parents",
         "index_long_texts",
-        "index_referrers",
+        "index_parent_holders",
         "index_descendants",
         "index_trigram_pending",
         "index_value_counts",

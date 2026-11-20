@@ -61,3 +61,23 @@ fn each_kind_of_index_is_a_table_of_its_own() {
         assert!(db.len(&r).unwrap() > 0, "{table} holds the store's entries");
     }
 }
+
+/// A `ref`'s referrers are the holders of its value: nothing is filed under
+/// the target, and a target not created yet gets no id (doc "Store tables").
+#[test]
+fn a_reference_files_nothing_under_its_target() {
+    let dir = TempDir::new("kv-index-ref");
+    {
+        let mut kv = KvStore::open_unsynced(dir.path()).unwrap();
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        let nowhere = uuid::Uuid::new_v4();
+        w.create_metarecord(vec![Field::new("link", Value::Ref(nowhere))]).unwrap();
+        w.commit().unwrap();
+    }
+    let env = raw_env(dir.path());
+    let ids = open_raw(&env, "ids");
+    let parents = open_raw(&env, "index_parent_holders");
+    let r = env.read_txn().unwrap();
+    assert_eq!(ids.len(&r).unwrap(), 1, "the metarecord's id alone, none reserved");
+    assert_eq!(parents.len(&r).unwrap(), 0, "nothing filed under the target");
+}

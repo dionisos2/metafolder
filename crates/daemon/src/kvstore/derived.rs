@@ -54,8 +54,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`.
-pub(super) const DERIVED_VERSION: i64 = 19;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
+pub(super) const DERIVED_VERSION: i64 = 20;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -319,7 +319,7 @@ impl<'a> SetTables<'a> {
             ABSENT => t.index_absent,
             PARENTS => t.index_parents,
             LONG_TEXTS => t.index_long_texts,
-            REFERRERS => t.index_referrers,
+            REFERRERS => t.index_parent_holders,
             DESCENDANTS => t.index_descendants,
             POSTINGS => t.index_value_holders,
             GRAM_PENDING => t.index_trigram_pending,
@@ -1251,7 +1251,9 @@ impl KvTxn<'_> {
             self.chunk_member(SETS, &part_posting_prefix(field, NAME, &k), id, held)?;
         }
         // What the row points at, by the dense id it is filed under.
-        let target = match target_of(value) {
+        // A position is filed under its parent (a reserved id for a parent
+        // not created yet); a `ref`'s referrers are its value's holders.
+        let target = match target_of(value).filter(|_| value.position().is_some()) {
             Some(target) => Some((target, self.target_id(&target)?)),
             None => None,
         };
@@ -2144,8 +2146,9 @@ impl KvStore {
                 if let Some(key) = name_part_key(&row.value) {
                     *group.parts.entry((NAME, key)).or_default() += 1;
                 }
-                // What the row points at, by the dense id it is filed under.
-                let target = match target_of(&row.value) {
+                // The parent a position is filed under, by its dense id.
+                let target = match target_of(&row.value).filter(|_| row.value.position().is_some())
+                {
                     Some(target) if target == ZERO => Some(NO_TARGET),
                     Some(target) => {
                         let id = id_of(t, r, &target)?;
@@ -2248,14 +2251,13 @@ impl KvStore {
         // what is stored of their values is behind by them, and is held to
         // the rows as replayed — each event list as it reads on the value
         // partition, and on the referrers.
-        let mut pending: HashMap<String, (Vec<events::Event>, Vec<events::Event>)> = HashMap::new();
+        let mut pending: HashMap<String, (Vec<events::Event>, ())> = HashMap::new();
         for entry in t.events.iter(r)? {
             let (name, _) = unesc(entry?.0)?;
             let field = String::from_utf8(name).context("a field name")?;
             if let std::collections::hash_map::Entry::Vacant(slot) = pending.entry(field) {
                 let list = events::read_events(t, r, slot.key())?;
-                let by_target = events::by_target(&list, |uuid| id_of(t, r, uuid))?;
-                slot.insert((list, by_target));
+                slot.insert((list, ()));
             }
         }
 
@@ -2296,19 +2298,15 @@ impl KvStore {
                 COUNT => (SET, COUNT_TAG + rest[0], &rest[..0]),
                 _ => (SET, kind, &rest[..0]),
             };
-            let replayed = pending.get(field).filter(|_| kind == REFERRERS);
             for id in decode_set(v)? {
-                if replayed.is_some_and(|(_, e)| !events::replay_one(e, key, id, true)) {
-                    continue;
-                }
-                if kind == UNIVERSE || !sifted(id) {
+                if !sifted(id) {
                     sink(Side::Got, Entry { space, tag, field, key, id, count: 1 })?;
                 }
             }
         }
         // What the events add and nothing stores yet, under the values they
         // name.
-        for (field, (list, by_target)) in &pending {
+        for (field, (list, _)) in &pending {
             for key in events::named(list) {
                 let run = posting_prefix(field, &key);
                 let mut stored = RoaringBitmap::new();
@@ -2322,19 +2320,6 @@ impl KvStore {
                     if !sifted(id) {
                         let entry =
                             Entry { space: PART, tag: VALUE, field, key: &key, id, count: 1 };
-                        sink(Side::Got, entry)?;
-                    }
-                }
-            }
-            for key in events::named(by_target) {
-                let mut stored = RoaringBitmap::new();
-                for entry in t.sets().prefix_iter(r, &referrers_prefix(field, dense(&key)))? {
-                    stored |= decode_set(entry?.1)?;
-                }
-                for id in events::replay(by_target, &key, stored.clone()) - stored {
-                    if !sifted(id) {
-                        let entry =
-                            Entry { space: REFERRER, tag: 0, field, key: &key, id, count: 1 };
                         sink(Side::Got, entry)?;
                     }
                 }
