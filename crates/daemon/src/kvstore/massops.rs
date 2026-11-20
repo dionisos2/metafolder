@@ -574,12 +574,6 @@ impl Read<'_> {
         ids.sort_unstable();
         Ok(ids)
     }
-
-    /// How many operations the stubs hold beyond one entry each.
-    pub(super) fn mass_extra(&self) -> Result<i64> {
-        self.count(1)?;
-        Ok(self.meta("mass_extra")?.unwrap_or(0))
-    }
 }
 
 impl KvTxn<'_> {
@@ -815,7 +809,6 @@ impl KvTxn<'_> {
             touches_watch |= !(&self.holder_ids_now(field)? & &changed).is_empty();
         }
         self.chunk_apply(SETS, &set_prefix(UNIVERSE, None), &changed, false)?;
-        self.keep_records()?;
         let stub = Stub {
             first: self.next_op_id()?,
             label,
@@ -1404,7 +1397,7 @@ impl KvTxn<'_> {
 
     fn next_op_id(&self) -> Result<i64> {
         let w = self.txn.borrow();
-        Ok(self.t.meta.get(&w, b"next_op")?.map_or(1, from_be))
+        Ok(super::State::NextLogOp.get(&self.t, &w)?.unwrap_or(1))
     }
 
     fn put_stub(&self, stub: &Stub) -> Result<()> {
@@ -1415,9 +1408,7 @@ impl KvTxn<'_> {
         t.ops_by_label.put(&mut w, &key(&[&be(stub.label), &first]), &be(stub.last()))?;
         t.ops_by_entity.put(&mut w, &key(&[ROOT.as_slice(), &first]), &[])?;
         self.class(stub.origin.as_deref()).put(&mut w, &first, &[])?;
-        t.meta.put(&mut w, b"next_op", &be(stub.last() + 1))?;
-        let extra = t.meta.get(&w, b"mass_extra")?.map_or(0, from_be);
-        t.meta.put(&mut w, b"mass_extra", &be(extra + stub.who.len() as i64 - 1))?;
+        super::State::NextLogOp.put(&t, &mut w, stub.last() + 1)?;
         if let Some(target) = stub.reverts {
             for k in 0..stub.who.len() as i64 {
                 t.reverted_by.put(&mut w, &key(&[&be(target + k), &be(stub.first + k)]), &[])?;
@@ -1458,13 +1449,9 @@ impl KvTxn<'_> {
         t.ops_by_entity.delete(&mut w, &key(&[ROOT.as_slice(), &first]))?;
         t.watcher_ops.delete(&mut w, &first)?;
         t.user_ops.delete(&mut w, &first)?;
-        let extra = t.meta.get(&w, b"mass_extra")?.map_or(0, from_be);
-        let kept = stub.who.len() - k;
-        if kept == 0 {
-            t.meta.put(&mut w, b"mass_extra", &be(extra - (stub.who.len() as i64 - 1)))?;
+        if stub.who.len() == k {
             return Ok(());
         }
-        t.meta.put(&mut w, b"mass_extra", &be(extra - k as i64))?;
         drop(w);
         let rest = Stub {
             first: stub.first + k as i64,

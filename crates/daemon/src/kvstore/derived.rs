@@ -177,7 +177,6 @@ pub(super) const RESERVED: u8 = 10;
 /// The `meta` counter of the numberings of the dense ids: a reindex, which
 /// numbers the metarecords again, moves it, and a cursor of an earlier
 /// numbering is refused (doc "Pagination and sorting").
-pub(super) const NUMBERING: &str = "numbering";
 
 /// The dense id standing for "no parent": what a forest's roots are filed
 /// under. No metarecord gets it — ids start at 1.
@@ -838,7 +837,8 @@ impl KvTxn<'_> {
 
     /// The next dense id, given to `uuid`.
     fn new_id(&self, uuid: &[u8; 16]) -> Result<u32> {
-        let id = u32::try_from(self.next("next_id")?).context("dense ids exhausted")?;
+        let id = u32::try_from(self.next(super::State::NextMetarecordId)?)
+            .context("dense ids exhausted")?;
         let mut w = self.txn.borrow_mut();
         self.t.ids.put(&mut w, uuid, &id.to_be_bytes())?;
         self.t.uuids.put(&mut w, &id.to_be_bytes(), uuid)?;
@@ -980,7 +980,7 @@ impl KvTxn<'_> {
             return Ok(());
         }
         drop(w);
-        let n = self.next("mass_op")? as u64;
+        let n = self.next(super::State::NextWriteNumber)? as u64;
         let fields: BTreeSet<&str> = entries.iter().map(|e| e.field.as_str()).collect();
         let record = super::mass::Record {
             ops: vec![n; rows.len()],
@@ -1739,8 +1739,8 @@ impl KvStore {
         // again, then under the new dense ids.
         txn.file_records_by_uuid()?;
         txn.clear_derived()?;
-        txn.meta_put("next_id", 1)?;
-        txn.next(NUMBERING)?;
+        txn.meta_put(super::State::NextMetarecordId, 1)?;
+        txn.next(super::State::NextReindex)?;
         for &uuid in &order {
             txn.derive_created(uuid)?;
         }
@@ -1753,10 +1753,8 @@ impl KvStore {
             }
         }
         txn.fold_grams()?;
-        txn.meta_put("derived", DERIVED_VERSION)?;
-        txn.meta_put("kept", 0)?;
+        txn.meta_put(super::State::DerivedVersion, DERIVED_VERSION)?;
         txn.finish()?;
-        self.kept.store(false, std::sync::atomic::Ordering::Relaxed);
         self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
         self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
@@ -1813,7 +1811,7 @@ impl KvStore {
         }
         // The counter holds the next id to hand out; the first is 1.
         wear.ids_allocated =
-            (self.t.meta.get(&r, b"next_id")?.map_or(1, from_be) - 1).max(0) as u64;
+            (super::State::NextMetarecordId.get(&self.t, &r)?.unwrap_or(1) - 1).max(0) as u64;
         let live = self.t.metarecords.len(&r)?;
         wear.ids_live = live;
         Ok(wear)
@@ -1936,7 +1934,7 @@ impl KvStore {
         }
         // An id never given names nothing, deleted or not: it is held to
         // the rows like one that exists, and found unexpected.
-        let next = t.meta.get(r, b"next_id")?.map_or(1, from_be);
+        let next = super::State::NextMetarecordId.get(t, r)?.unwrap_or(1);
         let sifted = |id: u32| !live.contains(id) && i64::from(id) < next;
         if mapped < metarecords {
             diff.push(format!("ids: map {mapped} metarecords, the store holds {metarecords}"));

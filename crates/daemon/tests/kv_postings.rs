@@ -282,10 +282,10 @@ fn a_store_with_a_value_partition_is_derived_again_when_it_opens() {
     }
     {
         let env = raw_env(dir.path());
-        let meta = open_raw(&env, "meta");
+        let meta = open_raw(&env, "version");
         let parts = create_raw(&env, "parts");
         let mut w = env.write_txn().unwrap();
-        meta.put(&mut w, b"derived", &10i64.to_be_bytes()).unwrap();
+        meta.put(&mut w, b"derived_version", &10i64.to_be_bytes()).unwrap();
         // What the old format wrote for a value: field · partition 0 · key · id.
         let key = [&b"kind\0\0"[..], &[0], &[3, b'v', b'0', 0, 0], &1u32.to_be_bytes()].concat();
         parts.put(&mut w, &key, &1i64.to_be_bytes()).unwrap();

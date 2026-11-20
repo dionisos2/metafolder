@@ -239,7 +239,7 @@ fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
         // populated forest is `loc`), and the format stamped 4.
         let env = common::kv::raw_env(dir.path());
         let sets = common::kv::open_raw(&env, "sets");
-        let meta = common::kv::open_raw(&env, "meta");
+        let meta = common::kv::open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
         let descendants: Vec<Vec<u8>> =
             sets.iter(&w).unwrap().map(|e| e.unwrap().0.to_vec()).filter(|k| k[0] == 6).collect();
@@ -247,7 +247,7 @@ fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
         for k in descendants {
             sets.delete(&mut w, &k).unwrap();
         }
-        meta.put(&mut w, b"derived", &4u64.to_be_bytes()).unwrap();
+        meta.put(&mut w, b"derived_version", &4u64.to_be_bytes()).unwrap();
         w.commit().unwrap();
     }
     let store = KvStore::open(dir.path()).unwrap();
@@ -264,11 +264,11 @@ fn a_store_from_before_the_histograms_gains_them_when_it_opens() {
     {
         let env = common::kv::raw_env(dir.path());
         let hist = common::kv::open_raw(&env, "hist");
-        let meta = common::kv::open_raw(&env, "meta");
+        let meta = common::kv::open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
         assert!(hist.len(&w).unwrap() > 0, "`size`, `ratio` and `at` have buckets");
         hist.clear(&mut w).unwrap();
-        meta.put(&mut w, b"derived", &5u64.to_be_bytes()).unwrap();
+        meta.put(&mut w, b"derived_version", &5u64.to_be_bytes()).unwrap();
         w.commit().unwrap();
     }
     let store = KvStore::open(dir.path()).unwrap();

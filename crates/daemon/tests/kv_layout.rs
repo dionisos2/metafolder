@@ -105,11 +105,31 @@ fn downgrade(dir: &std::path::Path) {
     w.commit().unwrap();
 }
 
+/// The store's layout: `primary_version` in `version`, or for a store of
+/// layout 10 and before, `layout` in `meta`.
 fn layout(dir: &std::path::Path) -> Option<Vec<u8>> {
     let env = raw_env(dir);
+    if has_table(&env, "version") {
+        let version = open_raw(&env, "version");
+        let r = env.read_txn().unwrap();
+        if let Some(v) = version.get(&r, b"primary_version").unwrap() {
+            return Some(v.to_vec());
+        }
+    }
+    if !has_table(&env, "meta") {
+        return None;
+    }
     let meta = open_raw(&env, "meta");
     let r = env.read_txn().unwrap();
     meta.get(&r, b"layout").unwrap().map(<[u8]>::to_vec)
+}
+
+/// A key of a table, as an integer.
+fn int_of(dir: &std::path::Path, table: &str, key: &[u8]) -> Option<i64> {
+    let env = raw_env(dir);
+    let db = open_raw(&env, table);
+    let r = env.read_txn().unwrap();
+    db.get(&r, key).unwrap().map(|v| i64::from_be_bytes(v.try_into().unwrap()))
 }
 
 /// A store of layout 7 — the fixture — is converted when it opens: one key
@@ -528,4 +548,38 @@ fn a_store_of_layout_10_converts_its_records_and_empties_its_log() {
     assert_eq!(kv.rows(after).unwrap().len(), 1, "it takes writes");
     drop(kv);
     assert_eq!(layout(dir.path()), Some(LAYOUT.to_be_bytes().to_vec()));
+}
+
+/// `meta` is split when a store of layout 10 converts (doc "Store tables"):
+/// the versions in `version`, the counters in `global_primary_state` and
+/// `global_derived_state` under their new names, the two clocks of the writes
+/// one, past both; `meta` removed, and what it said of the log gone with it.
+#[test]
+fn a_store_of_layout_10_keeps_its_counters_in_the_state_tables() {
+    let dir = fixture10();
+    let old = |key: &[u8]| int_of(dir.path(), "meta", key);
+    let (next_op, numbering, next_id) = (old(b"next_op"), old(b"numbering"), old(b"next_id"));
+    let clock = old(b"mass_op").max(old(b"event_seq")).unwrap();
+    drop(KvStore::open(dir.path()).unwrap());
+    let env = raw_env(dir.path());
+    assert!(!has_table(&env, "meta"), "meta is removed");
+    drop(env);
+    let primary = |key: &[u8]| int_of(dir.path(), "global_primary_state", key);
+    assert_eq!(int_of(dir.path(), "version", b"primary_version"), Some(LAYOUT));
+    assert!(int_of(dir.path(), "version", b"derived_version").is_some());
+    assert_eq!(primary(b"next_log_op"), next_op, "operation ids are never reused");
+    assert!(primary(b"next_write_number").unwrap() >= clock, "past both clocks");
+    assert_eq!(primary(b"log_head"), None, "the log is emptied");
+    // The conversion reindexes: the numbering moves on, the ids start again.
+    assert!(primary(b"next_reindex").unwrap() > numbering.unwrap_or(0));
+    assert!(int_of(dir.path(), "global_derived_state", b"next_metarecord_id").is_some());
+    assert!(next_id.is_some());
+}
+
+/// A new store has no `meta` table.
+#[test]
+fn a_new_store_has_no_meta_table() {
+    let dir = TempDir::new("kv-layout-no-meta");
+    drop(KvStore::open(dir.path()).unwrap());
+    assert!(!has_table(&raw_env(dir.path()), "meta"));
 }

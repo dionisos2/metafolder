@@ -388,11 +388,10 @@ fn a_store_of_the_version_before_is_derived_again_when_it_opens() {
         // As the version before left it: no record, an older `derived`, no flag.
         let env = raw_env(_dir.path());
         let records = open_raw(&env, "records");
-        let meta = open_raw(&env, "meta");
+        let meta = open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
         assert!(records.delete(&mut w, &id.to_be_bytes()).unwrap(), "the record was kept");
-        meta.put(&mut w, b"derived", &14i64.to_be_bytes()).unwrap();
-        meta.delete(&mut w, b"kept").unwrap();
+        meta.put(&mut w, b"derived_version", &14i64.to_be_bytes()).unwrap();
         w.commit().unwrap();
     }
     let mut store = KvStore::open(_dir.path()).unwrap();

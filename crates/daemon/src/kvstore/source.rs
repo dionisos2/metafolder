@@ -30,7 +30,7 @@ use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, read_set, text_key, type_tag,
     value_key, NAME, VALUE,
 };
-use super::{from_be, mass, name_key, uuid_of, KvStore, Tables};
+use super::{mass, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
 use crate::index::plan;
 use crate::index::{unsupported, Follow, NamedNode, RepReader, Source, Unsupported, Walked};
@@ -1309,7 +1309,7 @@ impl Source for KvSource<'_> {
     fn numbering(&self) -> u64 {
         let read = || -> Result<u64> {
             self.read_keys(1)?;
-            Ok(self.t.meta.get(&self.r, derived::NUMBERING.as_bytes())?.map_or(0, from_be) as u64)
+            Ok(super::State::NextReindex.get(&self.t, &self.r)?.unwrap_or(0) as u64)
         };
         self.ok(read(), 0)
     }

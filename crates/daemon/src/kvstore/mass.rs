@@ -34,7 +34,7 @@ use roaring::RoaringBitmap;
 
 use super::codec::{self, Dec, Enc};
 use super::derived::decode_set;
-use super::{get_value, put_value, In, KvStore, KvTxn, Out, Tables};
+use super::{get_value, put_value, In, KvStore, KvTxn, Out, State, Tables};
 use crate::rows::FieldRow;
 pub(crate) use crate::store::MassKind as Kind;
 
@@ -382,20 +382,6 @@ impl KvTxn<'_> {
         self.deletes.get()
     }
 
-    pub(super) fn kept_stored(&self) -> bool {
-        self.kept.get()
-    }
-
-    /// Notes that the record of a deleted metarecord stays in the store until
-    /// a reindex: reads sift the records they find through the universe.
-    pub(super) fn keep_records(&self) -> Result<()> {
-        if !self.kept_stored() {
-            self.meta_put("kept", 1)?;
-            self.kept.set(true);
-        }
-        Ok(())
-    }
-
     /// The entries of `part`, as the transaction has them.
     fn part_entries(&self, part: u32) -> Result<Vec<Listed>> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -429,7 +415,7 @@ impl KvTxn<'_> {
         if loaded.entries.is_empty() {
             Ok(0)
         } else {
-            Ok(self.next("mass_op")? as u64)
+            Ok(self.next(State::NextWriteNumber)? as u64)
         }
     }
 
@@ -488,7 +474,7 @@ impl KvTxn<'_> {
         // An entry changes the rows of the records it names: what the log
         // reads of a deletion in a record given back is copied first.
         self.freeze_given_back(ids)?;
-        let op = self.next("mass_op")? as u64;
+        let op = self.next(State::NextWriteNumber)? as u64;
         let mut parts = BTreeSet::new();
         for id in ids {
             parts.insert(part_of(id));

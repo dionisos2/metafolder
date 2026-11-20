@@ -209,10 +209,10 @@ fn a_store_of_the_former_trigram_format_is_reindexed_when_it_opens() {
     {
         let env = common::kv::raw_env(dir.path());
         let grams = common::kv::open_raw(&env, "grams");
-        let meta = common::kv::open_raw(&env, "meta");
+        let meta = common::kv::open_raw(&env, "version");
         let mut w = env.write_txn().unwrap();
         grams.clear(&mut w).unwrap();
-        meta.put(&mut w, b"derived", &6u64.to_be_bytes()).unwrap();
+        meta.put(&mut w, b"derived_version", &6u64.to_be_bytes()).unwrap();
         w.commit().unwrap();
     }
     let store = KvStore::open(dir.path()).unwrap();

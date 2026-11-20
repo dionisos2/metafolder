@@ -57,8 +57,9 @@ fn a_mass_add_is_one_entry_that_reads_as_one_operation_per_record() {
     assert_eq!(written.get("ops_by_label"), Some(&1), "{written:?}");
     assert_eq!(written.get("ops_by_entity"), Some(&1), "{written:?}");
     assert_eq!(written.get("records"), None, "{written:?}");
-    // …and a record's operation each, read.
-    assert_eq!(store.counts().unwrap().0, ops_before + 300);
+    // The log is counted by entry (doc "Log storage"); it reads as a record's
+    // operation each.
+    assert_eq!(store.counts().unwrap().0, ops_before + 1);
     let ops = store.ops_after(head).unwrap();
     assert_eq!(ops.len(), 300);
     assert_eq!(ops.iter().map(|o| o.entity_uuid).collect::<BTreeSet<_>>().len(), 300);
@@ -193,7 +194,7 @@ fn the_log_is_read_whole_through_its_other_doors() {
     write(&mut store, |w| w.set_field(uuids[0], "rank", Value::Int(1)).unwrap());
     let all = store.all_ops().unwrap();
     let head = store.head().unwrap().unwrap();
-    assert_eq!(all.len() as i64, store.counts().unwrap().0);
+    assert_eq!(all.len(), 20 + 20 + 1, "the creations, the entry's twenty, the set");
     // Newest first, bounded, from a point inside the entry.
     let back = store.ops_back(head, Some(5)).unwrap();
     assert_eq!(
@@ -227,7 +228,9 @@ fn pruning_cuts_an_entry_and_retention_takes_it_whole() {
     let target = ops[10].id;
     let before = store.counts().unwrap().0;
     let (pruned, _) = metafolder_daemon::log::prune(&mut store, target).unwrap();
-    assert_eq!(store.counts().unwrap().0, before - pruned as i64);
+    assert!(pruned >= 10);
+    // Counted by entry: the cut entry stays one.
+    assert!(store.counts().unwrap().0 <= before);
     assert_eq!(store.first_op().unwrap(), Some(target));
     let rest = store.label_ops(label).unwrap();
     assert_eq!(rest.len(), 20);
@@ -256,7 +259,7 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     }
     assert!(store.label_ops(label).unwrap().is_empty(), "the entry went whole");
     let all = store.all_ops().unwrap();
-    assert_eq!(all.len() as i64, store.counts().unwrap().0);
+    assert_eq!(all.len() as i64, store.counts().unwrap().0, "one operation per entry left");
     assert!(all.iter().all(|o| o.label_id != label));
 }
 

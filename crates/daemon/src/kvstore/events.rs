@@ -306,7 +306,7 @@ impl KvTxn<'_> {
 
     fn append_event(&self, field: &str, event: &Event) -> Result<()> {
         let pending = self.eventful(field)?;
-        let seq = self.next("event_seq")?;
+        let seq = self.next(super::super::State::NextWriteNumber)?;
         let key = [&name_key(field)[..], &seq.to_be_bytes()].concat();
         self.t.events.put(&mut self.txn.borrow_mut(), &key, &event.encode())?;
         self.events.borrow_mut().insert(field.to_string(), pending + 1);

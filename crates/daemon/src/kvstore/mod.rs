@@ -85,7 +85,8 @@ type ValueHoldersOf<'a> = dyn Fn(&str, &Value) -> Result<roaring::RoaringBitmap>
 
 #[derive(Clone, Copy)]
 struct Tables {
-    meta: Db,
+    version: Db,
+    global_primary_state: Db,
     metarecords: Db,
     records: Db,
     mass: Db,
@@ -102,6 +103,7 @@ struct Tables {
     watcher_ops: Db,
     user_ops: Db,
     // Derived (see `derived`).
+    global_derived_state: Db,
     ids: Db,
     uuids: Db,
     sets: Db,
@@ -114,7 +116,8 @@ struct Tables {
 
 /// The tables' names, in `Tables`' order.
 const NAMES: [&str; table::TABLES] = [
-    "meta",
+    "version",
+    "global_primary_state",
     "metarecords",
     "records",
     "mass",
@@ -130,6 +133,7 @@ const NAMES: [&str; table::TABLES] = [
     "reverted_by",
     "watcher_ops",
     "user_ops",
+    "global_derived_state",
     "ids",
     "uuids",
     "sets",
@@ -157,10 +161,11 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [meta, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, ids, uuids, sets, kids, grams, hist, events, label_reverts] =
+        let [version, global_primary_state, metarecords, records, mass, field_types, forest, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, sets, kids, grams, hist, events, label_reverts] =
             dbs;
         Ok(Tables {
-            meta,
+            version,
+            global_primary_state,
             metarecords,
             records,
             mass,
@@ -176,6 +181,7 @@ impl Tables {
             reverted_by,
             watcher_ops,
             user_ops,
+            global_derived_state,
             ids,
             uuids,
             sets,
@@ -190,7 +196,8 @@ impl Tables {
     /// Every table, in the order of their indexes (see [`table::Change`]).
     fn all(&self) -> [Db; table::TABLES] {
         [
-            self.meta,
+            self.version,
+            self.global_primary_state,
             self.metarecords,
             self.records,
             self.mass,
@@ -206,6 +213,7 @@ impl Tables {
             self.reverted_by,
             self.watcher_ops,
             self.user_ops,
+            self.global_derived_state,
             self.ids,
             self.uuids,
             self.sets,
@@ -244,10 +252,6 @@ pub struct KvStore {
     /// Whether a deletion of many records is pending, whose records are still
     /// stored: when none is, no read sifts what it finds through the universe.
     deletes: std::sync::atomic::AtomicBool,
-    /// Whether the store holds the record of a deleted metarecord, which stays
-    /// until a reindex: when none does, no read sifts a record through the
-    /// universe (doc "Deleting a metarecord in the store").
-    kept: std::sync::atomic::AtomicBool,
     /// Whether records given back by the undo of a deletion still hold the
     /// rows the log reads as its before: when none does, no write looks for
     /// them (doc "Mass operations in the log").
@@ -327,6 +331,72 @@ fn uuid_of(b: &[u8]) -> Uuid {
 
 fn key(parts: &[&[u8]]) -> Vec<u8> {
     parts.concat()
+}
+
+/// A key of the state tables, each value one big-endian `i64` (doc "Store
+/// tables"): the format versions in `version`, the counters and pointers of
+/// the primary data in `global_primary_state`, those of the indexes in
+/// `global_derived_state`. A key that is absent reads as its default.
+#[derive(Clone, Copy, Debug)]
+enum State {
+    /// The format of the primary tables ([`LAYOUT`]).
+    PrimaryVersion,
+    /// The format of the derived tables (`derived::DERIVED_VERSION`).
+    DerivedVersion,
+    /// The id of the last operation in the log; absent, an empty log.
+    LogHead,
+    /// The next operation id, never reused.
+    NextLogOp,
+    /// The next log context id, from 1, never reused.
+    NextLogContext,
+    /// The context the watcher's writes hang under.
+    WatcherLogContext,
+    /// The clock of the writes: what a pending write, a record's numbers and
+    /// a pending index write are ordered by (doc "Mass writes in the store").
+    NextWriteNumber,
+    /// How many times the dense ids were numbered: a page's cursor is bound
+    /// to it (doc "Pagination and sorting").
+    NextReindex,
+    /// The next dense id.
+    NextMetarecordId,
+}
+
+impl State {
+    fn name(self) -> &'static [u8] {
+        match self {
+            State::PrimaryVersion => b"primary_version",
+            State::DerivedVersion => b"derived_version",
+            State::LogHead => b"log_head",
+            State::NextLogOp => b"next_log_op",
+            State::NextLogContext => b"next_log_context",
+            State::WatcherLogContext => b"watcher_log_context",
+            State::NextWriteNumber => b"next_write_number",
+            State::NextReindex => b"next_reindex",
+            State::NextMetarecordId => b"next_metarecord_id",
+        }
+    }
+
+    fn db(self, t: &Tables) -> Db {
+        match self {
+            State::PrimaryVersion | State::DerivedVersion => t.version,
+            State::NextMetarecordId => t.global_derived_state,
+            _ => t.global_primary_state,
+        }
+    }
+
+    fn get(self, t: &Tables, r: &RoTxn<'_>) -> Result<Option<i64>> {
+        Ok(self.db(t).get(r, self.name())?.map(from_be))
+    }
+
+    fn put(self, t: &Tables, w: &mut table::Wtxn<'_>, n: i64) -> Result<()> {
+        self.db(t).put(w, self.name(), &be(n))?;
+        Ok(())
+    }
+
+    fn delete(self, t: &Tables, w: &mut table::Wtxn<'_>) -> Result<()> {
+        self.db(t).delete(w, self.name())?;
+        Ok(())
+    }
 }
 
 /// The version of the primary layout this code writes, `layout` in `meta`
@@ -671,7 +741,15 @@ impl KvStore {
         let t = Tables::open(&env)?;
         let (derived, layout) = {
             let r = env.read_txn()?;
-            (t.meta.get(&r, b"derived")?.map(from_be), t.meta.get(&r, b"layout")?.map(from_be))
+            (State::DerivedVersion.get(&t, &r)?, State::PrimaryVersion.get(&t, &r)?)
+        };
+        // A store of layout 10 or before kept its versions and counters in
+        // `meta` (doc "Persisted format changes"), still read to recognise it.
+        let old_meta = if layout.is_none() { read_old_meta(&env)? } else { Vec::new() };
+        let old = |name: &[u8]| old_meta.iter().find(|(k, _)| k == name).map(|(_, v)| *v);
+        let (derived, layout) = match old(b"layout") {
+            Some(layout) => (old(b"derived"), Some(layout)),
+            None => (derived, layout),
         };
         let mut store = KvStore {
             env,
@@ -682,7 +760,6 @@ impl KvStore {
             reads: Default::default(),
             mass: Default::default(),
             deletes: Default::default(),
-            kept: Default::default(),
             thawed: Default::default(),
             written: Default::default(),
             generation: Default::default(),
@@ -701,13 +778,12 @@ impl KvStore {
             let deleting =
                 store.t.mass.prefix_iter(&r, &mass::DELETES_PART.to_be_bytes())?.next().is_some();
             store.deletes.store(deleting, std::sync::atomic::Ordering::Relaxed);
-            let kept = store.t.meta.get(&r, b"kept")?.is_some_and(|v| from_be(v) != 0);
-            store.kept.store(kept, std::sync::atomic::Ordering::Relaxed);
         }
         let mut derived = derived;
         if layout != Some(LAYOUT) {
-            let rebuild =
-                store.migrate_layout(layout).context("migrate the key-value store's rows")?;
+            let rebuild = store
+                .migrate_layout(layout, &old_meta)
+                .context("migrate the key-value store's rows")?;
             if rebuild {
                 derived = None;
             }
@@ -720,6 +796,26 @@ impl KvStore {
         }
         Ok(store)
     }
+}
+
+/// The keys of the `meta` table of a store of layout 10 or before, and their
+/// values; none when the store has no such table.
+fn read_old_meta(env: &Env<WithoutTls>) -> Result<Vec<(Vec<u8>, i64)>> {
+    let r = env.read_txn()?;
+    let meta = env
+        .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+            Ok(CommitOrAbort::<_, ()>::Commit(dbo.open_database::<Bytes, Bytes>(r, Some("meta"))?))
+        })?
+        .commit()
+        .expect("the database is committed");
+    let Some(meta) = meta else { return Ok(Vec::new()) };
+    let r = env.read_txn()?;
+    let mut out = Vec::new();
+    for e in meta.iter(&r)? {
+        let (k, v) = e?;
+        out.push((k.to_vec(), from_be(v)));
+    }
+    Ok(out)
 }
 
 /// Opens the LMDB environment in `dir`, on a map of at least `map_size`
@@ -769,9 +865,6 @@ struct Read<'a> {
     /// Whether a deletion of many records is pending: the records it deleted
     /// are still stored, and a read of one sifts it through the universe.
     deletes: bool,
-    /// Whether the store holds the records of deleted metarecords, which a read
-    /// of one sifts through the universe.
-    kept: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
     /// The store's memo of decoded stubs, and the generation the read sees;
@@ -780,8 +873,8 @@ struct Read<'a> {
 }
 
 impl Read<'_> {
-    fn meta(&self, name: &str) -> Result<Option<i64>> {
-        Ok(self.t.meta.get(self.r, name.as_bytes())?.map(from_be))
+    fn meta(&self, key: State) -> Result<Option<i64>> {
+        key.get(self.t, self.r)
     }
 
     fn exists(&self, uuid: Uuid) -> Result<bool> {
@@ -835,7 +928,9 @@ impl Read<'_> {
     /// The rows of the record of dense id `id`: its one key. None for a
     /// metarecord a pending deletion took out of the universe.
     fn record(&self, id: u32) -> Result<Vec<FieldRow>> {
-        if (self.deletes || self.kept) && !self.live(id)? {
+        // A deleted metarecord's record stays until a reindex: every read of
+        // one is sifted (doc "Deleting a metarecord in the store").
+        if !self.live(id)? {
             return Ok(Vec::new());
         }
         self.record_raw(id)
@@ -1420,7 +1515,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     $read.count(1)?;
-                    $read.meta("head")
+                    $read.meta(State::LogHead)
                 })
             }
             fn op(&self, id: i64) -> Result<Option<OpRow>> {
@@ -1475,7 +1570,8 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     // Two B-tree statistics, not a walk.
                     $read.count(2)?;
-                    let ops = $read.t.ops.len($read.r)? as i64 + $read.mass_extra()?;
+                    // The log is counted by entry, a stub one (doc "Log storage").
+                    let ops = $read.t.ops.len($read.r)? as i64;
                     Ok((ops, $read.t.labels.len($read.r)? as i64))
                 })
             }
@@ -1540,7 +1636,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     $read.count(1)?;
-                    $read.meta("watcher_label")
+                    $read.meta(State::WatcherLogContext)
                 })
             }
             fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
@@ -1586,7 +1682,6 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         values: None,
         mass: me.mass_pending(),
         deletes: me.deletes_pending(),
-        kept: me.kept_stored(),
         universe: Default::default(),
         stubs: Some((&me.stub_memo, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
     })
@@ -1635,11 +1730,6 @@ impl KvStore {
     /// Whether a deletion of many records is pending.
     pub(super) fn deletes_pending(&self) -> bool {
         self.deletes.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Whether the record of a deleted metarecord may be stored.
-    pub(super) fn kept_stored(&self) -> bool {
-        self.kept.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The uuids of dense ids, in the order of the ids (a tool for tests).
@@ -1693,7 +1783,6 @@ impl KvTxn<'_> {
             values: Some(&values),
             mass: self.mass_pending(),
             deletes: self.deletes_pending(),
-            kept: self.kept_stored(),
             universe: Default::default(),
             stubs: None,
         })
@@ -1738,8 +1827,6 @@ pub struct KvTxn<'e> {
     mass_lists: TxnFlag<'e>,
     /// The store's flag that a deletion of many records is pending.
     deletes: TxnFlag<'e>,
-    /// The store's flag that the record of a deleted metarecord is stored.
-    kept: TxnFlag<'e>,
     /// The store's flag that records given back hold the log's before.
     thawed: TxnFlag<'e>,
 }
@@ -2010,7 +2097,8 @@ impl KvStore {
     /// layout holds no data in them, so this runs at every open, and does
     /// nothing when there are none.
     fn remove_older_tables(&self) -> Result<()> {
-        const OLDER: [&str; 9] = [
+        const OLDER: [&str; 10] = [
+            "meta",
             "parts",
             "cells",
             "field_cells",
@@ -2029,7 +2117,7 @@ impl KvStore {
                 for name in OLDER {
                     found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
                 }
-                let found: [_; 9] = found.try_into().expect("one per name");
+                let found: [_; 10] = found.try_into().expect("one per name");
                 Ok(CommitOrAbort::<_, ()>::Commit(found))
             })?
             .commit()
@@ -2047,7 +2135,7 @@ impl KvStore {
         Ok(())
     }
 
-    fn migrate_layout(&mut self, from: Option<i64>) -> Result<bool> {
+    fn migrate_layout(&mut self, from: Option<i64>, old_meta: &[(Vec<u8>, i64)]) -> Result<bool> {
         const BATCH: usize = 10_000;
         // The tables of older layouts, opened (if there) before the write:
         // heed opens a database in a transaction of its own.
@@ -2073,6 +2161,26 @@ impl KvStore {
             .expect("the databases are committed");
         let txn = KvTxn::new(self)?;
         let mut assigned = false;
+        // The counters `meta` kept, in the state tables (layout 11) — not
+        // what the log's, which is emptied below, nor the versions.
+        let old = |name: &[u8]| old_meta.iter().find(|(k, _)| k == name).map(|(_, v)| *v);
+        for (name, key) in [
+            (&b"next_op"[..], State::NextLogOp),
+            (b"next_label", State::NextLogContext),
+            (b"numbering", State::NextReindex),
+            (b"next_id", State::NextMetarecordId),
+        ] {
+            if let Some(n) = old(name) {
+                txn.meta_put(key, n)?;
+            }
+        }
+        // Two clocks merged into one: past both, whatever each numbered.
+        if let Some(n) = old(b"mass_op").max(old(b"event_seq")) {
+            txn.meta_put(State::NextWriteNumber, n)?;
+        }
+        if let Some(n) = old(b"derived") {
+            txn.meta_put(State::DerivedVersion, n)?;
+        }
         {
             let w = txn.txn.borrow_mut();
             let t = txn.t;
@@ -2087,7 +2195,8 @@ impl KvStore {
             drop(w);
             for uuid in &uuids {
                 if txn.dense_id(uuid)?.is_none() {
-                    let id = u32::try_from(txn.next("next_id")?).context("dense ids exhausted")?;
+                    let id = u32::try_from(txn.next(State::NextMetarecordId)?)
+                        .context("dense ids exhausted")?;
                     let mut w = txn.txn.borrow_mut();
                     t.ids.put(&mut w, uuid, &id.to_be_bytes())?;
                     t.uuids.put(&mut w, &id.to_be_bytes(), uuid)?;
@@ -2203,12 +2312,11 @@ impl KvStore {
                 ] {
                     db.clear(&mut w)?;
                 }
-                t.meta.delete(&mut w, b"head")?;
-                t.meta.delete(&mut w, b"watcher_label")?;
-                t.meta.delete(&mut w, b"mass_extra")?;
+                State::LogHead.delete(&t, &mut w)?;
+                State::WatcherLogContext.delete(&t, &mut w)?;
             }
         }
-        txn.meta_put("layout", LAYOUT)?;
+        txn.meta_put(State::PrimaryVersion, LAYOUT)?;
         txn.finish()?;
         Ok(assigned)
     }
@@ -2291,7 +2399,6 @@ impl<'e> KvTxn<'e> {
             reads: &store.reads,
             mass_lists: TxnFlag::of(&store.mass),
             deletes: TxnFlag::of(&store.deletes),
-            kept: TxnFlag::of(&store.kept),
             thawed: TxnFlag::of(&store.thawed),
             written: &store.written,
             generation: &store.generation,
@@ -2302,9 +2409,8 @@ impl<'e> KvTxn<'e> {
         })
     }
 
-    fn meta_put(&self, name: &str, n: i64) -> Result<()> {
-        self.t.meta.put(&mut self.txn.borrow_mut(), name.as_bytes(), &be(n))?;
-        Ok(())
+    fn meta_put(&self, key: State, n: i64) -> Result<()> {
+        key.put(&self.t, &mut self.txn.borrow_mut(), n)
     }
 
     /// Writes what the transaction still holds in memory, and commits.
@@ -2326,7 +2432,7 @@ impl<'e> KvTxn<'e> {
         // held to its own threshold in the slow-operation log.
         metafolder_core::slowlog::mark_write();
         *self.written.lock().unwrap_or_else(|e| e.into_inner()) = written;
-        for flag in [&self.mass_lists, &self.deletes, &self.kept, &self.thawed] {
+        for flag in [&self.mass_lists, &self.deletes, &self.thawed] {
             flag.publish();
         }
         self.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2343,10 +2449,10 @@ impl KvTxn<'_> {
         Ok(live.then_some(id))
     }
 
-    fn next(&self, counter: &str) -> Result<i64> {
+    fn next(&self, counter: State) -> Result<i64> {
         let mut w = self.txn.borrow_mut();
-        let n = self.t.meta.get(&w, counter.as_bytes())?.map_or(1, from_be);
-        self.t.meta.put(&mut w, counter.as_bytes(), &be(n + 1))?;
+        let n = counter.get(&self.t, &w)?.unwrap_or(1);
+        counter.put(&self.t, &mut w, n + 1)?;
         Ok(n)
     }
 
@@ -2401,7 +2507,7 @@ impl KvTxn<'_> {
 
     /// Writes a new label, and its place among its parent's children.
     fn put_label(&self, meta: &LabelMeta, command: Option<Uuid>) -> Result<i64> {
-        let id = self.next("next_label")?;
+        let id = self.next(State::NextLogContext)?;
         let mut w = self.txn.borrow_mut();
         self.t.labels.put(&mut w, &be(id), &enc_label(meta, command))?;
         if let Some(parent) = meta.parent {
@@ -2428,7 +2534,6 @@ impl KvTxn<'_> {
                     values: None,
                     mass: false,
                     deletes: false,
-                    kept: false,
                     universe: Default::default(),
                     stubs: None,
                 };
@@ -2436,7 +2541,7 @@ impl KvTxn<'_> {
                 let meta = dec_label(meta)?;
                 let empty = read.label_first_op(label)?.is_none()
                     && read.label_children(label)?.is_empty()
-                    && read.meta("watcher_label")? != Some(label);
+                    && read.meta(State::WatcherLogContext)? != Some(label);
                 (empty, meta.parent)
             };
             if !empty {
@@ -2585,7 +2690,6 @@ impl WriteTxn for KvTxn<'_> {
         if let Some(id) = id {
             self.freeze_given_back(&roaring::RoaringBitmap::from_iter([id]))?;
             rows = self.load_record(id)?.plain_rows();
-            self.keep_records()?;
         }
         for row in &rows {
             self.count_type(&row.name, &row.value, -1)?;
@@ -2743,13 +2847,13 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn set_watcher_label(&self, id: i64) -> Result<()> {
-        self.meta_put("watcher_label", id)
+        self.meta_put(State::WatcherLogContext, id)
     }
 
     fn append_ops(&self, label: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64> {
         let base = {
             let w = self.txn.borrow();
-            self.t.meta.get(&w, b"next_op")?.map_or(1, from_be)
+            State::NextLogOp.get(&self.t, &w)?.unwrap_or(1)
         };
         let mut w = self.txn.borrow_mut();
         let t = self.t;
@@ -2774,16 +2878,16 @@ impl WriteTxn for KvTxn<'_> {
             self.class(op.origin.as_deref()).put(&mut w, &be(id), &[])?;
         }
         let last = base + ops.len() as i64 - 1;
-        t.meta.put(&mut w, b"next_op", &be(last + 1))?;
+        State::NextLogOp.put(&t, &mut w, last + 1)?;
         Ok(last)
     }
 
     fn set_head(&self, op: Option<i64>) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         match op {
-            Some(op) => self.t.meta.put(&mut w, b"head", &be(op))?,
+            Some(op) => State::LogHead.put(&self.t, &mut w, op)?,
             None => {
-                self.t.meta.delete(&mut w, b"head")?;
+                State::LogHead.delete(&self.t, &mut w)?;
             }
         }
         Ok(())
