@@ -326,7 +326,6 @@ fn sets_bytes(dir: &std::path::Path) -> usize {
     let env = common::kv::raw_env(dir);
     // Every bitmap but the postings.
     let tables: Vec<_> = [
-        "index_absent",
         "index_parents",
         "index_long_texts",
         "index_parent_holders",

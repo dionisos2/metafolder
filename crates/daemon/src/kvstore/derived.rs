@@ -54,8 +54,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
-pub(super) const DERIVED_VERSION: i64 = 21;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
+pub(super) const DERIVED_VERSION: i64 = 22;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -92,6 +92,11 @@ pub(super) fn postings_kind(_part: u8) -> u8 {
 /// values of its field: a text's — a position's `:value` is its name (doc
 /// "Field aspects"), and a position field holds no other value.
 pub(super) const NAME_TAG: u8 = 2;
+
+/// The key of `nothing` among the holders of a field's values: past every
+/// value's type tag, so that a range of one type never meets it; a walk of
+/// every value steps over it.
+pub(super) const NOTHING_TAG: u8 = 0xFF;
 
 /// How many non-`Nothing` rows of a field each id holds, as one set per bit
 /// of the count (keyed by field and bit number): the ids holding a value are
@@ -299,14 +304,12 @@ impl Tables {
 }
 
 /// Every kind, in key order.
-const KINDS: [u8; 8] =
-    [ABSENT, PARENTS, LONG_TEXTS, REFERRERS, DESCENDANTS, POSTINGS, GRAM_PENDING, COUNT];
+const KINDS: [u8; 7] = [PARENTS, LONG_TEXTS, REFERRERS, DESCENDANTS, POSTINGS, GRAM_PENDING, COUNT];
 
 impl<'a> SetTables<'a> {
     pub(super) fn db(self, kind: u8) -> super::table::Db {
         let t = self.0;
         match kind {
-            ABSENT => t.index_absent,
             PARENTS => t.index_parents,
             LONG_TEXTS => t.index_long_texts,
             REFERRERS => t.index_parent_holders,
@@ -651,6 +654,12 @@ pub(crate) fn target_of(value: &Value) -> Option<[u8; 16]> {
 }
 
 pub(super) fn set_key(kind: u8, field: Option<&str>, chunk: u16) -> Vec<u8> {
+    // `nothing` is a value with a key of its own among the holders of the
+    // field's values: its type byte alone (doc "Store tables").
+    if kind == ABSENT {
+        let field = field.expect("the holders of nothing are a field's");
+        return [&[POSTINGS][..], &name_key(field), &[NOTHING_TAG], &chunk.to_be_bytes()].concat();
+    }
     let mut k = vec![kind];
     if let Some(field) = field {
         k.extend_from_slice(&name_key(field));
@@ -2261,6 +2270,15 @@ impl KvStore {
                 let field = std::str::from_utf8(&name).context("a field name")?;
                 let key = &rest[..rest.len() - 2];
                 let tag = VALUE;
+                if key == [NOTHING_TAG] {
+                    // `nothing`'s holders: what the rows say as absence.
+                    for id in decode_set(v)? {
+                        if !sifted(id) {
+                            sink(Side::Got, Entry::set(ABSENT, field, id))?;
+                        }
+                    }
+                    continue;
+                }
                 let replayed = pending.get(field).filter(|_| tag == VALUE);
                 for id in decode_set(v)? {
                     if replayed.is_some_and(|(e, _)| !events::replay_one(e, key, id, true)) {

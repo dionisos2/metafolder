@@ -81,3 +81,23 @@ fn a_reference_files_nothing_under_its_target() {
     assert_eq!(ids.len(&r).unwrap(), 1, "the metarecord's id alone, none reserved");
     assert_eq!(parents.len(&r).unwrap(), 0, "nothing filed under the target");
 }
+
+/// `nothing` has a key of its own among the holders of a field's values, its
+/// type byte alone: there is no set of absences (doc "Store tables").
+#[test]
+fn nothing_is_a_key_among_the_holders_of_the_values() {
+    let dir = TempDir::new("kv-index-nothing");
+    {
+        let mut kv = KvStore::open_unsynced(dir.path()).unwrap();
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        w.create_metarecord(vec![Field::new("note", Value::Nothing)]).unwrap();
+        w.commit().unwrap();
+    }
+    let env = raw_env(dir.path());
+    assert!(!has_table(&env, "index_absent"));
+    let holders = open_raw(&env, "index_value_holders");
+    let r = env.read_txn().unwrap();
+    let keys: Vec<Vec<u8>> = holders.iter(&r).unwrap().map(|e| e.unwrap().0.to_vec()).collect();
+    // The kind byte, `note` 00 00, the type byte of nothing, the chunk.
+    assert!(keys.iter().any(|k| k[1..].starts_with(b"note\0\0\xFF")), "{keys:?}");
+}

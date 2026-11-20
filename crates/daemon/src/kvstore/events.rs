@@ -443,6 +443,8 @@ impl KvTxn<'_> {
                 let k = entry?.0;
                 keys.insert(k[posted.len()..k.len() - 2].to_vec());
             }
+            // `nothing` is not one of the values a replacement removes here.
+            keys.remove(&[super::super::derived::NOTHING_TAG][..]);
         }
         // The postings this transaction made are not in the table yet.
         let whole = [&[SETS][..], &posted[..]].concat();
@@ -451,6 +453,7 @@ impl KvTxn<'_> {
                 keys.insert(k[whole.len()..k.len() - 2].to_vec());
             }
         }
+        keys.remove(&[super::super::derived::NOTHING_TAG][..]);
         let mut out = Vec::new();
         for key in keys {
             let holders = self.read_chunked(SETS, &posting_prefix(field, &key))?;

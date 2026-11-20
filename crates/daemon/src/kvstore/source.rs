@@ -701,7 +701,9 @@ impl KvSource<'_> {
                 if !k.starts_with(&prefix) || k.len() < prefix.len() + 2 {
                     break;
                 }
-                if keep(&k[prefix.len()..k.len() - 2]) {
+                let key = &k[prefix.len()..k.len() - 2];
+                // `nothing` is no value a comparison or a scan reads.
+                if key != [derived::NOTHING_TAG] && keep(key) {
                     out |= derived::decode_set(v)?;
                 }
             }
