@@ -680,7 +680,7 @@ impl KvSource<'_> {
         to: Bound<&[u8]>,
         keep: &dyn Fn(&[u8]) -> bool,
     ) -> RoaringBitmap {
-        let prefix = [&[derived::postings_kind(part)][..], &name_key(field)].concat();
+        let prefix = derived::part_posting_prefix(field, part, &[]);
         let with = |k: &[u8]| [&prefix[..], k].concat();
         let lo = match from {
             Bound::Included(k) => Bound::Included(with(k)),

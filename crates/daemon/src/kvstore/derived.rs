@@ -54,8 +54,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
-pub(super) const DERIVED_VERSION: i64 = 20;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
+pub(super) const DERIVED_VERSION: i64 = 21;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -83,19 +83,15 @@ pub(super) const DESCENDANTS: u8 = 6;
 /// the keys, and goes with its last holder.
 pub(super) const POSTINGS: u8 = 7;
 
-/// The holders of one name of a position (keyed by field and name key, then
-/// chunk): the files called so, whatever their folder — what sorts and
-/// searches by name read.
-pub(super) const NAME_POSTINGS: u8 = 12;
-
 /// The kind of set a partition's postings are.
-pub(super) fn postings_kind(part: u8) -> u8 {
-    if part == VALUE {
-        POSTINGS
-    } else {
-        NAME_POSTINGS
-    }
+pub(super) fn postings_kind(_part: u8) -> u8 {
+    POSTINGS
 }
+
+/// The type tag a position's name is filed under among the holders of the
+/// values of its field: a text's — a position's `:value` is its name (doc
+/// "Field aspects"), and a position field holds no other value.
+pub(super) const NAME_TAG: u8 = 2;
 
 /// How many non-`Nothing` rows of a field each id holds, as one set per bit
 /// of the count (keyed by field and bit number): the ids holding a value are
@@ -223,6 +219,9 @@ pub(super) fn posting_prefix(field: &str, key: &[u8]) -> Vec<u8> {
 
 /// The key of the posting of `key` in a partition of `field`, without its chunk.
 pub(super) fn part_posting_prefix(field: &str, part: u8, key: &[u8]) -> Vec<u8> {
+    if part == NAME {
+        return [&[POSTINGS][..], &name_key(field), &[NAME_TAG], key].concat();
+    }
     [&[postings_kind(part)][..], &name_key(field), key].concat()
 }
 
@@ -300,17 +299,8 @@ impl Tables {
 }
 
 /// Every kind, in key order.
-const KINDS: [u8; 9] = [
-    ABSENT,
-    PARENTS,
-    LONG_TEXTS,
-    REFERRERS,
-    DESCENDANTS,
-    POSTINGS,
-    GRAM_PENDING,
-    COUNT,
-    NAME_POSTINGS,
-];
+const KINDS: [u8; 8] =
+    [ABSENT, PARENTS, LONG_TEXTS, REFERRERS, DESCENDANTS, POSTINGS, GRAM_PENDING, COUNT];
 
 impl<'a> SetTables<'a> {
     pub(super) fn db(self, kind: u8) -> super::table::Db {
@@ -324,7 +314,6 @@ impl<'a> SetTables<'a> {
             POSTINGS => t.index_value_holders,
             GRAM_PENDING => t.index_trigram_pending,
             COUNT => t.index_value_counts,
-            NAME_POSTINGS => t.index_name_holders,
             other => unreachable!("no set kind {other}"),
         }
     }
@@ -2144,7 +2133,8 @@ impl KvStore {
                     }
                 }
                 if let Some(key) = name_part_key(&row.value) {
-                    *group.parts.entry((NAME, key)).or_default() += 1;
+                    let key = [&[NAME_TAG][..], &key].concat();
+                    *group.parts.entry((VALUE, key)).or_default() += 1;
                 }
                 // The parent a position is filed under, by its dense id.
                 let target = match target_of(&row.value).filter(|_| row.value.position().is_some())
@@ -2265,12 +2255,12 @@ impl KvStore {
         for entry in t.sets().iter(r)? {
             let (k, v) = entry?;
             let kind = k[0];
-            if kind == POSTINGS || kind == NAME_POSTINGS {
+            if kind == POSTINGS {
                 // A posting is an entry per holder of its value or name.
                 let (name, rest) = unesc(&k[1..])?;
                 let field = std::str::from_utf8(&name).context("a field name")?;
                 let key = &rest[..rest.len() - 2];
-                let tag = if kind == POSTINGS { VALUE } else { NAME };
+                let tag = VALUE;
                 let replayed = pending.get(field).filter(|_| tag == VALUE);
                 for id in decode_set(v)? {
                     if replayed.is_some_and(|(e, _)| !events::replay_one(e, key, id, true)) {
