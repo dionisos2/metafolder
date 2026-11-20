@@ -72,8 +72,8 @@ fn a_mass_delete_is_one_entry_and_the_records_stay_until_the_fold() {
     let deleted = delete(&mut store, gone);
     assert_eq!(deleted.len(), 200);
     let written = store.last_write_keys();
-    assert_eq!(written.get("ops"), Some(&1), "one entry: {written:?}");
-    assert_eq!(written.get("snaps"), None, "{written:?}");
+    assert_eq!(written.get("log_entries"), Some(&1), "one entry: {written:?}");
+    assert_eq!(written.get("log_snaps"), None, "{written:?}");
     assert_eq!(written.get("metarecords"), None, "no record is written: {written:?}");
     assert_eq!(written.get("metarecords"), None, "{written:?}");
 
@@ -287,7 +287,7 @@ fn undoing_a_pending_mass_delete_only_gives_the_universe_back() {
     w.commit().unwrap();
 
     let written = store.last_write_keys();
-    for table in ["metarecords", "ids", "uuids", "kids", "forest", "snaps"] {
+    for table in ["metarecords", "ids", "uuids", "kids", "forest", "log_snaps"] {
         assert_eq!(written.get(table), None, "{table} untouched: {written:?}");
     }
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
@@ -500,14 +500,14 @@ fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
     let mut w = Writer::begin(&mut store, None).unwrap();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
-    assert_eq!(store.last_write_keys().get("snaps"), None, "giving back copies nothing");
+    assert_eq!(store.last_write_keys().get("log_snaps"), None, "giving back copies nothing");
 
     let touched = uuids[7];
     write(&mut store, |w| {
         w.set_field(touched, "tag", s("purple")).unwrap();
     });
     // The write's own snapshot, and the two rows of that one record: no more.
-    assert_eq!(store.last_write_keys().get("snaps"), Some(&3), "{:?}", store.last_write_keys());
+    assert_eq!(store.last_write_keys().get("log_snaps"), Some(&3), "{:?}", store.last_write_keys());
     let rows_of = |store: &KvStore, op_id: i64| {
         let mut rows: Vec<_> = store
             .snapshots(op_id)
@@ -564,7 +564,12 @@ fn a_write_to_many_records_keeps_the_rows_a_deletion_took() {
 
     let some = store.dense_ids(&uuids[..10]).unwrap();
     write(&mut store, |w| w.mass_add_ids("tag", s("jazz"), &some).unwrap());
-    assert_eq!(store.last_write_keys().get("snaps"), Some(&20), "{:?}", store.last_write_keys());
+    assert_eq!(
+        store.last_write_keys().get("log_snaps"),
+        Some(&20),
+        "{:?}",
+        store.last_write_keys()
+    );
     for op in &ops {
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
         let rows = store.snapshots(op.id).unwrap();
@@ -776,7 +781,12 @@ fn a_deletion_after_other_writes_of_the_transaction_is_still_one_entry() {
         kids
     };
     // 5 creations, the add and the deletion: not an operation per deleted record.
-    assert_eq!(store.last_write_keys().get("ops"), Some(&7), "{:?}", store.last_write_keys());
+    assert_eq!(
+        store.last_write_keys().get("log_entries"),
+        Some(&7),
+        "{:?}",
+        store.last_write_keys()
+    );
     for u in &kids {
         assert!(!Rows::exists(&store, *u).unwrap());
     }
@@ -796,7 +806,12 @@ fn a_folder_deleted_with_all_its_children_is_one_entry() {
         (vec![dir, sub, a, b], root)
     });
     delete(&mut store, &all);
-    assert_eq!(store.last_write_keys().get("ops"), Some(&1), "{:?}", store.last_write_keys());
+    assert_eq!(
+        store.last_write_keys().get("log_entries"),
+        Some(&1),
+        "{:?}",
+        store.last_write_keys()
+    );
     assert!(Rows::exists(&store, root).unwrap());
     sound(&store);
     while store.fold_step().unwrap() {}
@@ -882,7 +897,7 @@ fn reverting_a_mass_add_is_one_entry_naming_what_it_reverts() {
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
     let written = store.last_write_keys();
-    assert_eq!(written.get("ops"), Some(&1), "one entry: {written:?}");
+    assert_eq!(written.get("log_entries"), Some(&1), "one entry: {written:?}");
     assert_eq!(written.get("metarecords"), None, "{written:?}");
     assert_eq!(holders(&store), 0);
     let undone = store.ops_after(ops.last().unwrap().id).unwrap();
@@ -899,7 +914,7 @@ fn reverting_a_mass_add_is_one_entry_naming_what_it_reverts() {
     let mut w = Writer::begin(&mut store, None).unwrap();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
-    assert_eq!(store.last_write_keys().get("ops"), Some(&1));
+    assert_eq!(store.last_write_keys().get("log_entries"), Some(&1));
     assert_eq!(holders(&store), 40);
     sound(&store);
     assert!(store.check().unwrap().is_empty());

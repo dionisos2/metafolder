@@ -27,7 +27,7 @@ fn record(store: &mut KvStore) -> Uuid {
 
 /// The number of snapshot keys the last write put.
 fn snapshot_keys(store: &KvStore) -> u64 {
-    store.last_write_keys().get("snaps").copied().unwrap_or(0)
+    store.last_write_keys().get("log_snaps").copied().unwrap_or(0)
 }
 
 #[test]

@@ -91,16 +91,16 @@ struct Tables {
     live_metarecords: Db,
     mass: Db,
     field_types: Db,
-    ops: Db,
-    snaps: Db,
-    ops_by_label: Db,
-    ops_by_entity: Db,
-    labels: Db,
-    label_kids: Db,
-    label_keys: Db,
-    reverted_by: Db,
-    watcher_ops: Db,
-    user_ops: Db,
+    log_entries: Db,
+    log_snaps: Db,
+    log_entries_by_context: Db,
+    log_entries_by_metarecord: Db,
+    log_contexts: Db,
+    log_context_children: Db,
+    log_label_keys: Db,
+    log_reverted_by: Db,
+    log_watcher_entries: Db,
+    log_user_entries: Db,
     // Derived (see `derived`).
     global_derived_state: Db,
     ids: Db,
@@ -119,7 +119,7 @@ struct Tables {
     index_histogram_rows: Db,
     index_histogram_keys: Db,
     index_pending_writes: Db,
-    label_reverts: Db,
+    log_context_reverts: Db,
 }
 
 /// The tables' names, in `Tables`' order.
@@ -130,16 +130,16 @@ const NAMES: [&str; table::TABLES] = [
     "live_metarecords",
     "mass",
     "field_types",
-    "ops",
-    "snaps",
-    "ops_by_label",
-    "ops_by_entity",
-    "labels",
-    "label_kids",
-    "label_keys",
-    "reverted_by",
-    "watcher_ops",
-    "user_ops",
+    "log_entries",
+    "log_snaps",
+    "log_entries_by_context",
+    "log_entries_by_metarecord",
+    "log_contexts",
+    "log_context_children",
+    "log_label_keys",
+    "log_reverted_by",
+    "log_watcher_entries",
+    "log_user_entries",
     "global_derived_state",
     "ids",
     "uuids",
@@ -157,7 +157,7 @@ const NAMES: [&str; table::TABLES] = [
     "index_histogram_rows",
     "index_histogram_keys",
     "index_pending_writes",
-    "label_reverts",
+    "log_context_reverts",
 ];
 
 impl Tables {
@@ -177,7 +177,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, ops, snaps, ops_by_label, ops_by_entity, labels, label_kids, label_keys, reverted_by, watcher_ops, user_ops, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, label_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, log_entries, log_snaps, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_label_keys, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
             dbs;
         Ok(Tables {
             version,
@@ -186,16 +186,16 @@ impl Tables {
             live_metarecords,
             mass,
             field_types,
-            ops,
-            snaps,
-            ops_by_label,
-            ops_by_entity,
-            labels,
-            label_kids,
-            label_keys,
-            reverted_by,
-            watcher_ops,
-            user_ops,
+            log_entries,
+            log_snaps,
+            log_entries_by_context,
+            log_entries_by_metarecord,
+            log_contexts,
+            log_context_children,
+            log_label_keys,
+            log_reverted_by,
+            log_watcher_entries,
+            log_user_entries,
             global_derived_state,
             ids,
             uuids,
@@ -213,7 +213,7 @@ impl Tables {
             index_histogram_rows,
             index_histogram_keys,
             index_pending_writes,
-            label_reverts,
+            log_context_reverts,
         })
     }
 
@@ -226,16 +226,16 @@ impl Tables {
             self.live_metarecords,
             self.mass,
             self.field_types,
-            self.ops,
-            self.snaps,
-            self.ops_by_label,
-            self.ops_by_entity,
-            self.labels,
-            self.label_kids,
-            self.label_keys,
-            self.reverted_by,
-            self.watcher_ops,
-            self.user_ops,
+            self.log_entries,
+            self.log_snaps,
+            self.log_entries_by_context,
+            self.log_entries_by_metarecord,
+            self.log_contexts,
+            self.log_context_children,
+            self.log_label_keys,
+            self.log_reverted_by,
+            self.log_watcher_entries,
+            self.log_user_entries,
             self.global_derived_state,
             self.ids,
             self.uuids,
@@ -253,7 +253,7 @@ impl Tables {
             self.index_histogram_rows,
             self.index_histogram_keys,
             self.index_pending_writes,
-            self.label_reverts,
+            self.log_context_reverts,
         ]
     }
 }
@@ -1127,7 +1127,7 @@ impl Read<'_> {
 
     fn op(&self, id: i64) -> Result<Option<OpRow>> {
         self.count(1)?;
-        match self.t.ops.get(self.r, &be(id))? {
+        match self.t.log_entries.get(self.r, &be(id))? {
             Some(b) => Ok(Some(match massops::Stub::decode(id, b)? {
                 Some(stub) => stub.op(self, id)?,
                 None => dec_op(id, b)?,
@@ -1146,7 +1146,7 @@ impl Read<'_> {
         let mut out = Vec::new();
         let end = be(from);
         let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&end[..]));
-        for e in self.t.ops.rev_range(self.r, &range)? {
+        for e in self.t.log_entries.rev_range(self.r, &range)? {
             if out.len() >= max {
                 break;
             }
@@ -1171,7 +1171,7 @@ impl Read<'_> {
 
     fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
         let mut out = Vec::new();
-        for e in self.t.ops_by_label.prefix_iter(self.r, &be(label))? {
+        for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(label))? {
             let (k, v) = e?;
             let first = from_be(&k[8..]);
             // A stub's entry says where its operations end.
@@ -1186,7 +1186,7 @@ impl Read<'_> {
     /// key.
     fn label_first_op(&self, label: i64) -> Result<Option<i64>> {
         self.count(1)?;
-        Ok(match self.t.ops_by_label.prefix_iter(self.r, &be(label))?.next() {
+        Ok(match self.t.log_entries_by_context.prefix_iter(self.r, &be(label))?.next() {
             Some(e) => Some(from_be(&e?.0[8..])),
             None => None,
         })
@@ -1198,7 +1198,7 @@ impl Read<'_> {
         let hi = be(before.map_or(i64::MAX, |b| b.saturating_sub(1)));
         let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&hi[..]));
         let mut out = Vec::new();
-        for e in self.t.labels.rev_range(self.r, &range)?.take(max) {
+        for e in self.t.log_contexts.rev_range(self.r, &range)?.take(max) {
             out.push(from_be(e?.0));
         }
         self.count(out.len() as u64 + 1)?;
@@ -1210,7 +1210,7 @@ impl Read<'_> {
     /// id — so that no operation is read, nor any record a stub names.
     fn label_op_count(&self, label: i64) -> Result<i64> {
         let (mut n, mut seen) = (0i64, 0u64);
-        for e in self.t.ops_by_label.prefix_iter(self.r, &be(label))? {
+        for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(label))? {
             let (k, v) = e?;
             seen += 1;
             n += if v.len() == 8 { from_be(v) - from_be(&k[8..]) + 1 } else { 1 };
@@ -1224,7 +1224,7 @@ impl Read<'_> {
         let (lo, hi) = (key(&[&be(label), &be(0)]), key(&[&be(label), &be(i64::MAX)]));
         let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
         self.count(1)?;
-        Ok(match self.t.ops_by_label.rev_range(self.r, &range)?.next() {
+        Ok(match self.t.log_entries_by_context.rev_range(self.r, &range)?.next() {
             Some(e) => {
                 let (k, v) = e?;
                 Some(if v.len() == 8 { from_be(v) } else { from_be(&k[8..]) })
@@ -1237,7 +1237,7 @@ impl Read<'_> {
     /// (`kind` 1), each with whether it is the whole label.
     fn label_marks(&self, kind: u8, label: i64) -> Result<Vec<(i64, bool)>> {
         let mut out = Vec::new();
-        for e in self.t.label_reverts.prefix_iter(self.r, &key(&[&[kind], &be(label)]))? {
+        for e in self.t.log_context_reverts.prefix_iter(self.r, &key(&[&[kind], &be(label)]))? {
             let (k, v) = e?;
             out.push((from_be(&k[9..]), v.first() == Some(&1)));
         }
@@ -1247,7 +1247,7 @@ impl Read<'_> {
 
     fn label_children(&self, label: i64) -> Result<Vec<i64>> {
         let mut out = Vec::new();
-        for e in self.t.label_kids.prefix_iter(self.r, &be(label))? {
+        for e in self.t.log_context_children.prefix_iter(self.r, &be(label))? {
             out.push(from_be(&e?.0[8..]));
         }
         self.count(out.len() as u64 + 1)?;
@@ -1261,7 +1261,7 @@ impl Read<'_> {
     /// than the jump.
     fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>> {
         self.count(2)?;
-        let Some((first, v)) = self.t.ops.first(self.r)? else { return Ok(None) };
+        let Some((first, v)) = self.t.log_entries.first(self.r)? else { return Ok(None) };
         if op_timestamp(v)? > timestamp_ms {
             return Ok(None);
         }
@@ -1270,7 +1270,7 @@ impl Read<'_> {
             Ok(massops::Stub::decode(id, v)?.map_or(id, |s| s.last()))
         };
         let mut lo = end_of(from_be(first), v)?;
-        let Some((last, v)) = self.t.ops.last(self.r)? else { return Ok(None) };
+        let Some((last, v)) = self.t.log_entries.last(self.r)? else { return Ok(None) };
         let mut hi = end_of(from_be(last), v)?;
         if op_timestamp(v)? <= timestamp_ms {
             return Ok(Some(hi));
@@ -1281,8 +1281,12 @@ impl Read<'_> {
             let from = be(mid);
             let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
             self.count(1)?;
-            let (k, v) =
-                self.t.ops.range(self.r, &range)?.next().context("an operation past mid")??;
+            let (k, v) = self
+                .t
+                .log_entries
+                .range(self.r, &range)?
+                .next()
+                .context("an operation past mid")??;
             let id = from_be(k);
             if id <= hi && op_timestamp(v)? <= timestamp_ms {
                 lo = end_of(id, v)?;
@@ -1567,7 +1571,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     $read.count(1)?;
-                    Ok($read.t.ops.first($read.r)?.map(|(k, _)| from_be(k)))
+                    Ok($read.t.log_entries.first($read.r)?.map(|(k, _)| from_be(k)))
                 })
             }
             fn ops_back(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
@@ -1587,7 +1591,7 @@ macro_rules! kv_reads {
                     let mut out = HashMap::new();
                     $read.count(ids.len() as u64)?;
                     for &id in ids {
-                        if let Some(b) = $read.t.labels.get($read.r, &be(id))? {
+                        if let Some(b) = $read.t.log_contexts.get($read.r, &be(id))? {
                             out.insert(id, dec_label(b)?);
                         }
                     }
@@ -1600,8 +1604,8 @@ macro_rules! kv_reads {
                     // Two B-tree statistics, not a walk.
                     $read.count(2)?;
                     // The log is counted by entry, a stub one (doc "Log storage").
-                    let ops = $read.t.ops.len($read.r)? as i64;
-                    Ok((ops, $read.t.labels.len($read.r)? as i64))
+                    let ops = $read.t.log_entries.len($read.r)? as i64;
+                    Ok((ops, $read.t.log_contexts.len($read.r)? as i64))
                 })
             }
             fn label_ops(&self, label: i64) -> Result<Vec<OpRow>> {
@@ -1647,7 +1651,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let mut out = Vec::new();
-                    for e in $read.t.reverted_by.prefix_iter($read.r, &be(op))? {
+                    for e in $read.t.log_reverted_by.prefix_iter($read.r, &be(op))? {
                         out.push(from_be(&e?.0[8..]));
                     }
                     $read.count(out.len() as u64 + 1)?;
@@ -1658,7 +1662,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     $read.count(1)?;
-                    Ok($read.t.label_keys.get($read.r, key.as_bytes())?.map(from_be))
+                    Ok($read.t.log_label_keys.get($read.r, key.as_bytes())?.map(from_be))
                 })
             }
             fn watcher_label(&self) -> Result<Option<i64>> {
@@ -2124,8 +2128,19 @@ impl KvStore {
     /// layout holds no data in them, so this runs at every open, and does
     /// nothing when there are none.
     fn remove_older_tables(&self) -> Result<()> {
-        const OLDER: [&str; 17] = [
+        const OLDER: [&str; 28] = [
             "meta",
+            "ops_by_label",
+            "ops_by_entity",
+            "reverted_by",
+            "watcher_ops",
+            "user_ops",
+            "label_kids",
+            "label_keys",
+            "label_reverts",
+            "labels",
+            "snaps",
+            "ops",
             "grams",
             "hist",
             "events",
@@ -2151,7 +2166,7 @@ impl KvStore {
                 for name in OLDER {
                     found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
                 }
-                let found: [_; 17] = found.try_into().expect("one per name");
+                let found: [_; 28] = found.try_into().expect("one per name");
                 Ok(CommitOrAbort::<_, ()>::Commit(found))
             })?
             .commit()
@@ -2348,17 +2363,17 @@ impl KvStore {
                     old.clear(w.unjournaled())?;
                 }
                 for db in [
-                    t.ops,
-                    t.snaps,
-                    t.ops_by_label,
-                    t.ops_by_entity,
-                    t.labels,
-                    t.label_kids,
-                    t.label_keys,
-                    t.reverted_by,
-                    t.watcher_ops,
-                    t.user_ops,
-                    t.label_reverts,
+                    t.log_entries,
+                    t.log_snaps,
+                    t.log_entries_by_context,
+                    t.log_entries_by_metarecord,
+                    t.log_contexts,
+                    t.log_context_children,
+                    t.log_label_keys,
+                    t.log_reverted_by,
+                    t.log_watcher_entries,
+                    t.log_user_entries,
+                    t.log_context_reverts,
                 ] {
                     db.clear(&mut w)?;
                 }
@@ -2597,9 +2612,9 @@ impl KvTxn<'_> {
     fn put_label(&self, meta: &LabelMeta, command: Option<Uuid>) -> Result<i64> {
         let id = self.next(State::NextLogContext)?;
         let mut w = self.txn.borrow_mut();
-        self.t.labels.put(&mut w, &be(id), &enc_label(meta, command))?;
+        self.t.log_contexts.put(&mut w, &be(id), &enc_label(meta, command))?;
         if let Some(parent) = meta.parent {
-            self.t.label_kids.put(&mut w, &key(&[&be(parent), &be(id)]), &[])?;
+            self.t.log_context_children.put(&mut w, &key(&[&be(parent), &be(id)]), &[])?;
         }
         Ok(id)
     }
@@ -2624,7 +2639,7 @@ impl KvTxn<'_> {
                     universe: Default::default(),
                     stubs: None,
                 };
-                let Some(meta) = self.t.labels.get(&txn, &be(label))? else { break };
+                let Some(meta) = self.t.log_contexts.get(&txn, &be(label))? else { break };
                 let meta = dec_label(meta)?;
                 let empty = read.label_first_op(label)?.is_none()
                     && read.label_children(label)?.is_empty()
@@ -2644,32 +2659,32 @@ impl KvTxn<'_> {
         let Some(op) = Log::op(self, id)? else { return Ok(()) };
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        t.ops.delete(&mut w, &be(id))?;
+        t.log_entries.delete(&mut w, &be(id))?;
         let prefix = be(id);
         let snaps: Vec<Vec<u8>> = t
-            .snaps
+            .log_snaps
             .prefix_iter(&w, &prefix)?
             .map(|e| e.map(|(k, _)| k.to_vec()))
             .collect::<std::result::Result<_, _>>()?;
         for k in snaps {
-            t.snaps.delete(&mut w, &k)?;
+            t.log_snaps.delete(&mut w, &k)?;
         }
-        t.ops_by_label.delete(&mut w, &key(&[&be(op.label_id), &be(id)]))?;
+        t.log_entries_by_context.delete(&mut w, &key(&[&be(op.label_id), &be(id)]))?;
         if let Some(target) = op.reverts_op_id {
-            t.reverted_by.delete(&mut w, &key(&[&be(target), &be(id)]))?;
+            t.log_reverted_by.delete(&mut w, &key(&[&be(target), &be(id)]))?;
         }
-        t.ops_by_entity.delete(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]))?;
-        t.watcher_ops.delete(&mut w, &be(id))?;
-        t.user_ops.delete(&mut w, &be(id))?;
+        t.log_entries_by_metarecord.delete(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]))?;
+        t.log_watcher_entries.delete(&mut w, &be(id))?;
+        t.log_user_entries.delete(&mut w, &be(id))?;
         Ok(())
     }
 
     /// The table of the operations of `origin`'s retention class.
     fn class(&self, origin: Option<&str>) -> Db {
         if origin == Some(crate::log::ORIGIN_WATCHER) {
-            self.t.watcher_ops
+            self.t.log_watcher_entries
         } else {
-            self.t.user_ops
+            self.t.log_user_entries
         }
     }
 }
@@ -2869,7 +2884,7 @@ impl WriteTxn for KvTxn<'_> {
 
     fn create_command_label(&self, meta: &LabelMeta, key: Uuid) -> Result<i64> {
         let id = self.put_label(meta, Some(key))?;
-        self.t.label_keys.put(&mut self.txn.borrow_mut(), key.as_bytes(), &be(id))?;
+        self.t.log_label_keys.put(&mut self.txn.borrow_mut(), key.as_bytes(), &be(id))?;
         Ok(id)
     }
 
@@ -2877,32 +2892,32 @@ impl WriteTxn for KvTxn<'_> {
         let Some(meta) = Log::labels(self, &[id])?.remove(&id) else { return Ok(()) };
         let command = {
             let txn = self.txn.borrow();
-            match self.t.labels.get(&txn, &be(id))? {
+            match self.t.log_contexts.get(&txn, &be(id))? {
                 Some(b) => dec_label_key(b)?,
                 None => None,
             }
         };
         let mut w = self.txn.borrow_mut();
-        self.t.labels.delete(&mut w, &be(id))?;
+        self.t.log_contexts.delete(&mut w, &be(id))?;
         if let Some(parent) = meta.parent {
-            self.t.label_kids.delete(&mut w, &key(&[&be(parent), &be(id)]))?;
+            self.t.log_context_children.delete(&mut w, &key(&[&be(parent), &be(id)]))?;
         }
         if let Some(command) = command {
-            self.t.label_keys.delete(&mut w, command.as_bytes())?;
+            self.t.log_label_keys.delete(&mut w, command.as_bytes())?;
         }
         // What it reverts, and what reverts it, each side of the pair.
         for kind in [0u8, 1] {
             let prefix = key(&[&[kind], &be(id)]);
             let pairs: Vec<Vec<u8>> = self
                 .t
-                .label_reverts
+                .log_context_reverts
                 .prefix_iter(&w, &prefix)?
                 .map(|e| e.map(|(k, _)| k.to_vec()))
                 .collect::<std::result::Result<_, _>>()?;
             for k in pairs {
                 let other = &k[9..];
-                self.t.label_reverts.delete(&mut w, &k)?;
-                self.t.label_reverts.delete(&mut w, &key(&[&[1 - kind], other, &be(id)]))?;
+                self.t.log_context_reverts.delete(&mut w, &k)?;
+                self.t.log_context_reverts.delete(&mut w, &key(&[&[1 - kind], other, &be(id)]))?;
             }
         }
         Ok(())
@@ -2912,10 +2927,14 @@ impl WriteTxn for KvTxn<'_> {
         let mut w = self.txn.borrow_mut();
         let forward = key(&[&[0u8], &be(reverter), &be(reverted)]);
         let already =
-            self.t.label_reverts.get(&w, &forward)?.is_some_and(|v| v.first() == Some(&1));
+            self.t.log_context_reverts.get(&w, &forward)?.is_some_and(|v| v.first() == Some(&1));
         let flag = [u8::from(tree || already)];
-        self.t.label_reverts.put(&mut w, &forward, &flag)?;
-        self.t.label_reverts.put(&mut w, &key(&[&[1u8], &be(reverted), &be(reverter)]), &flag)?;
+        self.t.log_context_reverts.put(&mut w, &forward, &flag)?;
+        self.t.log_context_reverts.put(
+            &mut w,
+            &key(&[&[1u8], &be(reverted), &be(reverter)]),
+            &flag,
+        )?;
         Ok(())
     }
 
@@ -2932,7 +2951,7 @@ impl WriteTxn for KvTxn<'_> {
         let t = self.t;
         for (i, op) in ops.iter().enumerate() {
             let id = base + i as i64;
-            t.ops.put(&mut w, &be(id), &enc_op(op, label, timestamp))?;
+            t.log_entries.put(&mut w, &be(id), &enc_op(op, label, timestamp))?;
             // What the write took off, and — of an append alone — the value
             // it added, which a revert takes off in its turn.
             let added: &[FieldRow] =
@@ -2940,14 +2959,14 @@ impl WriteTxn for KvTxn<'_> {
             for (after, rows) in [(0u8, &op.before[..]), (1u8, added)] {
                 for (n, row) in rows.iter().enumerate() {
                     let k = key(&[&be(id), &[after], &(n as u32).to_be_bytes()]);
-                    t.snaps.put(&mut w, &k, &enc_row(row))?;
+                    t.log_snaps.put(&mut w, &k, &enc_row(row))?;
                 }
             }
-            t.ops_by_label.put(&mut w, &key(&[&be(label), &be(id)]), &[])?;
+            t.log_entries_by_context.put(&mut w, &key(&[&be(label), &be(id)]), &[])?;
             if let Some(target) = op.reverts_op_id {
-                t.reverted_by.put(&mut w, &key(&[&be(target), &be(id)]), &[])?;
+                t.log_reverted_by.put(&mut w, &key(&[&be(target), &be(id)]), &[])?;
             }
-            t.ops_by_entity.put(&mut w, &key(&[op.entity.as_bytes(), &be(id)]), &[])?;
+            t.log_entries_by_metarecord.put(&mut w, &key(&[op.entity.as_bytes(), &be(id)]), &[])?;
             self.class(op.origin.as_deref()).put(&mut w, &be(id), &[])?;
         }
         let last = base + ops.len() as i64 - 1;
@@ -2980,9 +2999,10 @@ impl WriteTxn for KvTxn<'_> {
             metafolder_core::slowlog::count_reads(n as u64);
         };
         let mut doomed: Vec<i64> = Vec::new();
-        for (table, limit) in
-            [(self.t.watcher_ops, retention.watcher_ops), (self.t.user_ops, retention.user_ops)]
-        {
+        for (table, limit) in [
+            (self.t.log_watcher_entries, retention.watcher_ops),
+            (self.t.log_user_entries, retention.user_ops),
+        ] {
             if limit == 0 {
                 continue;
             }

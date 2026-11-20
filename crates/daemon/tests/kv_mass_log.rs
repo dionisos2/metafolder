@@ -52,10 +52,10 @@ fn a_mass_add_is_one_entry_that_reads_as_one_operation_per_record() {
     let head = store.head().unwrap().unwrap();
     write(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
     let written = store.last_write_keys();
-    assert_eq!(written.get("ops"), Some(&1), "one entry: {written:?}");
-    assert_eq!(written.get("snaps"), None, "no snapshot is written: {written:?}");
-    assert_eq!(written.get("ops_by_label"), Some(&1), "{written:?}");
-    assert_eq!(written.get("ops_by_entity"), Some(&1), "{written:?}");
+    assert_eq!(written.get("log_entries"), Some(&1), "one entry: {written:?}");
+    assert_eq!(written.get("log_snaps"), None, "no snapshot is written: {written:?}");
+    assert_eq!(written.get("log_entries_by_context"), Some(&1), "{written:?}");
+    assert_eq!(written.get("log_entries_by_metarecord"), Some(&1), "{written:?}");
     assert_eq!(written.get("metarecords"), None, "{written:?}");
     // The log is counted by entry (doc "Log storage"); it reads as a record's
     // operation each.
@@ -332,8 +332,8 @@ fn a_mass_replace_is_one_entry_that_reads_with_what_it_replaced() {
     let ids = store.dense_ids(&uuids).unwrap();
     write(&mut store, |w| w.mass_set_ids("tag", vec![s("x"), s("y")], &ids).unwrap());
     let written = store.last_write_keys();
-    assert_eq!(written.get("ops"), Some(&1), "{written:?}");
-    assert_eq!(written.get("snaps"), None, "{written:?}");
+    assert_eq!(written.get("log_entries"), Some(&1), "{written:?}");
+    assert_eq!(written.get("log_snaps"), None, "{written:?}");
     assert_eq!(written.get("metarecords"), None, "{written:?}");
     let ops = store.ops_after(head).unwrap();
     assert_eq!(ops.len(), 40);

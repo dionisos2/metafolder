@@ -299,13 +299,13 @@ impl Read<'_> {
     /// The stub holding operation `id`, when it is one of a stub's.
     pub(super) fn stub_at(&self, id: i64) -> Result<Option<Stub>> {
         self.count(1)?;
-        if let Some(v) = self.t.ops.get(self.r, &be(id))? {
+        if let Some(v) = self.t.log_entries.get(self.r, &be(id))? {
             return Stub::decode(id, v);
         }
         let end = be(id);
         let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&end[..]));
         self.count(1)?;
-        match self.t.ops.rev_range(self.r, &range)?.next() {
+        match self.t.log_entries.rev_range(self.r, &range)?.next() {
             Some(e) => {
                 let (k, v) = e?;
                 Ok(Stub::decode(from_be(k), v)?.filter(|s| s.covers(id)))
@@ -348,7 +348,7 @@ impl Read<'_> {
                 }
             }
             self.count(1)?;
-            let b = self.t.ops.get(self.r, &be(id))?.map(<[u8]>::to_vec);
+            let b = self.t.log_entries.get(self.r, &be(id))?.map(<[u8]>::to_vec);
             match b {
                 Some(b) => match Stub::decode(id, &b)? {
                     Some(s) => {
@@ -380,7 +380,7 @@ impl Read<'_> {
         let from_key = be(start);
         let range = (std::ops::Bound::Included(&from_key[..]), std::ops::Bound::Unbounded);
         let mut read = 0;
-        for e in self.t.ops.range(self.r, &range)? {
+        for e in self.t.log_entries.range(self.r, &range)? {
             if out.len() >= cap {
                 break;
             }
@@ -436,7 +436,7 @@ impl Read<'_> {
             let (lo, hi) =
                 (key(&[ROOT.as_slice(), &be(0)]), key(&[ROOT.as_slice(), &be(i64::MAX)]));
             let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
-            for e in self.t.ops_by_entity.rev_range(self.r, &range)? {
+            for e in self.t.log_entries_by_metarecord.rev_range(self.r, &range)? {
                 let stub = self.listed_stub(e?.0)?;
                 if stub.last() <= after {
                     break;
@@ -453,7 +453,7 @@ impl Read<'_> {
         let first = from_be(&k[16..]);
         self.count(2)?;
         self.t
-            .ops
+            .log_entries
             .get(self.r, &be(first))?
             .map(|v| Stub::decode(first, v))
             .transpose()?
@@ -475,7 +475,7 @@ impl Read<'_> {
         let mut kept = true;
         let (lo, hi) = (key(&[ROOT.as_slice(), &be(0)]), key(&[ROOT.as_slice(), &be(i64::MAX)]));
         let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
-        for e in self.t.ops_by_entity.rev_range(self.r, &range)? {
+        for e in self.t.log_entries_by_metarecord.rev_range(self.r, &range)? {
             let stub = self.listed_stub(e?.0)?;
             named += stub.who.len();
             if named > STUB_MEMO_RECORDS {
@@ -504,7 +504,7 @@ impl Read<'_> {
         }
         let mut out = Vec::new();
         let prefix = key(&[&be(op_id), &[1u8]]);
-        for e in self.t.snaps.prefix_iter(self.r, &prefix)? {
+        for e in self.t.log_snaps.prefix_iter(self.r, &prefix)? {
             out.push(super::dec_row(e?.1)?);
         }
         self.count(out.len() as u64 + 1)?;
@@ -519,7 +519,11 @@ impl Read<'_> {
             return Ok(crate::version::net(&before, &stub.snapshot(op_id, true)));
         }
         self.count(1)?;
-        let raw = self.t.ops.get(self.r, &be(op_id))?.context("an operation that is not there")?;
+        let raw = self
+            .t
+            .log_entries
+            .get(self.r, &be(op_id))?
+            .context("an operation that is not there")?;
         let delta = super::op_delta(raw)?.context("an operation with no version delta")?;
         Ok(delta as u64)
     }
@@ -534,7 +538,7 @@ impl Read<'_> {
         }
         let mut out = Vec::new();
         let prefix = key(&[&be(op_id), &[0u8]]);
-        for e in self.t.snaps.prefix_iter(self.r, &prefix)? {
+        for e in self.t.log_snaps.prefix_iter(self.r, &prefix)? {
             out.push(super::dec_row(e?.1)?);
         }
         self.count(out.len() as u64 + 1)?;
@@ -563,7 +567,7 @@ impl Read<'_> {
     /// the stubs that name it.
     pub(super) fn entity_op_ids_after(&self, entity: Uuid, after: i64) -> Result<Vec<i64>> {
         let mut ids = Vec::new();
-        for e in self.t.ops_by_entity.prefix_iter(self.r, entity.as_bytes())? {
+        for e in self.t.log_entries_by_metarecord.prefix_iter(self.r, entity.as_bytes())? {
             self.count(1)?;
             let id = from_be(&e?.0[16..]);
             if id > after {
@@ -1131,7 +1135,7 @@ impl KvTxn<'_> {
             }
             let prefix = key(&[&be(op), &[0u8]]);
             let mut rows = Vec::new();
-            for e in self.t.snaps.prefix_iter(&txn, &prefix)? {
+            for e in self.t.log_snaps.prefix_iter(&txn, &prefix)? {
                 rows.push(dec_row(e?.1)?);
             }
             for row in &rows {
@@ -1244,14 +1248,14 @@ impl KvTxn<'_> {
             if let Some(stub) = &covering {
                 for (n, row) in rows.iter().enumerate() {
                     let k = key(&[&be(op_id), &[0u8], &(n as u32).to_be_bytes()]);
-                    self.t.snaps.put(&mut w, &k, &enc_row(row))?;
+                    self.t.log_snaps.put(&mut w, &k, &enc_row(row))?;
                 }
                 marked.entry(stub.first).or_insert_with(|| stub.clone());
             }
         }
         for (at, mut stub) in marked {
             stub.in_snaps = true;
-            self.t.ops.put(&mut self.txn.borrow_mut(), &be(at), &stub.encode())?;
+            self.t.log_entries.put(&mut self.txn.borrow_mut(), &be(at), &stub.encode())?;
         }
         self.t.mass.delete(&mut self.txn.borrow_mut(), &entry_key_bytes)?;
         Ok(true)
@@ -1291,7 +1295,7 @@ impl KvTxn<'_> {
                 let mut w = self.txn.borrow_mut();
                 for (n, row) in rows.iter().enumerate() {
                     let k = key(&[&be(op), &[0u8], &(n as u32).to_be_bytes()]);
-                    self.t.snaps.put(&mut w, &k, &enc_row(row))?;
+                    self.t.log_snaps.put(&mut w, &k, &enc_row(row))?;
                 }
             }
             // The mark keeps the operations still waiting, each at its number.
@@ -1352,9 +1356,9 @@ impl KvTxn<'_> {
         {
             let txn = self.txn.borrow();
             let r: &heed::RoTxn<'_> = &txn;
-            for e in self.t.ops_by_entity.prefix_iter(r, ROOT.as_slice())? {
+            for e in self.t.log_entries_by_metarecord.prefix_iter(r, ROOT.as_slice())? {
                 let first = from_be(&e?.0[16..]);
-                if let Some(v) = self.t.ops.get(r, &be(first))? {
+                if let Some(v) = self.t.log_entries.get(r, &be(first))? {
                     if let Some(stub) = Stub::decode(first, v)? {
                         if matches!(stub.who, Who::Ids(_)) {
                             found.push((first, stub));
@@ -1368,7 +1372,7 @@ impl KvTxn<'_> {
             // In the order of the ids: an operation keeps its record.
             stub.who = Who::Uuids(self.uuids_of_ids(ids)?);
             let mut w = self.txn.borrow_mut();
-            self.t.ops.put(&mut w, &be(first), &stub.encode())?;
+            self.t.log_entries.put(&mut w, &be(first), &stub.encode())?;
         }
         Ok(())
     }
@@ -1377,7 +1381,7 @@ impl KvTxn<'_> {
     /// is an ordinary operation's.
     pub(super) fn entry_end(&self, id: i64) -> Result<i64> {
         let w = self.txn.borrow();
-        let Some(v) = self.t.ops.get(&w, &be(id))? else { return Ok(id) };
+        let Some(v) = self.t.log_entries.get(&w, &be(id))? else { return Ok(id) };
         Ok(Stub::decode(id, v)?.map_or(id, |s| s.last()))
     }
 
@@ -1390,14 +1394,18 @@ impl KvTxn<'_> {
         let mut w = self.txn.borrow_mut();
         let t = self.t;
         let first = be(stub.first);
-        t.ops.put(&mut w, &first, &stub.encode())?;
-        t.ops_by_label.put(&mut w, &key(&[&be(stub.label), &first]), &be(stub.last()))?;
-        t.ops_by_entity.put(&mut w, &key(&[ROOT.as_slice(), &first]), &[])?;
+        t.log_entries.put(&mut w, &first, &stub.encode())?;
+        t.log_entries_by_context.put(&mut w, &key(&[&be(stub.label), &first]), &be(stub.last()))?;
+        t.log_entries_by_metarecord.put(&mut w, &key(&[ROOT.as_slice(), &first]), &[])?;
         self.class(stub.origin.as_deref()).put(&mut w, &first, &[])?;
         super::State::NextLogOp.put(&t, &mut w, stub.last() + 1)?;
         if let Some(target) = stub.reverts {
             for k in 0..stub.who.len() as i64 {
-                t.reverted_by.put(&mut w, &key(&[&be(target + k), &be(stub.first + k)]), &[])?;
+                t.log_reverted_by.put(
+                    &mut w,
+                    &key(&[&be(target + k), &be(stub.first + k)]),
+                    &[],
+                )?;
             }
         }
         Ok(())
@@ -1416,25 +1424,25 @@ impl KvTxn<'_> {
             let (lo, hi) = (be(stub.first), be(stub.first + k as i64));
             let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Excluded(&hi[..]));
             let doomed: Vec<Vec<u8>> = t
-                .snaps
+                .log_snaps
                 .range(&w, &range)?
                 .map(|e| e.map(|(key, _)| key.to_vec()))
                 .collect::<std::result::Result<_, _>>()?;
             for key in doomed {
-                t.snaps.delete(&mut w, &key)?;
+                t.log_snaps.delete(&mut w, &key)?;
             }
         }
         if let Some(target) = stub.reverts {
             for j in 0..k as i64 {
-                t.reverted_by.delete(&mut w, &key(&[&be(target + j), &be(stub.first + j)]))?;
+                t.log_reverted_by.delete(&mut w, &key(&[&be(target + j), &be(stub.first + j)]))?;
             }
         }
         let first = be(stub.first);
-        t.ops.delete(&mut w, &first)?;
-        t.ops_by_label.delete(&mut w, &key(&[&be(stub.label), &first]))?;
-        t.ops_by_entity.delete(&mut w, &key(&[ROOT.as_slice(), &first]))?;
-        t.watcher_ops.delete(&mut w, &first)?;
-        t.user_ops.delete(&mut w, &first)?;
+        t.log_entries.delete(&mut w, &first)?;
+        t.log_entries_by_context.delete(&mut w, &key(&[&be(stub.label), &first]))?;
+        t.log_entries_by_metarecord.delete(&mut w, &key(&[ROOT.as_slice(), &first]))?;
+        t.log_watcher_entries.delete(&mut w, &first)?;
+        t.log_user_entries.delete(&mut w, &first)?;
         if stub.who.len() == k {
             return Ok(());
         }
@@ -1467,9 +1475,9 @@ impl KvTxn<'_> {
         };
         let mut w = self.txn.borrow_mut();
         let first = be(rest.first);
-        t.ops.put(&mut w, &first, &rest.encode())?;
-        t.ops_by_label.put(&mut w, &key(&[&be(rest.label), &first]), &be(rest.last()))?;
-        t.ops_by_entity.put(&mut w, &key(&[ROOT.as_slice(), &first]), &[])?;
+        t.log_entries.put(&mut w, &first, &rest.encode())?;
+        t.log_entries_by_context.put(&mut w, &key(&[&be(rest.label), &first]), &be(rest.last()))?;
+        t.log_entries_by_metarecord.put(&mut w, &key(&[ROOT.as_slice(), &first]), &[])?;
         self.class(rest.origin.as_deref()).put(&mut w, &first, &[])?;
         Ok(())
     }
