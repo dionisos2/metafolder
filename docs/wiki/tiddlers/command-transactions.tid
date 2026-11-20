@@ -47,6 +47,10 @@ delivered, in a transaction of its own: the panel's state has followed them by t
 
 !! A panel's commands
 
+A command's run also carries its ''log context'': it is created when the run begins,
+and every write the run sends is in it ([[Log contexts]]); a nested command is in its
+caller's.
+
 A panel's command is written like a user command: its handler gets first `mf`, the
 API of its run — the panel's API, in the run's transaction — and works through it,
 handing it to the functions it calls ([[The metafolder API]]). So do the functions a

@@ -1,5 +1,5 @@
 // log panel tree: the labels of the log, one level at a time, as the daemon
-// summarises them (doc "log panel", doc "Label summaries", doc "Labels and
+// summarises them (doc "log panel", doc "Log context summaries", doc "Labels and
 // contexts").
 //
 // A row of the top level is a unit of work: for an operation of yours, its

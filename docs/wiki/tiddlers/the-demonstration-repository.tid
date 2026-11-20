@@ -37,7 +37,7 @@ no animal), ratings and comments, in English like the README the screenshots
 illustrate (the home's own file names stay French). Each of its steps writes under a
 label named as she would name it — "Sort the travel photos", "Rate the favourites" — so the
 [[log panel]] reads as a story and a step can be undone in front of an audience
-([[Labels and contexts]]). The commands are given the daemon's port and the
+([[Log contexts]]). The commands are given the daemon's port and the
 repository through the environment, never on their command line, which a label
 records.
 

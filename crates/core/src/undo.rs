@@ -50,7 +50,7 @@ pub const WIDE_WINDOW: usize = 20_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogOp {
     pub id: i64,
-    /// Its innermost label (doc "Labels and contexts").
+    /// Its innermost label (doc "Log contexts").
     pub label_id: i64,
     pub op_type: String,
     /// The operation this one undid, when a revert wrote it.

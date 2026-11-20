@@ -34,7 +34,7 @@ a bitmap of dense ids, turns them into uuids as it writes (`uuids`, one key per 
 the order of the ids).
 
 |!Header part |!Holds |
-|log context |the innermost context of the write ([[Labels and contexts]]) |
+|log context |the innermost context of the write ([[Log contexts]]) |
 |timestamp |when it was written (Unix ms): one write's entries share it |
 |origin |one byte: client, watcher, trash ([[Operations and their origin]]) — not read off the context: a command can mix ordinary writes and trashing |
 |effect |one byte, below |
@@ -79,13 +79,13 @@ loop of `mf … field add` over a thousand files, inside one context, is one ent
 
 Compaction happens at the append only, where nothing is to be rewritten. Compacting
 entries afterwards stays possible: every key of the absorbed entry (`log_targets`,
-`log_entries_by_label`, `log_reverted_by`) would then be rewritten under the id of the
+`log_entries_by_context`, `log_reverted_by`) would then be rewritten under the id of the
 one that stays.
 
 !! Beside the entries
 
 |!Table |!Key |!Kept |
-|`log_entries_by_label` |context · first op id → target count |at the append; a compaction updates the count. A context's operations, their number, its first and last |
+|`log_entries_by_context` |context · first op id → target count |at the append; a compaction updates the count. A context's operations, their number, its first and last |
 |`log_reverted_by` |reverted entry's first op id · first reverted · last reverted · revert's first op id |at the append, one key per pair of entries; a revert of a whole context writes one per entry it covers |
 |`log_watcher_entries`, `log_user_entries` |first op id |at the append: the two retention classes ([[Automatic retention]]) |
 |`log_entries_by_metarecord` |uuid · op id |at the idle fold ([[Folding in idle time]]), one key per target, up to `log_entries_by_metarecord_indexed_up_to` in `global_derived_state` |
@@ -119,7 +119,7 @@ metarecord.
 !! One write
 
 Every request that changes metadata goes through one `log::Writer`, in one transaction:
-its context is checked ([[Labels and contexts]]); for each change, the affected rows
+its context is checked ([[Log contexts]]); for each change, the affected rows
 are read (the before), the change is applied, and the operation appended — to the last
 entry when it can be; finally HEAD is recorded and the transaction commits. Every
 writer — reconcile included — follows it, which is what keeps the data and HEAD

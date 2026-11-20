@@ -1,5 +1,5 @@
 //! `GET /repos/:repo/log/labels`: the labels of the log with what is known of
-//! each without reading an operation (doc "Label summaries").
+//! each without reading an operation (doc "Log context summaries").
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

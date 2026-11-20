@@ -1,4 +1,4 @@
-//! Labels and contexts over HTTP (doc "Labels and contexts"): creating a
+//! Labels and contexts over HTTP (doc "Log contexts"): creating a
 //! label, reading it with its ancestors, writing inside one through the
 //! `X-Metafolder-Label` header, and a write with no context opening its own.
 
@@ -224,7 +224,7 @@ async fn prune_keeps_a_label_whole() {
     assert!(ops.iter().all(|op| op["label_id"] == kept), "{log}");
 }
 
-// ── A command's label (doc "Labels and contexts") ────────────────────────────
+// ── A command's label (doc "Log contexts") ────────────────────────────
 
 /// Sends `request` as one step of a client command: the command's key and
 /// name, and the context it runs in.
@@ -358,7 +358,7 @@ async fn reverting_an_empty_label_reverts_nothing() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-// ── Undo and redo of a label (doc "Undo and redo by label") ─────────────────
+// ── Undo and redo of a label (doc "Undo and redo by log context") ─────────────────
 
 /// Sets field `a` of `uuid` to `n`, inside `label`.
 async fn set_a(app: &Router, repo: &str, uuid: &str, n: i64, label: i64) {

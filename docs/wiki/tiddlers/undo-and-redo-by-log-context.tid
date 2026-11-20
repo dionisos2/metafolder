@@ -1,4 +1,4 @@
-title: Undo and redo by label
+title: Undo and redo by log context
 tags: [[The operation log]]
 kind: reference
 audience: dev

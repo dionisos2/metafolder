@@ -12,7 +12,7 @@ summary: GET /log (bounded two ways), the change feed GET /log/since, one label 
 |<<cmd "GET /repos/:repo/labels/:id">> |one label, its ancestors and its children |
 
 Every write request may name the label it writes in with the header
-`X-Metafolder-Label: <id>` ([[Labels and contexts]]); without one, the write opens a label
+`X-Metafolder-Label: <id>` ([[Log contexts]]); without one, the write opens a label
 of its own, named after the route (`PUT /repos/:repo/metarecords/:uuid/fields/:name`). A
 header that is not a number is a `400`; one naming a label that does not exist, or the
 watcher's or one inside it, is a `400` too, and nothing is written.

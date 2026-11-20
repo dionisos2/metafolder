@@ -59,7 +59,7 @@ const DETAIL = (id: number, label: number) => ({
     },
   ],
 });
-/** A label as `GET /log/labels` summarises it (doc "Label summaries"). */
+/** A label as `GET /log/labels` summarises it (doc "Log context summaries"). */
 const label = (id: number, name: string, extra: Record<string, unknown> = {}) => ({
   id,
   name,

@@ -51,7 +51,7 @@ opened shown and loaded ([[When a command has finished]]). It stops at the first
 that fails, saying which (''macro stopped at step 2 of 3 (…)''), and at a question
 abandoned with `Escape`. Everything the macro writes to the repository is one label
 of the log, under which each step's is nested: `log:undo` undoes it all, or offers
-the step ([[Undo and redo by label]]).
+the step ([[Undo and redo by log context]]).
 
 !! Saving
 

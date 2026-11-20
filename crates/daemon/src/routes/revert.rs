@@ -17,7 +17,7 @@ pub(super) struct RevertTarget {
     #[serde(default)]
     since: Option<i64>,
     /// With `label_id`: only its standing `changes` (an undo) or its standing
-    /// `undos` (a redo) — doc "Undo and redo by label".
+    /// `undos` (a redo) — doc "Undo and redo by log context".
     #[serde(default)]
     only: Option<String>,
 }

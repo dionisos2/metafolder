@@ -1,4 +1,4 @@
-// `log:undo` / `log:redo` by label (doc "Undo and redo by label"): a label
+// `log:undo` / `log:redo` by label (doc "Undo and redo by log context"): a label
 // named is undone; none named and one candidate, it is undone at once.
 
 import { describe, expect, test, vi } from 'vitest';

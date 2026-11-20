@@ -1,4 +1,4 @@
-//! A GUI command is a label (doc "Labels and contexts"): what it writes,
+//! A GUI command is a label (doc "Log contexts"): what it writes,
 //! through the daemon proxy, carries the command's key and name, so the
 //! daemon opens one label for it at its first write.
 

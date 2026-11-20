@@ -28,7 +28,7 @@ stops the run.
 
 A script that writes as it goes undoes through the ''event log'', the one exact way:
 each answer writes in a label of its own, and going back reverts that label
-([[Labels and contexts]]). Before that, it noted the newest operation before each answer
+([[Log contexts]]). Before that, it noted the newest operation before each answer
 (`mf log head`) and undid what was written since — by a rollback to the noted operation
 until October 2026, which also unrecorded the watcher's writes meanwhile ([[Why the log stops being a tree]]), then by `mf log undo --after`, which a change of the user's made
 meanwhile from another client would have swept up. That puts back what each write replaced ([[Undo and redo]]); an ''untag''

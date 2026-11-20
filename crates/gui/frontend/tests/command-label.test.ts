@@ -1,4 +1,4 @@
-// A command is a label (doc "Labels and contexts"): the shell tells the
+// A command is a label (doc "Log contexts"): the shell tells the
 // daemon proxy when one starts and ends, so what it writes in between is one
 // label in the log, named after it.
 

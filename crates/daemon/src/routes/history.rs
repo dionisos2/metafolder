@@ -49,7 +49,7 @@ pub(super) struct NewLabelBody {
 }
 
 /// `POST /repos/:repo/labels`: opens a label — a context the client's writes
-/// will name (doc "Labels and contexts"). Its parent defaults to the label the
+/// will name (doc "Log contexts"). Its parent defaults to the label the
 /// request is made in; one that does not exist, or the watcher's, is a `400`.
 pub(super) async fn create_label(
     State(state): State<Arc<AppState>>,

@@ -17,7 +17,7 @@ In the GUI: <<key "log:undo" Ctrl+z>> and <<key "log:redo" Ctrl+Shift+z>>, from 
 ''Undo'' looks for the newest change ''you'' made that still stands — not the watcher's,
 not a previous undo ([[The undo selection]]) — and offers the ''labels'' it was written in,
 innermost first: the command that made it, the answer of a script it was part of, the
-script's run… ([[Labels and contexts]]). Undoing a label reverts every change of it still
+script's run… ([[Log contexts]]). Undoing a label reverts every change of it still
 standing, onto the current state: the watcher's operations written since stay where they
 are — they record what really happened on disk ([[Why undo does not step HEAD back]]).
 Pressed again, it takes back the change before, and so on. The undo is itself written in
@@ -46,7 +46,7 @@ at the same time — a script running while you edit by hand, two windows —, t
 operation may be the other one's: undo then offers ''its'' labels, not the ones of what you
 just did. The candidates' names say whose they are before anything is undone; name the
 label you mean. In the GUI, two commands running at once — a long reconcile and a field
-edited meanwhile — even share a label ([[Labels and contexts]]).
+edited meanwhile — even share a label ([[Log contexts]]).
 
 !! Files
 

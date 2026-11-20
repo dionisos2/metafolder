@@ -475,7 +475,7 @@ mod tests {
     }
 
     /// A script runs in the context it was given, and a plain line in none —
-    /// not even one the GUI itself was started in (doc "Labels and contexts").
+    /// not even one the GUI itself was started in (doc "Log contexts").
     #[tokio::test]
     async fn test_a_run_is_given_its_context_and_only_it() {
         let gui = gui();

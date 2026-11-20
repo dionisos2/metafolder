@@ -627,7 +627,7 @@ fn test_both_repo_selectors_from_the_environment_are_refused() {
     assert!(out.stderr.contains("not both"), "{}", out.stderr);
 }
 
-// ── Contexts (doc "Labels and contexts") ─────────────────────────────────────
+// ── Contexts (doc "Log contexts") ─────────────────────────────────────
 
 /// `mf log show HEAD --raw`: the newest operation's label.
 fn head_label(repo: &str, envs: &[(&str, &str)]) -> serde_json::Value {
@@ -717,7 +717,7 @@ pub(super) fn take_back(repo: &str, verb: &str, extra: &[&str]) -> Out {
 
 /// Undo offers every label the newest change is in, innermost first: the
 /// command, then the context it ran in. Undoing the context takes back every
-/// command of it (doc "Undo and redo by label").
+/// command of it (doc "Undo and redo by log context").
 #[test]
 fn test_undo_offers_the_context_and_takes_it_back_whole() {
     let (repo, _root) = init_repo("undo_context");
@@ -801,7 +801,7 @@ fn test_log_rollback_needs_a_time() {
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
-// ── `mf log labels` (doc "Label summaries") ────────────────────────────────
+// ── `mf log labels` (doc "Log context summaries") ────────────────────────────────
 
 /// The labels, newest first, each with its operations counted and what an undo
 /// of it says — read without the operations being.

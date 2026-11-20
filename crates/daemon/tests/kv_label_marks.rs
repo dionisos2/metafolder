@@ -1,4 +1,4 @@
-//! What a label says without its operations being read (doc "Label summaries"):
+//! What a label says without its operations being read (doc "Log context summaries"):
 //! how many it holds, which labels it reverts, which revert it.
 
 use metafolder_core::metarecord::{Field, Value};

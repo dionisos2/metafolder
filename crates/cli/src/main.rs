@@ -1492,7 +1492,7 @@ fn main() {
     }
 }
 
-/// What this command tells the daemon (doc "Labels and contexts"): a fresh key
+/// What this command tells the daemon (doc "Log contexts"): a fresh key
 /// for its label, named after its command line and described by its query,
 /// inside the context `METAFOLDER_LABEL` passes on.
 fn command_headers() -> Result<metafolder_cli::client::CommandHeaders, String> {

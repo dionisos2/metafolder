@@ -1,4 +1,4 @@
-//! Write contexts on the wire (doc "Labels and contexts"): the headers a
+//! Write contexts on the wire (doc "Log contexts"): the headers a
 //! client names its context and its command with, the environment variable a
 //! context is passed on in, and the encoding of a name in a header.
 //!

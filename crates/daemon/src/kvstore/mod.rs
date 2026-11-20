@@ -39,7 +39,7 @@
 //! "Automatic retention"): their sizes are B-tree statistics and their first
 //! keys the oldest operations of each.
 //!
-//! Operations are grouped by nested labels (doc "Labels and contexts"): each
+//! Operations are grouped by nested labels (doc "Log contexts"): each
 //! carries its innermost one, and `label_kids` holds the nesting. The label
 //! the watcher's flushes hang under is `watcher_label` in `meta`.
 //!

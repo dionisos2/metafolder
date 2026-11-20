@@ -8,7 +8,7 @@ summary: The event log since October 2026: an ordered set of reversible operatio
 tree of operations with a movable HEAD, two mechanisms (rollback and revert) and
 revisions. It is now an ''ordered set of operations'' — why, in [[Why the log stops being a tree]] — built in steps: reverting onto the current state ([[Reverting onto the current state]]); the log as a sequence, undo and redo as reverts; retention per origin
 ([[Automatic retention]]); labels instead of revisions, and contexts in the clients
-([[Labels and contexts]]); undo and redo by label ([[Undo and redo by label]]); the log
+([[Log contexts]]); undo and redo by label ([[Undo and redo by log context]]); the log
 panel as a tree of labels ([[log panel]]). Each step that changed the store's layout
 ''emptied the log'' of an older store rather than converting it — the metarecords kept —
 which the user chose ([[Persisted format changes]]).
@@ -23,18 +23,18 @@ label after the fact is not built either.
 * The log is a sequence of operations, numbered in the order they were written. There is no parent, no HEAD to move, no branch: the log only grows, and shrinks only by retention.
 * Each operation keeps what it found (its before); the state it left is not kept ([[Log storage]]). What it records is ''descriptive'': it says what the operation did, it is never a condition for undoing it.
 * There is ''one mechanism'': reverting a set of operations, which applies each one's inverse to the ''current'' state ([[Reverting onto the current state]]). Undo, redo, "back to this morning" ([[Rollback]]), a script's going back: each is a choice of set, nothing more.
-* Operations are grouped by ''labels'' — named, described, nested — instead of revisions ([[Labels and contexts]]). A transaction stays one request; a label groups what belongs together, across as many requests as it takes.
-* Undo and redo target a label of the newest operation, chosen by the user when there are several ([[Undo and redo by label]]).
+* Operations are grouped by ''labels'' — named, described, nested — instead of revisions ([[Log contexts]]). A transaction stays one request; a label groups what belongs together, across as many requests as it takes.
+* Undo and redo target a label of the newest operation, chosen by the user when there are several ([[Undo and redo by log context]]).
 
 !! Retention
 
 With no dependency analysis left, any operation can go at any time without making another
 one impossible to revert. Retention becomes a policy per origin: keep X entries of the
 watcher, Y of everything else — so a user keeps a long history of their own changes while
-the watcher's churn is trimmed. A label with no operation left goes with its last one.
+the watcher's churn is trimmed. A context with no operation left stays until a reindex ([[Log contexts]]).
 
 The old "labelled revision is a retention floor" rule (doc "Automatic retention") is
-dropped: naming a stretch of work is a context in the GUI ([[Labels and contexts]]), not
+dropped: naming a stretch of work is a context in the GUI ([[Log contexts]]), not
 a promise to keep a global state that the log no longer knows how to rebuild.
 
 !! What went
@@ -48,9 +48,9 @@ a promise to keep a global state that the log no longer knows how to rebuild.
 !! Where it differs from the proposal
 
 * ''Origin'' stays on each operation, set by the daemon, instead of being read off the root label a label descends from: a trashing's `trash` origin must survive inside any context ([[Operations and their origin]]).
-* A command's label is opened ''at its first write'', the client sending a key (`X-Metafolder-Command`) rather than creating the label before writing — so a command that only reads opens nothing ([[Labels and contexts]]).
-* A context names its repository (`METAFOLDER_LABEL=<repo>:<label>`): a label id means nothing in another one.
-* The GUI knows which command runs, not which call each made: two commands running at once share a label.
+* A command's context is created ''before it writes'', by the client, and passed as an id (`X-Metafolder-Log-Context`). From October to November 2026 it was opened at the command's first write, found again by a key the client drew (`X-Metafolder-Command`); explicit contexts replaced that (user decision, [[Log contexts]]).
+* A context names its repository (`METAFOLDER_LOG_CONTEXT=<repo>:<id>`): a context id means nothing in another one.
+* Labels were renamed ''log contexts'' (November 2026). The GUI creates one per command run, so two commands running at once no longer share one.
 
 <<list-kind rationale>>
 

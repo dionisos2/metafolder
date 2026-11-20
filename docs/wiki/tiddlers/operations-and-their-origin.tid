@@ -7,7 +7,7 @@ summary: An operation is one atomic change, with when it was written, who asked 
 An ''operation'' is one atomic change — setting one field on one metarecord. The log is
 the sequence of them, in the order they were written ([[The operation log]]). Each one
 carries when it was written, its ''origin'' (below) and its innermost ''label'' — the
-name of the work it belongs to ([[Labels and contexts]]).
+name of the work it belongs to ([[Log contexts]]).
 
 One request writes its operations in one transaction, and in one label: the one the
 client named, or one the request opens for itself. Most hold one operation (a field
@@ -40,7 +40,7 @@ otherwise only the metadata comes back, and the truth is written again right aft
 
 An operation records ''who asked for it'' — `origin`:
 
-* `watcher` — written by the daemon on the filesystem's behalf: the watcher's flush, in a label of its own under the watcher's ([[Labels and contexts]]);
+* `watcher` — written by the daemon on the filesystem's behalf: the watcher's flush, in a label of its own under the watcher's ([[Log contexts]]);
 * `trash` — the metarecord deletion a trashing writes ([[POST /repos/:repo/metarecords/trash]]);
 * none — every other write a client requested.
 

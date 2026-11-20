@@ -10,7 +10,7 @@ nothing moves back over the log, so nothing written since — the watcher's work
 !! Undo
 
 Undo walks the log newest first for the newest operation ''the user wrote'' that still
-stands, and offers the labels it was written in, innermost first ([[Undo and redo by label]]).
+stands, and offers the labels it was written in, innermost first ([[Undo and redo by log context]]).
 An operation is ''not'' the one when:
 
 * it is the daemon's — `origin = watcher` exactly, not any set origin ([[Operations and their origin]]); failing an origin, a watcher op type. A `trash` operation ''is'' one: you asked for it;

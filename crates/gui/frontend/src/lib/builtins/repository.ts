@@ -395,7 +395,7 @@ async function unsetWorkContext(ws: string): Promise<void> {
   );
 }
 
-/** `log:undo` / `log:redo` (doc "Undo and redo by label"): the label named,
+/** `log:undo` / `log:redo` (doc "Undo and redo by log context"): the label named,
  *  or — none named — the one the newest change (undo) was written in; when it
  *  was written in several, which one is asked, innermost first. */
 async function undoOrRedo(

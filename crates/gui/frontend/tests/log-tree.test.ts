@@ -1,5 +1,5 @@
 // The log panel as a tree of labels (panel-types/log/tree.js, doc "log
-// panel", doc "Label summaries"): the units of work as the daemon summarises
+// panel", doc "Log context summaries"): the units of work as the daemon summarises
 // them, the watcher's flushes folded, a label's contents put in when it is gone
 // into, and what each node is — the daemon's, an undo, undone.
 

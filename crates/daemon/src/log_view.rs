@@ -280,7 +280,7 @@ pub fn snapshots_json(log: &dyn Log, op_id: i64) -> Result<serde_json::Value> {
     Ok(serde_json::Value::Array(out))
 }
 
-// ── Label summaries (doc "Label summaries") ──────────────────────────────────
+// ── Label summaries (doc "Log context summaries") ──────────────────────────────────
 
 /// Which labels `GET /repos/:repo/log/labels` lists.
 #[derive(Debug, Clone, Copy)]

@@ -428,7 +428,7 @@ CURRENT=""       # the current folder — THE PATH IS THE STACK: going up is
 # entry: it comes back into the query on its own.
 BACK_STACK=()
 
-# The run is one label, each answer one inside it (doc "Labels and contexts"):
+# The run is one label, each answer one inside it (doc "Log contexts"):
 # the log shows the run whole, and an answer is what going back reverts.
 RUN_LABEL=$(mf_label_begin "gui-tag-folder $TAG" "${SCOPE:-every metarecord}")
 [ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"

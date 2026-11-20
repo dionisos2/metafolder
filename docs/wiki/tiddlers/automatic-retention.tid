@@ -35,7 +35,8 @@ startup; a repository's `config.json` drops them silently the next time it is wr
 !! What a trim does
 
 For each origin past its limit, the trim deletes the oldest entries down to the limit,
-with their targets and their keys in the log's indexes ([[Pruning the log]]).
+with their targets and their keys in the log's indexes ([[Pruning the log]]); a
+context left empty stays until a reindex ([[Log contexts]]).
 It never reaches into the write that triggered it: a write larger than the limit — a
 reconcile of more than a million files — is kept whole, and the log stays past its limit
 until the next write trims it. Cut by its own commit, such a write lost its oldest

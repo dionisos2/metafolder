@@ -340,7 +340,7 @@ pub struct LabelsArgs {
 }
 
 /// `mf log labels` — the labels, newest first, as the daemon summarises them
-/// (doc "Label summaries"): the operations of a label are not read, so a
+/// (doc "Log context summaries"): the operations of a label are not read, so a
 /// write to ten thousand records costs one line.
 pub fn log_labels(ctx: &Ctx, args: &LabelsArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -444,7 +444,7 @@ fn op_breakdown(ops: &[&Json]) -> String {
 
 /// `mf log head` — the id of the newest operation, one line; `0` on an empty
 /// history. A point to compare with later (`mf log revert --op` takes an
-/// operation id); going back is done by label (doc "Undo and redo by label").
+/// operation id); going back is done by label (doc "Undo and redo by log context").
 pub fn log_head(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.get(&format!("{base}/log/since"), &[])?;

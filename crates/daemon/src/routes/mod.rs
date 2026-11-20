@@ -293,7 +293,7 @@ async fn name_operation(
     REQUEST.scope(info, next.run(request)).await
 }
 
-/// The command a request names (doc "Labels and contexts"): its key, and
+/// The command a request names (doc "Log contexts"): its key, and
 /// the name and description its label is opened with. A key that is not 32 hex
 /// digits is a `400`; no key, no command.
 fn command_header(

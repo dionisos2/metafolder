@@ -1,4 +1,4 @@
-//! `mf label` (doc "Labels and contexts"): opening a context and reading
+//! `mf label` (doc "Log contexts"): opening a context and reading
 //! one, and what a command tells the daemon about itself — the name and
 //! description its label is opened with.
 

@@ -568,7 +568,7 @@ assert "up: the sibling left behind is found on the way up" [ "$(asked /a/b/z.tx
 # "Script sessions"); the letter `u` (undo) is its typed twin. The answer is undone
 # through the event log — which restores the exact rows — and the entry, open
 # once more, is what the next step query returns. Each answer writes in a
-# label of its own (doc "Labels and contexts"); going back reverts it.
+# label of its own (doc "Log contexts"); going back reverts it.
 mock_reset
 setup_top
 walk_children "" file file-a file-b file-a file-b

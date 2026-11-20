@@ -41,12 +41,12 @@ The log's tables are primary too ([[Log storage]]):
 |!Table |!Key |!Value |!Serves |
 |`log_entries` |first op id |log context · timestamp · origin · effect · file action · first reverted op · parameters · target count |the log, in order ([[The operation log]]) |
 |`log_targets` |first op id · chunk number |the chunk's targets (uuids), then its before |which metarecords an entry wrote, and what to undo it with |
-|`log_entries_by_label` |log context · first op id |target count |an undo or revert by context |
+|`log_entries_by_context` |log context · first op id |target count |an undo or revert by context |
 |`log_reverted_by` |first op id of the reverted entry · first reverted · last reverted · first op id of the revert |— |whether an operation still stands ([[The undo selection]]) |
 |`log_watcher_entries`, `log_user_entries` |first op id |— |the two retention classes ([[Automatic retention]]) |
-|`log_contexts` |context id |name · description · parent · created |[[Labels and contexts]] |
+|`log_contexts` |context id |name · description · parent · created |[[Log contexts]] |
 |`log_context_children` |parent · child |— |the contexts' nesting |
-|`log_context_reverts` |`0` · reverting · reverted, and `1` · reverted · reverting |`1` if the whole context was reverted |what a context reverts and what reverts it, without reading entries ([[Label summaries]]) |
+|`log_context_reverts` |`0` · reverting · reverted, and `1` · reverted · reverting |`1` if the whole context was reverted |what a context reverts and what reverts it, without reading entries ([[Log context summaries]]) |
 
 !!! The record
 
@@ -85,8 +85,8 @@ its default.
 |!Key |!Holds |!Written by |!Read by |
 |`log_head` |the id of the last operation in the log; absent, an empty log |every write, an undo included |the log's readers: HEAD ([[The operation log]]) |
 |`next_log_op` |the next operation id — never reused, an entry taking as many as it has targets |every write |the next write |
-|`next_label` |the next log context id, from 1, never reused |a context's creation |the next one ([[Labels and contexts]]) |
-|`watcher_label` |the context the watcher's writes hang under |the watcher's first write, or its first after that context was pruned |each watcher write ([[Automatic retention]]) |
+|`next_log_context` |the next log context id, from 1, never reused |a context's creation |the next one ([[Log contexts]]) |
+|`watcher_log_context` |the context the watcher's writes hang under |the watcher's first write, or its first after that context was pruned |each watcher write ([[Automatic retention]]) |
 |`next_write_number` |the clock of the writes: the next number of a pending write, a fixed field or value, a pending index write |a pending write's entry, a write to a record one names, a pending index write |their order ([[Mass writes in the store]]) |
 |`next_reindex` |how many times the dense ids were numbered |each reindex |a page's cursor, refused if made under another numbering ([[Pagination and sorting]]) |
 

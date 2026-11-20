@@ -2,8 +2,8 @@
 // first (a command, a script's run, a flush of the watcher), each gone into
 // onto the labels nested in it, down to the operations, one level at a time
 // like the path-ref panel, and into an operation for what it changed, field by
-// field; revert and prune (doc "log panel", doc "Labels and contexts"). The
-// units are the daemon's summaries of the labels (doc "Label summaries"): no
+// field; revert and prune (doc "log panel", doc "Log contexts"). The
+// units are the daemon's summaries of the labels (doc "Log context summaries"): no
 // operation is read until a label is gone into.
 
 import { byId, el, formatValue, openButton, pathText, qs } from '/__ui.js';

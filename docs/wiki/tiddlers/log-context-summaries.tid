@@ -1,4 +1,4 @@
-title: Label summaries
+title: Log context summaries
 tags: Storage [[Event log]]
 kind: rationale
 audience: dev
@@ -15,7 +15,7 @@ the keys of the log say alone.
 `GET /repos/:repo/log/labels` ([[GET /repos/:repo/log/labels]]) lists labels, newest
 first, each with:
 
-* its own `operations`, counted off `log_entries_by_label` — one key per entry, which holds its number of targets — and its `first_op` and `last_op`;
+* its own `operations`, counted off `log_entries_by_context` — one key per entry, which holds its number of targets — and its `first_op` and `last_op`;
 * when it was last written in (`updated`), its `origin` and whether it is the `watcher`'s, read off its first and last operations;
 * how many `children` it has;
 * `reverts` and `reverted_by`: the labels it undid and the labels that undid it, each with `whole` (the label and its children undone, or some of its operations);

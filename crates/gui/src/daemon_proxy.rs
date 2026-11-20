@@ -87,7 +87,7 @@ tokio::task_local! {
 
 /// The command the shell is running, told to the daemon with every request —
 /// this proxy's and the blocking client's — so what it writes is one label
-/// (doc "Labels and contexts"). The process's: one GUI, one shell.
+/// (doc "Log contexts"). The process's: one GUI, one shell.
 static COMMAND: Mutex<Option<RunningCommand>> = Mutex::new(None);
 
 /// The key and name of the command under way, to send with a request.

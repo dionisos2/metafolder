@@ -474,7 +474,7 @@ pub trait Log {
     /// The label the command `key` opened at its first write, if it did.
     fn label_of_command(&self, key: Uuid) -> Result<Option<i64>>;
     /// The label the watcher's flushes are opened under, once there is one
-    /// (doc "Labels and contexts").
+    /// (doc "Log contexts").
     fn watcher_label(&self) -> Result<Option<i64>>;
     /// An entity's operations newer than `after`, oldest first.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>>;
@@ -495,7 +495,7 @@ pub trait Log {
     fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>>;
 }
 
-/// A label (doc "Labels and contexts"): a name and a description for what
+/// A label (doc "Log contexts"): a name and a description for what
 /// the operations under it — and under its children — belong to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabelMeta {

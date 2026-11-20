@@ -14,7 +14,7 @@ mf -n music log head                           # the newest operation's id
 ```
 
 `mf log` (`mf log list`) shows the log — a sequence, in the order it was written ([[The operation log]]) — one line per label, newest first, the newest marked HEAD. Each
-operation is counted in its innermost label ([[Labels and contexts]]); a write made in no
+operation is counted in its innermost label ([[Log contexts]]); a write made in no
 context has a label of its own, named after what it called:
 
 ```

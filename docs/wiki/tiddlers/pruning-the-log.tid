@@ -2,7 +2,7 @@ title: Pruning the log
 tags: [[Event log]]
 kind: guide
 aliases: prune
-summary: mf log prune before deletes every operation older than a target. It is irreversible.
+summary: mf log prune before deletes every entry of the log older than a target. It is irreversible.
 
 ```
 mf -n music log list                           # look first: what would go
@@ -12,11 +12,11 @@ mf -n music log prune before --timestamp 2026-09-01T00:00:00Z
 ```
 
 ''Irreversible'': deleted operations cannot be reverted any more. It asks for confirmation
-(unless `--force`; `--silent` does not skip it). The target — a label id, `--id` or
-`--timestamp` — is kept; every entry of the log whose operations are all strictly older goes ([[Log storage]]), with the labels left empty
-(no operation, no child label left in them; never the watcher's). A label is kept
-''whole'': the cut is its oldest operation, its children's included. `Pruned 47
-operations; 3 label(s) left empty went with them.`
+(unless `--force`; `--silent` does not skip it). The target — a context id, `--id` or
+`--timestamp` — is kept; every entry of the log whose operations are all strictly older
+goes ([[Log storage]]). A context is kept ''whole'': the cut is its oldest operation,
+its children's included. The contexts left empty stay until a reindex
+([[Log contexts]]). `Pruned 47 operations.`
 
 Nothing else depends on what is pruned: a revert applies an operation's inverse onto the
 current state, so every operation left can still be reverted ([[Reverting onto the current state]]). Undo will not go past the oldest operation left. For disaster recovery, rely on a
@@ -26,4 +26,4 @@ The space pruning frees is reused by the store's next writes; a backup is a comp
 copy. The retention limit does the same automatically ([[Automatic retention]]).
 
 `POST /repos/:repo/log/prune` with `{"target": {"id": N} | {"timestamp": T} | {"label":
-N}}` answers `{"pruned_operations", "pruned_labels"}`.
+N}}` answers `{"pruned_operations"}`.

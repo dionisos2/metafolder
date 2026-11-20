@@ -1,6 +1,6 @@
 //! The logged write flow (doc "Log storage"). Every write to
 //! the data tables goes through a [`Writer`], which records, under a label
-//! (doc "Labels and contexts"), one operation per atomic change with before/after snapshots, and keeps the
+//! (doc "Log contexts"), one operation per atomic change with before/after snapshots, and keeps the
 //! `head` pointer (the newest operation) consistent with the data tables — all
 //! in one store transaction. The log is a sequence, not a tree: nothing moves
 //! back over it (doc "The operation log").
@@ -102,7 +102,7 @@ impl OpType {
 #[derive(Debug, Clone)]
 pub struct OpRow {
     pub id: i64,
-    /// Its innermost label (doc "Labels and contexts").
+    /// Its innermost label (doc "Log contexts").
     pub label_id: i64,
     /// When it was written, Unix milliseconds.
     pub timestamp: i64,
@@ -123,7 +123,7 @@ pub struct OpRow {
     pub origin: Option<String>,
 }
 
-// ── Contexts (doc "Labels and contexts") ────────────────────────────────────
+// ── Contexts (doc "Log contexts") ────────────────────────────────────
 
 /// Where a write's operations go.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +142,7 @@ pub enum WriteContext {
 }
 
 /// The command a request says it is a step of (`X-Metafolder-Command` and
-/// its name and description, doc "Labels and contexts").
+/// its name and description, doc "Log contexts").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandHeader {
     pub key: Uuid,
@@ -537,7 +537,7 @@ impl<'c> Writer<'c> {
         Self::begin_in(conn, WriteContext::new(name), retention)
     }
 
-    /// Opens a transaction writing in `context` (doc "Labels and contexts").
+    /// Opens a transaction writing in `context` (doc "Log contexts").
     /// A label named by a client must exist and lie outside the watcher's
     /// (`400` otherwise): a client cannot pass its writes off as the
     /// daemon's.

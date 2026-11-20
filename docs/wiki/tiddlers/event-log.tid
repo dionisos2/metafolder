@@ -8,7 +8,7 @@ store and the same transaction as the change itself. The log is a ''sequence'' o
 operations, each recording what it replaced, which is what makes it more than an audit
 trail:
 
-* ''auditing'' — the full history of any metarecord, and of any piece of work: operations are grouped by nested ''labels'' — a command, a script's run, a context you open ([[Reading the log]], [[Labels and contexts]]);
+* ''auditing'' — the full history of any metarecord, and of any piece of work: operations are grouped by nested ''labels'' — a command, a script's run, a context you open ([[Reading the log]], [[Log contexts]]);
 * ''undo'' and ''redo'' — take back a label of the newest change ''you'' made, and take that back in turn ([[Undo and redo]]);
 * ''revert'' — undo a past label or operation by writing what it replaced, onto the current state, as a new write.
 

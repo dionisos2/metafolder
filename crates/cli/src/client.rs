@@ -45,7 +45,7 @@ pub struct Client {
     /// peer is not running, in which case the request fails at transport.
     token: Option<String>,
     /// The command this process runs, told to the daemon with every request
-    /// (doc "Labels and contexts"); `None` for a client that is no command.
+    /// (doc "Log contexts"); `None` for a client that is no command.
     command: Option<CommandHeaders>,
     /// Whether the requests say they are not the user's activity (doc
     /// "Folding in idle time").

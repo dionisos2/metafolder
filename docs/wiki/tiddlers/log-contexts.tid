@@ -1,0 +1,77 @@
+title: Log contexts
+tags: [[The operation log]]
+kind: reference
+audience: dev
+summary: Operations are grouped by nested log contexts (name, description, parent), created explicitly by scripts, commands and the GUI and passed along as an id — so leaving a context is just not passing it on.
+
+A ''log context'' is `{id, name, description, parent, created}`. Each operation carries
+its ''innermost'' context; the others are its ancestors, found by following the
+parents. Same information as every context on every operation while contexts nest,
+without copying three ids onto each of a bulk write's 50 000 operations. Ids start at
+1: `0` is "no context".
+
+Until November 2026 contexts were called ''labels'', and a command's label was opened
+at its first write, found again by a key the client drew for the command
+(`X-Metafolder-Command`), so that a command that only read opened nothing. That went
+for explicit contexts (user decision, November 2026): a client creates its context
+before it writes, and passes its id; there is no command key any more.
+
+!! Passing a context
+
+A context is ''not daemon state'':
+
+* the daemon creates one on request, a child of the context the request names, and answers its id;
+* every request that writes names its context in the header `X-Metafolder-Log-Context: <id>`; absent or `0`, no context. A request that does not write ignores it. A context that does not exist, or the watcher's or one inside it, is refused with `400`, and nothing is written;
+* leaving a context is ceasing to pass it — the end of a subshell or a function's `local`. A script that crashes leaves nothing open behind it.
+
+!! From the command line
+
+`METAFOLDER_LOG_CONTEXT=<repo uuid>:<id>` is the current context of the `mf` commands; a
+context id means nothing in another repository, so an `mf` sends it only with its
+requests to that repository. Absent or `0`, there is none.
+
+* `mf context new <name> [description]` creates a context, child of the current one, and prints it as `<repo uuid>:<id>`;
+* `mf context parent` prints the parent of the current context, `0` at the root.
+
+A script does
+
+```
+export METAFOLDER_LOG_CONTEXT=$(mf context new "tag run" "the 2024 photos")
+```
+
+— `export` each time: an `mf` inherits only what is exported, and the value holds only
+for the script's shell and its children.
+
+Every `mf` command that writes ''begins by creating its own context'', a child of the
+current one, named after the command line and described by its query: the log shows
+what was asked, not only what was written. A command that only reads creates none.
+
+!! Who creates which
+
+* A shipped tagging script: one context for the run, one per answer (its going back is reverting the last answer's context), one per command inside ([[Writing a GUI script]]).
+* The GUI: one context per command run, created when the run begins; the `mf` object of the run carries it ([[Command transactions]]), so two commands running at once — a long reconcile and a field edited meanwhile — each have their own. A command run from inside another is in the caller's run. A script launched from the GUI (`script:run`) runs in a context of its own, passed on as `METAFOLDER_LOG_CONTEXT`; a plain `!` line is passed the work context alone (none without one), each `mf` it runs creating its own anyway.
+* The GUI's ''work context'' ([[The GUI's work context]]): `context:set` creates a context on a repository that every later write the GUI sends there is inside until `context:unset` — naming the work under way, so it can be looked at or reverted whole. The runs' contexts are created inside it. The watcher's operations are not.
+* The watcher: one context per flush ("watcher flush"), under a ''watcher root'' ("watcher") that only the daemon can write under: a client naming it, or a context inside it, as its context or as a new context's parent is refused. The ''origin'' stays on each operation, set by the daemon ([[Operations and their origin]]) — not read off the root: a trashing's `trash` origin must survive inside any context, and undo and retention read the operation.
+
+!! Empty contexts
+
+A context no operation and no child is in — never used, or emptied by retention or a
+prune — stays until a reindex, which removes it (a reindex invalidates the work under
+way anyway). Retention and prunes remove operations, never contexts
+([[Automatic retention]], [[Pruning the log]]).
+
+!! In the store
+
+`log_contexts` (id → name · description · parent · created), `log_context_children`
+(parent · child), `log_context_reverts` (what a context reverts and what reverts it)
+([[Store tables]], [[Log context summaries]]).
+
+!! The log panel
+
+Operations grouped by their outermost context (name and description); a group opens
+onto its child contexts, down to single operations. Consecutive watcher contexts are
+folded into one line, or they would drown the rest.
+
+!! Deferred
+
+Renaming or describing a context after the fact.
