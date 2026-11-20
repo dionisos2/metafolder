@@ -58,11 +58,14 @@ depend on when the sample was taken.
 ** a text or a tree name: ''not kept'' (Open below) — its estimate is its field's holders.
 * ''Set sizes'' are known exactly already: a field's holders (the union of its count sets, [[Store tables]]), a posting, a subtree's descendants, a candidate set.
 
-Only the populated buckets are stored, in the table `hist`: a key `field · bucket` →
-count of rows (a record holding a value twice counts twice). A row written or removed
+Only the populated buckets are stored, in the table `index_histogram_rows`: a key
+`field · bucket` → count of rows (a record holding a value twice counts twice), and
+in `index_histogram_keys` the posting keys of the bucket (one per chunk of each value),
+the cost of walking it. A row written or removed
 changes one count: one key put more per row change of a number or a date. `mf repo
 check` compares each count to what the rows derive (`check_histograms`);
-`DERIVED_VERSION` 6 brought the table, so an older store is reindexed when it opens.
+a change of these tables is a change of the derived version, so an older store is
+reindexed when it opens ([[Persisted format changes]]).
 
 ''The estimate'', `KvSource::range_rows(field, op, value)`: the rows the comparison
 holds, as `at_least` (the buckets wholly inside) and `at_most` (those and the operand's

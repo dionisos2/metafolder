@@ -4,11 +4,23 @@ kind: reference
 audience: dev
 summary: Each tree_ref node keeps the bitmap of its descendants and of its children, so a subtree is one read and a move costs the depth, not the size.
 
-For every `tree_ref` field, the store keeps two bitmaps per node
-([[Store tables]], set kinds ''descendants'' and ''referrers''):
+For every `tree_ref` field, the store keeps, per node ([[Store tables]]):
 
-* the ids of ''all'' its descendants;
-* the ids pointing at it — a folder's children, a `ref`'s referrers.
+* the ids of ''all'' its descendants (`index_descendants`);
+* the ids of its children (`index_parent_holders`, filed under the parent's dense id);
+* each child by name (`index_raw_holder`: field · parent's dense id · name → the child's dense id), which resolves a path one key per level, and lists a folder by name as a range.
+
+A position's three aspects are these tables ([[Field aspects]]): its name (`:value`)
+is a posting in `index_value_holders`, its parent (`:parent`) the parent holders, both
+(`:raw`) the raw holder. A forest's roots are under id 0, which no metarecord has. The
+parent of a position written before the parent exists is given a ''reserved'' id at
+once, which the parent takes when it comes ([[Store tables]]); a `ref` reserves none —
+its referrers are the posting of its value.
+
+`index_parents` holds, per field, the nodes that have a live child: what sets leaves
+aside at once. It is kept from the parent holders: a node is in it when its children
+meet `live_metarecords`, recomputed for a node when a child arrives under it, leaves
+it, or leaves `live_metarecords`.
 
 !! Keeping them up to date
 
@@ -17,7 +29,7 @@ them is set arithmetic along the ancestor chain:
 
 * ''a node is created'' under a parent: its id joins each ancestor's descendants — about depth chunk writes;
 * ''a subtree moves'': its ids leave each old ancestor's descendants and join each new one's — about depth operations, ''independent of the subtree's size'' (a move of 750 000 records took 6 ms, measured);
-* ''a rename'' changes none of these bitmaps: the node's `forest` key moves, and its id goes from the old name's posting to the new one's ([[Store tables]]).
+* ''a rename'' changes none of these bitmaps: the node's `index_raw_holder` key moves, and its id goes from the old name's posting to the new one's ([[Store tables]]).
 
 The exception is a `hierarchy_ref` node of several parents: when it loses one, its
 descendants are recomputed from its ancestors' children ([[Hierarchy references]]).
@@ -28,7 +40,8 @@ GUI's central gesture — costs a handful of reads in return.
 !! What it buys
 
 * ''A subtree'' — `field ->* "/dir"` ([[Following references]]) — is one bitmap read; so is a tag subtree (`tag ->* (path =>* "music")`).
-* ''A folder'' is its children bitmap: a key per 65 536 children.
+* ''A folder'' is its parent holders: a key per 65 536 children.
+* ''The fields a metarecord is a parent in'' (its creation, its deletion): one key of `index_parents` per position field.
 * ''The forest invariants'' (no cycle, depth ≤ 1000) need only the ancestor chain: about depth reads per checked write.
 
 !! Sorting by path

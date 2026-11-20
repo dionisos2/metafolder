@@ -28,10 +28,13 @@ each removal the same twenty again.
 
 !! Two modes per field
 
-A field keeps its trigrams one of two ways (`grams`, [[Store tables]]).
+A field keeps its trigrams one of two ways ([[Store tables]]): by value in
+`index_trigram_texts`, by metarecord in `index_trigram_holders`, the mode and the
+field's counts in `index_trigram_state`; the ids of a text too long to split in
+`index_long_texts`, those waiting for a fold in `index_trigram_pending`.
 
 ''By value'' — how every field starts. A trigram names the ''distinct texts'' that
-hold it (their value keys, or name keys on a position's name). A write adds entries
+hold it (their value keys — a position's name being its value). A write adds entries
 only when its text is one the field did not hold: tagging a file with an existing tag
 writes nothing. A search joins the texts of its trigrams, tests each text once — on
 the key itself, no metarecord is read — and unions the holders of the texts that
@@ -75,7 +78,7 @@ search as you type then costs its page — 0.5 to 3 ms on 5 million files, measu
 instead of its whole match set (170 to 530 ms); only a request asking for the total
 pays for the whole set.
 
-`tests/kv_text.rs` counts what a write puts in `grams` in each mode and holds the
+`tests/kv_text.rs` counts what a write puts in the trigram tables in each mode and holds the
 answers to the oracle; `tests/kv_cost.rs`: on a folded repository a literal search
 reads the same number of keys as on one eight times larger (it read the whole field
 before: 2 004 keys against 16 004).
