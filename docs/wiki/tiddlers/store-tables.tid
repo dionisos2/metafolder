@@ -21,7 +21,7 @@ tables of their own, and the values got a compact encoding).
 
 Values are encoded compactly: lengths and counts are varints (LEB128), a signed
 integer a zigzag varint, a value type one byte, a uuid its 16 bytes with no length
-([[The column form of a value]]).
+([[Value encoding in the store]]).
 
 !! Primary tables (`kvstore/mod.rs`)
 

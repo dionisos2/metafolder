@@ -14,8 +14,13 @@ and leaves alone the one whose file is recorded as deleted.
 
 Queries keep the three states apart ([[Presence and absence]]): `field IS PRESENT` (a value that is not
 `nothing`), `field IS ABSENT` (holds `nothing`), `field IS UNKNOWN` (no row). A field
-holds at most one `nothing` row, and `nothing` coexists with the field's type
-([[One value type per field name]]) — it is absence, not a type. In a metarecord's
+holds `nothing` ''or'' values, never both, and at most one `nothing`: adding a value to a
+field that holds `nothing` takes the `nothing` away, setting it to `nothing` replaces
+its values, and a set of `nothing` with values is refused — a write to many records
+included. `nothing` coexists with the field's type ([[One value type per field name]])
+— it is absence, not a type. (Before November 2026 an append left the `nothing` in
+place; a store of then is converted when it opens, the `nothing` of such a field
+dropped — [[Persisted format changes]].) In a metarecord's
 version, a `nothing` row counts like any value while a missing field counts for
 nothing ([[Metarecord version]]).
 

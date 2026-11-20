@@ -40,7 +40,7 @@ the order of the ids).
 |effect |one byte, below |
 |file action |one byte: none, `file_deleted`, `file_moved`, `file_modified` — what an undo does to the files ([[Filesystem coordination]]) |
 |first reverted op |for an entry a revert wrote: the operation `first + k` reverts `reverted + k`, the reverted ids being consecutive, in the order of the targets |
-|parameters |those of the effect, below; values in the compact form ([[The column form of a value]]) |
+|parameters |those of the effect, below; values in the compact form ([[Value encoding in the store]]) |
 
 The wire still names an operation by its type ([[Operations and their origin]]): the
 file action when there is one, else the effect's (`create_metarecord`,

@@ -1,7 +1,7 @@
 title: Changing a field's type
 tags: [[Data model]]
 kind: guide
-summary: mf retype converts every value of a field to another type, in one write you can roll back; what cannot convert falls back to a findable default.
+summary: mf retype converts every value of a field to another type, in one write you can roll back; a value that cannot convert is removed, and the command names its metarecords.
 
 A field name's type is fixed by its first write ([[One value type per field name]]).
 To change it, ''retype'' the field — every value of that name, in the whole
@@ -9,7 +9,7 @@ repository:
 
 ```
 mf -n music retype rating float
-retyped rating to float: 1204 value(s) converted, 0 fell back to the default
+retyped rating to float: 1204 value(s) converted, 0 removed
 ```
 
 Any type can be reached from any other: a mistyped field is never stuck. The
@@ -24,10 +24,13 @@ retype is one logged write, so `mf log undo` takes it back. Reserved names
 * ''Between `tree_ref` and `hierarchy_ref''' — as they are: every tree is a hierarchy ([[Hierarchy references]]). Back to `tree_ref`, a node keeps its first parent and the others fall back, being second positions.
 * ''Between two other reference types'', or between a reference and a scalar other than `string` — no conversion.
 
-A value that does not convert takes the target's ''default'', chosen to be easy to
-find afterwards: `0`, `0.0`, `false`, `""`, the Unix epoch, or `nothing` for the
-reference types (`field IS ABSENT`). The command counts them; `POST /retype` also
-lists their metarecords (`fallback_uuids`). A `tree_ref` that would break its forest ([[TreeRef forest]])
-— a missing parent, a cycle, a second position — falls back to `nothing` too, so one
-bad path never blocks the rest. Two values of one metarecord that the conversion
+A value that does not convert is ''removed''; when none of a metarecord's values of the
+field converts, the field goes from it — it is then unknown, never `nothing`, since
+`nothing` would say the metarecord is known to have no value, when it most likely has
+one that could not be converted ([[Nothing versus unknown]]). No default stands in for
+it: a `0` or a `""` made up would read as a real value. The command counts them;
+`POST /retype` also lists their metarecords (`fallback_uuids`), and `mf log undo` gives
+them back. A `tree_ref` that would break its forest ([[TreeRef forest]]) — a missing
+parent, a cycle, a second position — is removed too, so one bad path never blocks the
+rest. A `nothing` stays `nothing`: absence has no type to convert. Two values of one metarecord that the conversion
 makes equal become one row ([[No duplicate rows]]).

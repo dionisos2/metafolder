@@ -1,0 +1,51 @@
+title: Value encoding in the store
+tags: Storage [[Data model]]
+kind: reference
+audience: dev
+summary: How the store writes a value — a type byte once per field, then each value in a compact form of its type — the same everywhere a value is stored.
+
+The store writes a value in one compact form, the same in a record, a pending write, a
+pending index write and the log's before ([[Store tables]]). It changes only with a
+conversion of the store ([[Persisted format changes]]). On the wire, and in what the
+log endpoints show, a value keeps its column form ([[The column form of a value]]).
+
+!! The parts
+
+* ''varint'': an unsigned integer in LEB128 — seven bits a byte, the high bit set while more follow;
+* ''zigzag varint'': a signed integer folded onto the unsigned ones (0, −1, 1, −2 …), then a varint;
+* ''type'': one byte, the code of the value's type;
+* ''uuid'': its 16 bytes, no length.
+
+!! A value, by its type
+
+The type is written once for a field, before its values: every value of a field has
+the field's type ([[One value type per field name]]), and a field holding `nothing`
+holds nothing else ([[Nothing versus unknown]]).
+
+|!Type |!Value |
+|`nothing` |— (the type alone) |
+|`bool` |one byte, 0 or 1 |
+|`int`, `datetime` |zigzag varint (a date in Unix ms) |
+|`float` |8 bytes |
+|`string` |varint length · its bytes |
+|`ref`, `refbase` |uuid |
+|`externalref` |the repository's uuid · the metarecord's uuid |
+|`tree_ref`, `hierarchy_ref` |the parent's uuid (zero for a root) · varint length · the name's bytes |
+
+A position's name is written once, as its exact bytes, which are its identity
+([[Tree names]]): its displayed text is computed from them. A string is written as
+bytes too, though the model holds only UTF-8 today.
+
+!! A field, a record
+
+```
+field = varint len · name · type(nothing)
+      | varint len · name · type · varint count · { value }
+```
+
+`tags = "foo"` is 12 bytes (1 + 5 + 1 + 1 + 4); ten tags 48. The column form that the
+store wrote until November 2026 — the type as text and seven optional columns per
+value, the field's name before each — took 32 and 320.
+
+The extras a record carries while a pending write names it are written after its
+fields ([[Mass writes in the store]]).
