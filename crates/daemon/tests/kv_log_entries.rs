@@ -206,3 +206,86 @@ fn a_redo_restores_what_an_operation_left_and_changes_nothing_since() {
     w.commit().unwrap();
     assert!(changed(&store, &set[0]), "the redo put the cell back as it was left");
 }
+
+// ── Compaction (doc "Log storage") ──────────────────────────────────────────
+
+use metafolder_daemon::log::{Retention, WriteContext};
+
+/// A separate write in an existing context.
+fn write_in<T>(store: &mut KvStore, context: i64, f: impl FnOnce(&mut Writer) -> T) -> T {
+    let mut w = Writer::begin_in(store, WriteContext::In(context), Retention::UNLIMITED).unwrap();
+    let out = f(&mut w);
+    w.commit().unwrap();
+    out
+}
+
+fn context(store: &mut KvStore) -> i64 {
+    use metafolder_daemon::store::{Begin, LabelMeta};
+    let tx = store.begin_write().unwrap();
+    let meta = LabelMeta { name: "loop".into(), description: None, parent: None, created: 0 };
+    let id = tx.create_label(&meta).unwrap();
+    tx.commit().unwrap();
+    id
+}
+
+/// What a loop of `mf … field add` over many files writes, one command each,
+/// inside one context.
+#[test]
+fn a_loop_of_writes_in_one_context_is_one_entry() {
+    let dir = TempDir::new("kv-log-entries-compact");
+    let mut store = KvStore::open_unsynced(dir.path()).unwrap();
+    let uuids = records(&mut store, 5000);
+    let ctx = context(&mut store);
+    let entries = store.counts().unwrap().0;
+    for &u in &uuids {
+        write_in(&mut store, ctx, |w| w.append_field(u, "tag", s("x")).unwrap());
+    }
+    assert_eq!(store.counts().unwrap().0, entries + 1, "one entry");
+    assert_eq!(log_keys(&store), two_keys(), "the header and the last chunk rewritten");
+    let ops = metafolder_daemon::revert::label_ops(&store, ctx).unwrap();
+    assert_eq!(ops.iter().map(|o| o.entity_uuid).collect::<Vec<_>>(), uuids);
+    assert!(ops.iter().all(|o| o.op_type == "append_field"));
+    assert_eq!(store.added(ops[4500].id).unwrap(), vec![row("tag", s("x"))]);
+    let history = store.entity_ops_after(uuids[4200], 0).unwrap();
+    assert_eq!(history.iter().filter(|o| o.op_type == "append_field").count(), 1);
+
+    // Undone as a whole, as if each were an entry.
+    let mut w = Writer::begin(&mut store, Some("undo".into())).unwrap();
+    metafolder_daemon::revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    for &u in &uuids {
+        let tags = metafolder_daemon::store::Rows::rows_named(&store, u, "tag").unwrap();
+        assert!(tags.is_empty(), "{u}");
+    }
+}
+
+#[test]
+fn an_entry_is_extended_only_by_the_same_operation_on_a_new_target_last_in_the_log() {
+    let dir = TempDir::new("kv-log-entries-compact-not");
+    let mut store = KvStore::open_unsynced(dir.path()).unwrap();
+    let uuids = records(&mut store, 4);
+    let ctx = context(&mut store);
+    let other = context(&mut store);
+    let entries = |store: &KvStore| store.counts().unwrap().0;
+    let start = entries(&store);
+    let add = |store: &mut KvStore, ctx, u, v: &str| {
+        write_in(store, ctx, |w| w.append_field(u, "tag", s(v)).unwrap());
+    };
+    add(&mut store, ctx, uuids[0], "x");
+    add(&mut store, ctx, uuids[1], "y");
+    assert_eq!(entries(&store), start + 2, "another value");
+    add(&mut store, other, uuids[2], "y");
+    assert_eq!(entries(&store), start + 3, "another context");
+    write_in(&mut store, ctx, |w| w.set_field(uuids[3], "n", Value::Int(7)).unwrap());
+    add(&mut store, ctx, uuids[3], "y");
+    assert_eq!(entries(&store), start + 5, "not the last entry");
+    // The same target twice: a set of the same field and value to it again.
+    write_in(&mut store, ctx, |w| w.set_field(uuids[0], "m", Value::Int(1)).unwrap());
+    write_in(&mut store, ctx, |w| w.set_field(uuids[0], "m", Value::Int(2)).unwrap());
+    write_in(&mut store, ctx, |w| w.set_field(uuids[0], "m", Value::Int(2)).unwrap());
+    let head = store.head().unwrap().unwrap();
+    let ops = store.ops_back(head, Some(3)).unwrap();
+    let same: Vec<_> = ops.iter().filter(|o| o.field_name.as_deref() == Some("m")).collect();
+    assert!(same.iter().all(|o| o.entity_uuid == uuids[0]));
+    assert_eq!(entries(&store) as usize, start as usize + 5 + same.len(), "one entry each");
+}

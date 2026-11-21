@@ -73,7 +73,7 @@ fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
 fn op_count(repo: &RepoState, op_type: Option<&str>) -> i64 {
     let conn = repo.conn.lock().unwrap();
     match op_type {
-        None => metafolder_daemon::store::Log::counts(&*conn).unwrap().0,
+        None => metafolder_daemon::store::Log::all_ops(&*conn).unwrap().len() as i64,
         Some(t) => metafolder_daemon::store::Log::all_ops(&*conn)
             .unwrap()
             .iter()

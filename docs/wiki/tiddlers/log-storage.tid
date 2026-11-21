@@ -85,6 +85,12 @@ log, of the same context, and the targets are disjoint. A revert's entry is exte
 only by the revert of the next operation (first reverted = last reverted + 1). So a
 loop of `mf … field add` over a thousand files, inside one context, is one entry.
 
+Only an entry written one operation at a time is extended, not a write to many records:
+whether it already names the target is then one range of `log_entries_by_metarecord`
+(the target's keys between the entry's first and last ids). An operation added to an
+entry takes its timestamp. The cost is the last chunk rewritten by each write that
+extends it, up to 4096 uuids (`tests/kv_log_entries.rs`).
+
 Compaction happens at the append only, where nothing is to be rewritten. Compacting
 entries afterwards stays possible: every key of the absorbed entry (`log_targets`,
 `log_entries_by_context`, `log_reverted_by`) would then be rewritten under the id of the

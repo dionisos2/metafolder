@@ -199,9 +199,12 @@ fn a_filtered_bounded_read_looks_past_the_window_for_matches() {
 /// user's (a reconcile's, say) that the trim keeps.
 fn trim_cost(big: usize) -> u64 {
     let (mut kv, _dir) = common::kv::store();
+    // A creation, then a set of a value of its own: no two operations alike,
+    // so none is added to another's entry (doc "Log storage").
     let mut w = Writer::begin(&mut kv, None).unwrap();
     for i in 0..big {
-        w.create_metarecord(vec![Field::new("rank", Value::Int(i as i64))]).unwrap();
+        let u = w.create_metarecord(vec![]).unwrap().uuid;
+        w.set_field(u, "rank", Value::Int(i as i64)).unwrap();
     }
     w.commit().unwrap();
     let watcher_write = |kv: &mut KvStore, retention: Retention| {
@@ -215,7 +218,7 @@ fn trim_cost(big: usize) -> u64 {
     }
     let retention = Retention { watcher_ops: 20, user_ops: 0 };
     let (_, reads) = reads_of(&mut kv, |kv| watcher_write(kv, retention));
-    assert_eq!(kv.counts().unwrap().0, 20 + big as i64, "the trim kept 20 watcher operations");
+    assert_eq!(kv.counts().unwrap().0, 20 + 2 * big as i64, "the trim kept 20 watcher entries");
     reads
 }
 

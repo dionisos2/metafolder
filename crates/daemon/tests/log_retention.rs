@@ -156,8 +156,11 @@ fn test_a_write_is_never_trimmed_by_its_own_commit() {
     let older = write(&mut conn, retention, false);
     let mut w = Writer::begin_with_retention(&mut conn, None, retention).unwrap();
     let label = w.label_id();
-    for i in 0..30 {
-        w.create_metarecord(vec![Field::new("n", Value::Int(i))]).unwrap();
+    // A creation, then a set of a value of its own: an entry each, none
+    // added to another (doc "Log storage").
+    for i in 0..15 {
+        let u = w.create_metarecord(vec![]).unwrap().uuid;
+        w.set_field(u, "n", Value::Int(i)).unwrap();
     }
     w.commit().unwrap();
 

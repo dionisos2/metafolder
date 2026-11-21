@@ -231,7 +231,7 @@ fn pruning_keeps_an_entry_that_holds_its_target_whole() {
     let before = store.counts().unwrap().0;
     let (pruned, _) = metafolder_daemon::log::prune(&mut store, target).unwrap();
     assert_eq!(pruned, 30, "the creations, and nothing of the entry");
-    assert_eq!(store.counts().unwrap().0, before - 30, "an entry per creation");
+    assert_eq!(store.counts().unwrap().0, before - 1, "the creations, one entry");
     assert_eq!(store.first_op().unwrap(), Some(ops[0].id));
     let rest = store.label_ops(label).unwrap();
     assert_eq!(rest.len(), 30);

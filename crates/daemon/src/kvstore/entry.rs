@@ -785,6 +785,91 @@ impl KvTxn<'_> {
         Ok(first)
     }
 
+    /// Adds the operation `h` on `target` to the last entry of the log, when it
+    /// differs from it only by its target (doc "Log storage"): the same
+    /// context, origin, effect, file action and parameters, a revert of the
+    /// operation after the last one the entry reverts, and a target the entry
+    /// does not name. Only an entry written one operation at a time is
+    /// extended: whether it names the target is then one range of
+    /// `log_entries_by_metarecord`. The operation's id, `None` when it is not
+    /// added.
+    pub(super) fn extend_last(
+        &self,
+        h: &Header,
+        target: Uuid,
+        before: Vec<FieldRow>,
+    ) -> Result<Option<i64>> {
+        let t = self.t;
+        let next = {
+            let w = self.txn.borrow();
+            super::State::NextLogOp.get(&t, &w)?.unwrap_or(1)
+        };
+        let Some(mut entry) = self.read_log(|r| r.entry_at(next - 1))? else { return Ok(None) };
+        let e = &entry.h;
+        let reverts_next = match (e.reverts, h.reverts) {
+            (None, None) => true,
+            (Some(r), Some(n)) => n == r + e.targets as i64,
+            _ => false,
+        };
+        let same = e.context == h.context
+            && e.origin == h.origin
+            && e.effect == h.effect
+            && e.file == h.file
+            && e.params == h.params
+            && reverts_next;
+        if !same || entry.last() != next - 1 {
+            return Ok(None);
+        }
+        let at = super::be(entry.first);
+        let named = {
+            let w = self.txn.borrow();
+            if t.log_entries_by_metarecord.get(&w, &super::key(&[ROOT.as_slice(), &at]))?.is_some()
+            {
+                return Ok(None);
+            }
+            let (lo, hi) = (
+                super::key(&[target.as_bytes(), &at]),
+                super::key(&[target.as_bytes(), &super::be(entry.last())]),
+            );
+            let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
+            let found = t.log_entries_by_metarecord.range(&w, &range)?.next().is_some();
+            found
+        };
+        if named {
+            return Ok(None);
+        }
+        let (n, rank) = (entry.h.targets / CHUNK, (entry.h.targets % CHUNK) as usize);
+        let mut chunk = if rank == 0 {
+            Chunk { targets: Vec::new(), before: Vec::new(), pending: RoaringBitmap::new() }
+        } else {
+            self.read_log(|r| r.chunk(entry.first, n))?
+        };
+        chunk.targets.push(target);
+        chunk.before.push(before);
+        entry.h.targets += 1;
+        let mut w = self.txn.borrow_mut();
+        t.log_targets.put(&mut w, &chunk_key(entry.first, n), &chunk.encode())?;
+        t.log_entries.put(&mut w, &at, &entry.h.encode()?)?;
+        let mut count = Enc::default();
+        count.varint(entry.h.targets);
+        t.log_entries_by_context.put(
+            &mut w,
+            &super::key(&[&super::be(entry.h.context), &at]),
+            &count.0,
+        )?;
+        t.log_entries_by_metarecord.put(
+            &mut w,
+            &super::key(&[target.as_bytes(), &super::be(next)]),
+            &[],
+        )?;
+        if let Some(reverted) = h.reverts {
+            let key = super::key(&[&super::be(reverted), &super::be(next)]);
+            t.log_reverted_by.put(&mut w, &key, &[])?;
+        }
+        super::State::NextLogOp.put(&t, &mut w, next + 1)?;
+        Ok(Some(next))
+    }
+
     /// Removes an entry and every key of it.
     pub(super) fn remove_entry(&self, entry: &Entry) -> Result<()> {
         let t = self.t;

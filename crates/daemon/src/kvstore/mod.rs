@@ -2772,6 +2772,12 @@ impl WriteTxn for KvTxn<'_> {
         };
         for op in ops {
             let (h, before) = entry::of_op(op, label, timestamp)?;
+            // An operation that differs from the last entry only by its target
+            // is added to it (doc "Log storage").
+            if let Some(id) = self.extend_last(&h, op.entity, before.clone())? {
+                last = id;
+                continue;
+            }
             let chunk = entry::Chunk {
                 targets: vec![op.entity],
                 before: vec![before],
@@ -2827,12 +2833,14 @@ impl WriteTxn for KvTxn<'_> {
                 let id = from_be(e?.0);
                 // The write committing is kept whole: trimmed by its own
                 // commit, a write larger than the limit lost its oldest
-                // operations, and an undo of it undid only part.
-                if id >= keep_from {
+                // operations, and an undo of it undid only part. So is an
+                // entry it extended.
+                let end = self.entry_end(id)?;
+                if end >= keep_from {
                     break;
                 }
-                // A write to many records goes whole.
-                doomed.extend(id..=self.entry_end(id)?);
+                // An entry goes whole.
+                doomed.extend(id..=end);
             }
             count(read);
         }

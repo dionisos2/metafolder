@@ -314,7 +314,9 @@ fn the_log_lists_its_lines_and_labels() {
     assert!(meta[&labels[0]].created <= meta[&labels[1]].created);
     assert_eq!(all[0].origin, None, "a client's write");
     assert!(all[0].timestamp <= all[2].timestamp);
-    assert_eq!(store.counts().unwrap(), (3, 2));
+    // Counted by entry: the two creations, alike but for their target, are one
+    // (doc "Log storage").
+    assert_eq!(store.counts().unwrap(), (2, 2));
 }
 
 #[test]
