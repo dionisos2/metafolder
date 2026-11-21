@@ -95,14 +95,22 @@ fn test_trim_drops_the_snapshots_of_pruned_operations() {
     }
 }
 
+/// Retention removes operations, never contexts: a write's context, left
+/// empty by the trim, stays until a reindex (doc "Log contexts").
 #[test]
-fn test_a_write_left_with_no_operation_goes_with_its_last_one() {
+fn test_a_context_left_empty_by_the_trim_stays_until_a_reindex() {
     let (mut conn, _dir) = test_conn();
     for _ in 0..40 {
         write(&mut conn, keep(0, 5), false);
     }
-    let (operations, groups) = conn.counts().unwrap();
-    assert_eq!(operations, groups, "one operation per write: as many groups as operations");
+    let (operations, contexts) = conn.counts().unwrap();
+    assert!(operations < 40, "the trim ran: {operations} operations kept");
+    assert_eq!(contexts, 40, "one context per write, none removed by the trim");
+
+    conn.reindex().unwrap();
+    let (after, contexts) = conn.counts().unwrap();
+    assert_eq!(after, operations, "a reindex removes no operation");
+    assert_eq!(contexts, operations, "the empty contexts went with the reindex");
 }
 
 // ── Configuration ─────────────────────────────────────────────────────────────

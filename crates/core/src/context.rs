@@ -5,20 +5,11 @@
 //! Shared by the daemon (which reads them), the CLI and the GUI (which send
 //! them), so the three cannot spell them differently.
 
-/// The label a request writes in: a label id.
-pub const LABEL_HEADER: &str = "x-metafolder-label";
-
-/// The command a request is one step of: a key the client draws for the
-/// command (32 hex digits), the same on all its requests. The command's label
-/// is opened at its first write, inside [`LABEL_HEADER`]'s, and its later
-/// writes go in it — so a command that only reads opens nothing.
-pub const COMMAND_HEADER: &str = "x-metafolder-command";
-
-/// The name of the command's label, [`encode`]d: the command line.
-pub const COMMAND_NAME_HEADER: &str = "x-metafolder-command-name";
-
-/// Its description, [`encode`]d: what it acted on (a query), when it says.
-pub const COMMAND_DESCRIPTION_HEADER: &str = "x-metafolder-command-description";
+/// The log context a request writes in: a context id, `0` or absent for
+/// none — the daemon then opens one of its own for the write. A client
+/// creates its context before it writes (`POST /repos/:repo/labels`) and
+/// passes it on; leaving it is ceasing to send it.
+pub const LOG_CONTEXT_HEADER: &str = "x-metafolder-log-context";
 
 /// Whether a request counts as the user's activity, which holds the daemon's
 /// folding of pending lists back (doc "Folding in idle time"): every request
@@ -53,10 +44,14 @@ impl Context {
     /// The label to send with a request to `path`: this one when the path is
     /// one of its repository's (`/repos/<uuid>/…`).
     pub fn label_for(&self, path: &str) -> Option<i64> {
-        let rest = path.strip_prefix("/repos/")?;
-        let repo = rest.split(['/', '?']).next()?;
-        (uuid::Uuid::parse_str(repo).ok()? == self.repo).then_some(self.label)
+        (repo_of(path)? == self.repo).then_some(self.label)
     }
+}
+
+/// The repository a request is for: `<uuid>` in `/repos/<uuid>/…`.
+pub fn repo_of(path: &str) -> Option<uuid::Uuid> {
+    let rest = path.strip_prefix("/repos/")?;
+    uuid::Uuid::parse_str(rest.split(['/', '?']).next()?).ok()
 }
 
 impl std::fmt::Display for Context {
@@ -100,10 +95,34 @@ pub fn decode(value: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// A fresh command key, 32 lowercase hex digits.
-pub fn new_command_key() -> String {
-    uuid::Uuid::new_v4().as_simple().to_string()
+/// Whether a request may write to the log, so that a command creates its
+/// context before sending it — and a command that only reads creates none.
+/// A `GET` never writes; neither do the `POST`s that only read (a query, a
+/// path to resolve, a check). Every other request may.
+pub fn may_write(method: &str, path: &str) -> bool {
+    if method.eq_ignore_ascii_case("GET") {
+        return false;
+    }
+    let path = path.split('?').next().unwrap_or(path);
+    let Some(rest) = path.strip_prefix("/repos/") else { return true };
+    let route = rest.split_once('/').map_or("", |(_, r)| r);
+    !READ_ONLY_POSTS.contains(&route)
 }
+
+/// The `POST`s under `/repos/:repo/` that write nothing to the log.
+const READ_ONLY_POSTS: &[&str] = &[
+    "query",
+    "query/profile",
+    "query/fields/resolve-tree",
+    "tree/resolve-path",
+    "tree/resolve-paths",
+    "schema/check",
+    "activity",
+    "eligibility",
+    "watch/activity",
+    "watch/check",
+    "labels",
+];
 
 #[cfg(test)]
 mod tests {
@@ -133,6 +152,21 @@ mod tests {
         assert_eq!(context.label_for(&format!("/repos/{}", repo.hyphenated())), Some(12));
         assert_eq!(context.label_for(&format!("/repos/{}/log", uuid::Uuid::new_v4())), None);
         assert_eq!(context.label_for("/repos"), None);
+    }
+
+    #[test]
+    fn only_a_request_that_may_write_needs_a_context() {
+        let repo = "/repos/0123456789abcdef0123456789abcdef";
+        assert!(!may_write("GET", &format!("{repo}/log")));
+        assert!(!may_write("POST", &format!("{repo}/query")));
+        assert!(!may_write("POST", &format!("{repo}/query?limit=3")));
+        assert!(!may_write("POST", &format!("{repo}/tree/resolve-paths")));
+        assert!(!may_write("POST", &format!("{repo}/labels")));
+        assert!(may_write("POST", &format!("{repo}/metarecords")));
+        assert!(may_write("POST", &format!("{repo}/query/fields/set")));
+        assert!(may_write("DELETE", &format!("{repo}/metarecords/x")));
+        assert!(may_write("PATCH", &format!("{repo}/metarecords/x/fields/a")));
+        assert!(may_write("POST", "/sync/a/b/links/commit"));
     }
 
     #[test]

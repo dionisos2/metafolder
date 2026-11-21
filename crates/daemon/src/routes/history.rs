@@ -65,7 +65,6 @@ pub(super) async fn create_label(
         repo_state.ensure_writable()?;
         let parent = body.parent.or(match request_context() {
             crate::log::WriteContext::In(id) => Some(id),
-            crate::log::WriteContext::Command { label, .. } => label.parent,
             _ => None,
         });
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
@@ -384,9 +383,9 @@ pub(super) async fn prune_log(
             repo_state.ensure_writable()?;
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let resolved = crate::log::resolve_target(&*conn, &target)?;
-            let (ops, labels) = crate::log::prune(&mut *conn, resolved)
+            let ops = crate::log::prune(&mut *conn, resolved)
                 .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
-            Ok(Json(json!({"pruned_operations": ops, "pruned_labels": labels})))
+            Ok(Json(json!({"pruned_operations": ops})))
         })
     })
     .await

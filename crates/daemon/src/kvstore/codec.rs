@@ -246,15 +246,12 @@ pub(crate) fn get_rows(r: &mut Dec) -> Result<Vec<FieldRow>> {
 
 /// A log context, the value of its id in `log_contexts` (doc "Store
 /// tables"): `varint len · name · flags · [varint len · description] ·
-/// [varint parent] · varint created (ms) · [the command key, 16 bytes]`, the
-/// flags saying which of the three optional parts follow.
-pub(crate) fn enc_context(m: &crate::store::LabelMeta, key: Option<Uuid>) -> Vec<u8> {
+/// [varint parent] · varint created (ms)`, the flags saying which of the two
+/// optional parts follow.
+pub(crate) fn enc_context(m: &crate::store::LabelMeta) -> Vec<u8> {
     const DESCRIBED: u8 = 1;
     const CHILD: u8 = 2;
-    const COMMAND: u8 = 4;
-    let flags = (m.description.is_some() as u8 * DESCRIBED)
-        | (m.parent.is_some() as u8 * CHILD)
-        | (key.is_some() as u8 * COMMAND);
+    let flags = (m.description.is_some() as u8 * DESCRIBED) | (m.parent.is_some() as u8 * CHILD);
     let mut out = Enc::default();
     out.bytes(m.name.as_bytes()).raw(&[flags]);
     if let Some(d) = &m.description {
@@ -264,22 +261,18 @@ pub(crate) fn enc_context(m: &crate::store::LabelMeta, key: Option<Uuid>) -> Vec
         out.varint(p as u64);
     }
     out.varint(m.created as u64);
-    if let Some(k) = key {
-        out.raw(k.as_bytes());
-    }
     out.0
 }
 
 /// What [`enc_context`] wrote.
-pub(crate) fn dec_context(b: &[u8]) -> Result<(crate::store::LabelMeta, Option<Uuid>)> {
+pub(crate) fn dec_context(b: &[u8]) -> Result<crate::store::LabelMeta> {
     let mut r = Dec(b);
     let name = r.string()?;
     let flags = r.take(1)?[0];
     let description = if flags & 1 != 0 { Some(r.string()?) } else { None };
     let parent = if flags & 2 != 0 { Some(r.varint()? as i64) } else { None };
     let created = r.varint()? as i64;
-    let key = if flags & 4 != 0 { Some(r.uuid()?) } else { None };
-    Ok((crate::store::LabelMeta { name, description, parent, created }, key))
+    Ok(crate::store::LabelMeta { name, description, parent, created })
 }
 
 /// An operation's origin, one byte: a client's (none), the watcher's, the
@@ -316,7 +309,6 @@ mod tests {
     #[test]
     fn a_log_context_comes_back_compact() {
         use crate::store::LabelMeta;
-        let key = Uuid::from_u128(9);
         let full = LabelMeta {
             name: "tag run".into(),
             description: Some("the 2024 photos".into()),
@@ -324,17 +316,15 @@ mod tests {
             created: 1_763_700_000_000,
         };
         let bare = LabelMeta { name: "x".into(), description: None, parent: None, created: 5 };
-        for (m, k) in [(&full, Some(key)), (&bare, None)] {
-            let bytes = enc_context(m, k);
-            let (back, back_key) = dec_context(&bytes).unwrap();
+        for m in [&full, &bare] {
+            let back = dec_context(&enc_context(m)).unwrap();
             assert_eq!(
                 (back.name, back.description, back.parent, back.created),
                 (m.name.clone(), m.description.clone(), m.parent, m.created)
             );
-            assert_eq!(back_key, k);
         }
         // varint len · name · flags · varint created: 1 + 1 + 1 + 1.
-        assert_eq!(enc_context(&bare, None).len(), 4);
+        assert_eq!(enc_context(&bare).len(), 4);
     }
 
     fn every_kind() -> Vec<Value> {

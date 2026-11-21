@@ -230,7 +230,7 @@ fn pruning_keeps_an_entry_that_holds_its_target_whole() {
     let ops = store.label_ops(label).unwrap();
     let target = ops[10].id;
     let before = store.counts().unwrap().0;
-    let (pruned, _) = metafolder_daemon::log::prune(&mut store, target).unwrap();
+    let pruned = metafolder_daemon::log::prune(&mut store, target).unwrap();
     assert_eq!(pruned, 30, "the creations, and nothing of the entry");
     assert_eq!(store.counts().unwrap().0, before - 1, "the creations, one entry");
     assert_eq!(store.first_op().unwrap(), Some(ops[0].id));

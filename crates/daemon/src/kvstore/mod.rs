@@ -72,7 +72,6 @@ struct Tables {
     log_entries_by_metarecord: Db,
     log_contexts: Db,
     log_context_children: Db,
-    log_label_keys: Db,
     log_reverted_by: Db,
     log_watcher_entries: Db,
     log_user_entries: Db,
@@ -111,7 +110,6 @@ const NAMES: [&str; table::TABLES] = [
     "log_entries_by_metarecord",
     "log_contexts",
     "log_context_children",
-    "log_label_keys",
     "log_reverted_by",
     "log_watcher_entries",
     "log_user_entries",
@@ -152,7 +150,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, live_metarecords, pending_writes, field_types, log_entries, log_targets, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_label_keys, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, pending_writes, field_types, log_entries, log_targets, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
             dbs;
         Ok(Tables {
             version,
@@ -167,7 +165,6 @@ impl Tables {
             log_entries_by_metarecord,
             log_contexts,
             log_context_children,
-            log_label_keys,
             log_reverted_by,
             log_watcher_entries,
             log_user_entries,
@@ -207,7 +204,6 @@ impl Tables {
             self.log_entries_by_metarecord,
             self.log_contexts,
             self.log_context_children,
-            self.log_label_keys,
             self.log_reverted_by,
             self.log_watcher_entries,
             self.log_user_entries,
@@ -541,17 +537,12 @@ fn op_timestamp(v: &[u8]) -> Result<i64> {
 
 /// A label, and the key of the command that opened it, if one did, in the
 /// compact form ([`codec::enc_context`]).
-fn enc_label(m: &LabelMeta, key: Option<Uuid>) -> Vec<u8> {
-    codec::enc_context(m, key)
-}
-
-/// The command key [`enc_label`] stored after the label.
-fn dec_label_key(b: &[u8]) -> Result<Option<Uuid>> {
-    Ok(codec::dec_context(b)?.1)
+fn enc_label(m: &LabelMeta) -> Vec<u8> {
+    codec::enc_context(m)
 }
 
 fn dec_label(b: &[u8]) -> Result<LabelMeta> {
-    Ok(codec::dec_context(b)?.0)
+    codec::dec_context(b)
 }
 
 /// The map a store opens on at the least: an address-space reservation, not
@@ -1491,13 +1482,6 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.reverters_of(op))
             }
-            fn label_of_command(&self, key: Uuid) -> Result<Option<i64>> {
-                let $me = self;
-                $with(&mut |$read: &Read| {
-                    $read.count(1)?;
-                    Ok($read.t.log_label_keys.get($read.r, key.as_bytes())?.map(from_be))
-                })
-            }
             fn watcher_label(&self) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
@@ -1963,8 +1947,9 @@ impl KvStore {
     /// layout holds no data in them, so this runs at every open, and does
     /// nothing when there are none.
     fn remove_older_tables(&self) -> Result<()> {
-        const OLDER: [&str; 28] = [
+        const OLDER: [&str; 29] = [
             "meta",
+            "log_label_keys",
             "ops_by_label",
             "ops_by_entity",
             "reverted_by",
@@ -2001,7 +1986,7 @@ impl KvStore {
                 for name in OLDER {
                     found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
                 }
-                let found: [_; 28] = found.try_into().expect("one per name");
+                let found: [_; 29] = found.try_into().expect("one per name");
                 Ok(CommitOrAbort::<_, ()>::Commit(found))
             })?
             .commit()
@@ -2216,7 +2201,6 @@ impl KvStore {
                     t.log_entries_by_metarecord,
                     t.log_contexts,
                     t.log_context_children,
-                    t.log_label_keys,
                     t.log_reverted_by,
                     t.log_watcher_entries,
                     t.log_user_entries,
@@ -2431,14 +2415,37 @@ impl KvTxn<'_> {
     }
 
     /// Writes a new label, and its place among its parent's children.
-    fn put_label(&self, meta: &LabelMeta, command: Option<Uuid>) -> Result<i64> {
+    fn put_label(&self, meta: &LabelMeta) -> Result<i64> {
         let id = self.next(State::NextLogContext)?;
         let mut w = self.txn.borrow_mut();
-        self.t.log_contexts.put(&mut w, &be(id), &enc_label(meta, command))?;
+        self.t.log_contexts.put(&mut w, &be(id), &enc_label(meta))?;
         if let Some(parent) = meta.parent {
             self.t.log_context_children.put(&mut w, &key(&[&be(parent), &be(id)]), &[])?;
         }
         Ok(id)
+    }
+
+    /// Drops every label nothing is in — no operation, no child label —, at
+    /// a reindex only: retention and prunes remove operations, never labels,
+    /// so that a context a client holds stays valid while it works (doc "Log
+    /// contexts"). Children first, by descending id: a child is newer than
+    /// its parent.
+    pub(super) fn drop_empty_labels(&self) -> Result<usize> {
+        let ids: Vec<i64> = {
+            let txn = self.txn.borrow();
+            let ids = self
+                .t
+                .log_contexts
+                .iter(&txn)?
+                .map(|e| e.map(|(k, _)| from_be(k)))
+                .collect::<std::result::Result<_, _>>()?;
+            ids
+        };
+        let mut dropped = 0;
+        for id in ids.into_iter().rev() {
+            dropped += self.drop_if_empty(id)?;
+        }
+        Ok(dropped)
     }
 
     /// Drops `label` if nothing is left in it — no operation, no child label —
@@ -2664,31 +2671,15 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn create_label(&self, meta: &LabelMeta) -> Result<i64> {
-        self.put_label(meta, None)
-    }
-
-    fn create_command_label(&self, meta: &LabelMeta, key: Uuid) -> Result<i64> {
-        let id = self.put_label(meta, Some(key))?;
-        self.t.log_label_keys.put(&mut self.txn.borrow_mut(), key.as_bytes(), &be(id))?;
-        Ok(id)
+        self.put_label(meta)
     }
 
     fn drop_label(&self, id: i64) -> Result<()> {
         let Some(meta) = Log::labels(self, &[id])?.remove(&id) else { return Ok(()) };
-        let command = {
-            let txn = self.txn.borrow();
-            match self.t.log_contexts.get(&txn, &be(id))? {
-                Some(b) => dec_label_key(b)?,
-                None => None,
-            }
-        };
         let mut w = self.txn.borrow_mut();
         self.t.log_contexts.delete(&mut w, &be(id))?;
         if let Some(parent) = meta.parent {
             self.t.log_context_children.delete(&mut w, &key(&[&be(parent), &be(id)]))?;
-        }
-        if let Some(command) = command {
-            self.t.log_label_keys.delete(&mut w, command.as_bytes())?;
         }
         // What it reverts, and what reverts it, each side of the pair.
         for kind in [0u8, 1] {
@@ -2763,7 +2754,7 @@ impl WriteTxn for KvTxn<'_> {
 
     /// The log trim (`log::Retention`), over these tables: for each origin
     /// past its limit and slack, the oldest operations down to the limit — the
-    /// first keys of its table — and the labels left empty. Reads what it deletes and two statistics,
+    /// first keys of its table —, leaving their labels. Reads what it deletes and two statistics,
     /// never the operations it keeps (`tests/log_cost.rs`): it runs once every
     /// `slack` writes, and what is kept may be a reconcile's.
     fn trim(&self, retention: Retention, keep_from: i64) -> Result<usize> {
@@ -2823,7 +2814,7 @@ impl WriteTxn for KvTxn<'_> {
         self.clear_derived()
     }
 
-    fn delete_ops(&self, ids: &[i64]) -> Result<(usize, usize)> {
+    fn delete_ops(&self, ids: &[i64]) -> Result<usize> {
         // An entry goes whole, when every operation of it is named.
         let mut named: std::collections::BTreeMap<i64, (entry::Entry, u64)> = Default::default();
         let mut current: Option<entry::Entry> = None;
@@ -2835,19 +2826,16 @@ impl WriteTxn for KvTxn<'_> {
             let Some(e) = &current else { continue };
             named.entry(e.first).or_insert_with(|| (e.clone(), 0)).1 += 1;
         }
-        let (mut removed, mut hit) = (0usize, std::collections::BTreeSet::new());
+        let mut removed = 0usize;
         for (e, n) in named.into_values() {
             if n == e.h.targets {
                 self.remove_entry(&e)?;
                 removed += n as usize;
-                hit.insert(e.h.context);
             }
         }
-        let mut dropped = 0;
-        for label in hit {
-            dropped += self.drop_if_empty(label)?;
-        }
-        Ok((removed, dropped))
+        // The contexts it leaves empty stay until a reindex (doc "Log
+        // contexts").
+        Ok(removed)
     }
 
     fn commit(self: Box<Self>) -> Result<()> {

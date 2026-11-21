@@ -144,7 +144,7 @@ fn a_prune_keeps_an_entry_that_holds_its_target_whole() {
     let ids = store.dense_ids(&uuids).unwrap();
     write(&mut store, |w| w.mass_add_ids("tag", s("blue"), &ids).unwrap());
     // The creations go, the write to many records holds the target: it stays.
-    let (pruned, _) = metafolder_daemon::log::prune(&mut store, first_mass + 10).unwrap();
+    let pruned = metafolder_daemon::log::prune(&mut store, first_mass + 10).unwrap();
     assert_eq!(pruned, 50, "the creations, and none of the entry");
     assert_eq!(store.first_op().unwrap(), Some(first_mass));
     assert_eq!(store.ops_after(first_mass - 1).unwrap().len(), 50);

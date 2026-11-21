@@ -1,6 +1,6 @@
 //! Labels and contexts over HTTP (doc "Log contexts"): creating a
 //! label, reading it with its ancestors, writing inside one through the
-//! `X-Metafolder-Label` header, and a write with no context opening its own.
+//! `X-Metafolder-Log-Context` header, and a write with no context opening its own.
 
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ async fn send(
 ) -> (StatusCode, Value) {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(label) = label {
-        builder = builder.header("x-metafolder-label", label);
+        builder = builder.header("x-metafolder-log-context", label);
     }
     let request = match body {
         Some(v) => builder
@@ -205,6 +205,7 @@ async fn reverting_a_label_reverts_its_children_too() {
 async fn prune_keeps_a_label_whole() {
     let (app, repo, _root) = setup("prune").await;
     create(&app, &repo, None).await;
+    let pruned = newest_op(&app, &repo).await["label_id"].as_i64().unwrap();
     let kept = new_label(&app, &repo, json!({"name": "kept"})).await;
     create(&app, &repo, Some(&kept.to_string())).await;
     create(&app, &repo, Some(&kept.to_string())).await;
@@ -222,101 +223,59 @@ async fn prune_keeps_a_label_whole() {
     let ops = log["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 2, "{log}");
     assert!(ops.iter().all(|op| op["label_id"] == kept), "{log}");
-}
-
-// ── A command's label (doc "Log contexts") ────────────────────────────
-
-/// Sends `request` as one step of a client command: the command's key and
-/// name, and the context it runs in.
-async fn send_in_command(
-    app: &Router,
-    method: &str,
-    uri: &str,
-    body: Option<Value>,
-    command: (&str, &str),
-    context: Option<i64>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("x-metafolder-command", command.0)
-        .header("x-metafolder-command-name", metafolder_core::context::encode(command.1));
-    if let Some(context) = context {
-        builder = builder.header("x-metafolder-label", context.to_string());
-    }
-    let request = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let value =
-        if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
-    (status, value)
-}
-
-/// A command opens its label at its first write, and writes all its requests
-/// in it — inside the context it runs in. Its reads open nothing.
-#[tokio::test]
-async fn a_commands_writes_share_one_label_opened_at_the_first() {
-    let (app, repo, _root) = setup("command").await;
-    let run = new_label(&app, &repo, json!({"name": "tag run"})).await;
-    let (_, before) = send(&app, "GET", &format!("/repos/{repo}/log?limit=1"), None, None).await;
-    let key = "6a1f0c2e9b8d4f37a5e1c3b2d4f6a8e0";
-    let name = "mf metarecord -q 'année = 2024' field set été:bool=true";
-
-    let query = json!({"query": {"type": "is_present", "field": "a"}, "limit": 10});
-    let (status, _) = send_in_command(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query"),
-        Some(query),
-        (key, name),
-        Some(run),
-    )
-    .await;
+    // A prune removes operations, never contexts: the emptied one stays
+    // until a reindex (doc "Log contexts").
+    assert_eq!(body["pruned_labels"], Value::Null, "{body}");
+    let (status, _) =
+        send(&app, "GET", &format!("/repos/{repo}/labels/{pruned}"), None, None).await;
     assert_eq!(status, StatusCode::OK);
-    let (_, after_read) =
-        send(&app, "GET", &format!("/repos/{repo}/log?limit=1"), None, None).await;
-    assert_eq!(after_read["total_labels"], before["total_labels"], "a read opens no label");
+}
 
+/// `0` is no context: the write opens a label of its own, as with no header.
+#[tokio::test]
+async fn a_context_of_zero_is_no_context() {
+    let (app, repo, _root) = setup("zero").await;
+    let (status, body) = create(&app, &repo, Some("0")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let op = newest_op(&app, &repo).await;
+    let id = op["label_id"].as_i64().unwrap();
+    assert!(id >= 1, "{op}");
+    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/labels/{id}"), None, None).await;
+    assert_eq!(label["parent"], Value::Null, "{label}");
+}
+
+/// Ids start at 1, `0` meaning "no context".
+#[tokio::test]
+async fn no_label_has_the_id_zero() {
+    let (app, repo, _root) = setup("from_one").await;
+    let first = new_label(&app, &repo, json!({"name": "first"})).await;
+    assert!(first >= 1, "{first}");
+    let (status, _) = send(&app, "GET", &format!("/repos/{repo}/labels/0"), None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The command headers are gone: a request naming one writes in the
+/// context it names, or in one of its own — never in a label found by a key.
+#[tokio::test]
+async fn a_command_key_opens_no_label() {
+    let (app, repo, _root) = setup("no_command").await;
+    let run = new_label(&app, &repo, json!({"name": "run"})).await;
     let fields = json!({"fields": [{"name": "a", "value": {"type": "int", "value": 1}}]});
     for _ in 0..2 {
-        let (status, body) = send_in_command(
-            &app,
-            "POST",
-            &format!("/repos/{repo}/metarecords"),
-            Some(fields.clone()),
-            (key, name),
-            Some(run),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/repos/{repo}/metarecords"))
+            .header("x-metafolder-command", "6a1f0c2e9b8d4f37a5e1c3b2d4f6a8e0")
+            .header("x-metafolder-log-context", run.to_string())
+            .header("content-type", "application/json")
+            .body(Body::from(fields.to_string()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
     let (_, log) = send(&app, "GET", &format!("/repos/{repo}/log?limit=2"), None, None).await;
     let ops = log["operations"].as_array().unwrap();
-    assert_eq!(ops[0]["label_id"], ops[1]["label_id"], "one label for the command: {log}");
-    let id = ops[0]["label_id"].as_i64().unwrap();
-    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/labels/{id}"), None, None).await;
-    assert_eq!(label["name"], name, "the name comes back whole, accents included");
-    assert_eq!(label["parent"], run, "inside the context the command runs in");
-
-    // Another command is another label.
-    let (_, _) = send_in_command(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/metarecords"),
-        Some(fields),
-        ("0b8f2a7e5c1d4e3fa9b8c7d6e5f4a3b2", "mf metarecord add"),
-        None,
-    )
-    .await;
-    let other = newest_op(&app, &repo).await;
-    assert_ne!(other["label_id"], id);
+    assert!(ops.iter().all(|op| op["label_id"] == run), "{log}");
 }
 
 /// Reverting a label nothing was written in reverts nothing — what a script

@@ -613,14 +613,14 @@ export async function mount(root, metafolder) {
     const what = 'op_ids' in target ? `operation ${target.op_ids[0]}` : `label #${target.label_id}`;
     if (!confirm(`Prune all history before ${what}? This cannot be undone.`)) return;
     try {
-      const result = /** @type {{pruned_operations: number, pruned_labels: number}} */ (
+      const result = /** @type {{pruned_operations: number}} */ (
         await daemon.call('POST', `/repos/${repo}/log/prune`, {
           // A label is kept whole: the cut is its oldest operation.
           target: 'op_ids' in target ? { id: target.op_ids[0] } : { label: target.label_id },
         })
       );
       void statusBar.message(
-        `Pruned ${result.pruned_operations} operations (${result.pruned_labels} labels left empty).`,
+        `Pruned ${result.pruned_operations} operations.`,
         statusErrorMs,
       );
       selection = null;

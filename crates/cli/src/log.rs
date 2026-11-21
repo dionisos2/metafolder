@@ -561,8 +561,7 @@ pub fn prune(ctx: &Ctx, target: TargetArgs, force: bool, silent: bool) -> Result
     let resp = ctx.client.post(&format!("{base}/log/prune"), &body)?;
     if !silent {
         let ops = resp["pruned_operations"].as_i64().unwrap_or(0);
-        let labels = resp["pruned_labels"].as_i64().unwrap_or(0);
-        println!("Pruned {ops} operations; {labels} label(s) left empty went with them.");
+        println!("Pruned {ops} operations.");
     }
     Ok(0)
 }

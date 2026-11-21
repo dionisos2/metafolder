@@ -12,17 +12,17 @@ summary: GET /log (bounded two ways), the change feed GET /log/since, one label 
 |<<cmd "GET /repos/:repo/labels/:id">> |one label, its ancestors and its children |
 
 Every write request may name the label it writes in with the header
-`X-Metafolder-Label: <id>` ([[Log contexts]]); without one, the write opens a label
-of its own, named after the route (`PUT /repos/:repo/metarecords/:uuid/fields/:name`). A
-header that is not a number is a `400`; one naming a label that does not exist, or the
-watcher's or one inside it, is a `400` too, and nothing is written.
+`X-Metafolder-Log-Context: <id>` ([[Log contexts]]); without one, or with `0`, the
+write opens a label of its own, named after the route
+(`PUT /repos/:repo/metarecords/:uuid/fields/:name`). A header that is not a number is a
+`400`; one naming a label that does not exist, or the watcher's or one inside it, is a
+`400` too, and nothing is written.
 
-A request that is one step of a client's command says so: `X-Metafolder-Command: <32 hex
-digits>`, a key the client draws for the command, with `X-Metafolder-Command-Name` and
-`X-Metafolder-Command-Description` (percent-encoded UTF-8). Its first write opens the
-command's label — inside `X-Metafolder-Label`'s when there is one — and the later writes
-with the same key go in it; a read opens nothing. A key that is not 32 hex digits is a
-`400`.
+A client's command creates its label itself, before it writes (below), and names it in the
+header of each of its writes: there is no command key any more (`X-Metafolder-Command`,
+until November 2026). The CLI and the GUI create it at the command's first request that
+may write — a `GET`, a query or a path to resolve writes nothing (`may_write`,
+`metafolder_core::context`) —, so a command that only reads creates none.
 
 !! GET /log
 
@@ -76,10 +76,10 @@ may hold a whole reconcile, so `offset`/`limit` window its operations and `op` p
 
 `POST /repos/:repo/labels` with `{"name": "tag run", "description": "…", "parent": 12}`
 (description and parent optional) answers the label as `GET /labels/:id` does. Without
-`parent`, the label is a child of the one the request names in `X-Metafolder-Label`, or a
-root. An empty name, or a parent that does not exist or is the watcher's, is a `400`. A
-label opened this way and never written in stays, empty; one a write opened is dropped with
-it when the write records nothing.
+`parent`, the label is a child of the one the request names in `X-Metafolder-Log-Context`,
+or a root. An empty name, or a parent that does not exist or is the watcher's, is a `400`.
+A label opened this way and never written in stays, empty, until a reindex; one a write
+opened is dropped with it when the write records nothing.
 
 `GET /repos/:repo/labels/:id` answers `{"id", "name", "description", "parent", "created",
 "ancestors": [innermost first], "children": [ids]}`, `404` for an unknown label.

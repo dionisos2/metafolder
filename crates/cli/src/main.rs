@@ -1462,7 +1462,7 @@ fn main() {
         (None, None) => (config.repo.name.clone(), config.repo.uuid.clone()),
         explicit => explicit,
     };
-    let command = match command_headers() {
+    let command = match command_context() {
         Ok(command) => command,
         Err(message) => {
             eprintln!("error: {message}");
@@ -1492,28 +1492,29 @@ fn main() {
     }
 }
 
-/// What this command tells the daemon (doc "Log contexts"): a fresh key
-/// for its label, named after its command line and described by its query,
-/// inside the context `METAFOLDER_LABEL` passes on.
-fn command_headers() -> Result<metafolder_cli::client::CommandHeaders, String> {
+/// This command's log context (doc "Log contexts"): named after its command
+/// line and described by its query, inside the context `METAFOLDER_LABEL`
+/// passes on — created at its first write.
+fn command_context() -> Result<metafolder_cli::client::Command, String> {
     use metafolder_core::context::{self, Context};
     let args: Vec<String> = std::env::args().skip(1).collect();
     let context = match std::env::var(context::LABEL_ENV) {
-        Ok(value) if !value.trim().is_empty() => Some(Context::parse(&value).ok_or_else(|| {
-            format!(
-                "{}='{value}' is not a context (<repo uuid>:<label id>, as `mf label begin` \
-                 prints it)",
-                context::LABEL_ENV
-            )
-        })?),
+        Ok(value) if !value.trim().is_empty() && value.trim() != "0" => {
+            Some(Context::parse(&value).ok_or_else(|| {
+                format!(
+                    "{}='{value}' is not a context (<repo uuid>:<label id>, as `mf label begin` \
+                     prints it)",
+                    context::LABEL_ENV
+                )
+            })?)
+        }
         _ => None,
     };
-    Ok(metafolder_cli::client::CommandHeaders {
-        key: context::new_command_key(),
-        name: metafolder_cli::label::command_line(&args),
-        description: metafolder_cli::label::query_of(&args).map(|q| format!("query: {q}")),
+    Ok(metafolder_cli::client::Command::new(
+        metafolder_cli::label::command_line(&args),
+        metafolder_cli::label::query_of(&args).map(|q| format!("query: {q}")),
         context,
-    })
+    ))
 }
 
 type CmdResult = Result<i32, metafolder_cli::client::CliError>;

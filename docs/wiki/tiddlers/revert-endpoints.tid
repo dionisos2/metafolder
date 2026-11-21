@@ -24,7 +24,7 @@ ordinary change still standing — a redo ([[Undo and redo by log context]]). An
 the revert is applied onto the current state ([[Reverting onto the current state]]).
 
 The revert writes in the request's context like any write: the label named in
-`X-Metafolder-Label`, or one of its own named after the target (`revert of label 12`,
+`X-Metafolder-Log-Context`, or one of its own named after the target (`revert of label 12`,
 `revert of operation 7`, `rollback to 2026-11-08T09:00:00Z`) — so the log says what an undo undid ([[Log endpoints]]).
 
 !! The plan

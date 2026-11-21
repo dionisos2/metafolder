@@ -1,6 +1,6 @@
 //! The GUI's work context (doc "The GUI's work context"): a label the user
 //! opens on a repository, carried by every later request to that repository
-//! (`X-Metafolder-Label`) until it is closed, and remembered in the
+//! (`X-Metafolder-Log-Context`) until it is closed, and remembered in the
 //! repository's `.metafolder/gui/context` so a restart can offer it back.
 //!
 //! A stub daemon on an ephemeral port serves the repository listing and the
@@ -14,7 +14,7 @@ use axum::extract::Path;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use metafolder_core::context::LABEL_HEADER;
+use metafolder_core::context::LOG_CONTEXT_HEADER;
 use metafolder_gui::daemon_proxy::DaemonProxy;
 use metafolder_gui::work_context::{self, Pending, WorkContext};
 use serde_json::{json, Value};
@@ -35,7 +35,7 @@ struct Stub {
 type Shared = Arc<Mutex<Stub>>;
 
 fn label_of(headers: &HeaderMap) -> Option<String> {
-    headers.get(LABEL_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string)
+    headers.get(LOG_CONTEXT_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string)
 }
 
 /// The stub daemon, serving one repository `repo` whose `.metafolder/` is

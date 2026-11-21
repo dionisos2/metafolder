@@ -1983,6 +1983,9 @@ impl KvStore {
         // are filed again below, and the rows are derived from them.
         txn.fold_all_mass()?;
         txn.drop_left_behind()?;
+        // A reindex invalidates the work under way anyway: the contexts left
+        // empty go (doc "Log contexts").
+        txn.drop_empty_labels()?;
         // Whose each live id is, off the primary numbering (`ids`), not off
         // its index.
         let who: HashMap<u32, [u8; 16]> = {

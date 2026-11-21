@@ -346,14 +346,6 @@ fn a_label_names_its_operations_and_its_children() {
     assert!(tx.labels(&[a]).unwrap().is_empty());
     tx.set_watcher_label(run).unwrap();
     assert_eq!(tx.watcher_label().unwrap(), Some(run));
-
-    // A command's label is found by its key, until it is dropped.
-    let key = Uuid::new_v4();
-    assert_eq!(tx.label_of_command(key).unwrap(), None);
-    let command = tx.create_command_label(&meta(Some(run)), key).unwrap();
-    assert_eq!(tx.label_of_command(key).unwrap(), Some(command));
-    tx.drop_label(command).unwrap();
-    assert_eq!(tx.label_of_command(key).unwrap(), None);
 }
 
 #[test]
@@ -403,14 +395,15 @@ fn targets_are_found_in_the_log() {
 }
 
 #[test]
-fn pruning_removes_operations_and_their_empty_labels() {
+fn pruning_removes_operations_not_their_labels() {
     let (mut conn, _dir, _, _) = fixture();
     let all = (&conn as &dyn Store).all_ops().unwrap();
     let tx = conn.begin_write().unwrap();
-    assert_eq!(tx.delete_ops(&[all[1].id, all[0].id]).unwrap().1, 1, "one label left empty");
+    assert_eq!(tx.delete_ops(&[all[1].id, all[0].id]).unwrap(), 2);
     tx.commit().unwrap();
     let store: &dyn Store = &conn;
-    assert_eq!(store.counts().unwrap(), (1, 1));
+    // The label left empty stays until a reindex (doc "Log contexts").
+    assert_eq!(store.counts().unwrap(), (1, 2));
     assert!(store.op(all[2].id).unwrap().is_some());
     assert!(store.added(all[0].id).unwrap().is_empty(), "snapshots go too");
 }

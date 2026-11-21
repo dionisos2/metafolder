@@ -1,35 +1,68 @@
-//! A GUI command is a label (doc "Log contexts"): what it writes,
-//! through the daemon proxy, carries the command's key and name, so the
-//! daemon opens one label for it at its first write.
+//! A GUI command's writes are in a log context of its own (doc "Log
+//! contexts"): the daemon proxy creates it, named after the command, at the
+//! command's first request that may write to a repository, and sends it with
+//! the command's later requests there.
 
 use std::sync::{Arc, Mutex};
 
+use axum::extract::Json;
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::Router;
 use metafolder_gui::daemon_proxy::DaemonProxy;
+use serde_json::{json, Value};
 
-type Seen = Arc<Mutex<Vec<(Option<String>, Option<String>)>>>;
+const REPO: &str = "0123456789abcdef0123456789abcdef";
 
-async fn spawn_stub() -> (String, Seen) {
-    let seen: Seen = Arc::default();
-    let record = seen.clone();
-    let router = Router::new().route(
-        "/repos/r/metarecords",
-        post(move |headers: HeaderMap| {
-            let record = record.clone();
-            async move {
-                let get = |name: &str| {
-                    headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_string)
-                };
-                record.lock().unwrap().push((
-                    get(metafolder_core::context::COMMAND_HEADER),
-                    get(metafolder_core::context::COMMAND_NAME_HEADER),
-                ));
-                "{}"
-            }
-        }),
-    );
+#[derive(Default)]
+struct Seen {
+    /// The contexts created: their bodies.
+    created: Vec<Value>,
+    /// The log context each request named, in order: (route, header).
+    requests: Vec<(&'static str, Option<String>)>,
+}
+
+async fn spawn_stub() -> (String, Arc<Mutex<Seen>>) {
+    let seen: Arc<Mutex<Seen>> = Arc::default();
+    let header = |headers: &HeaderMap| {
+        headers
+            .get(metafolder_core::context::LOG_CONTEXT_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+    };
+    let (on_create, on_write, on_query) = (seen.clone(), seen.clone(), seen.clone());
+    let router = Router::new()
+        .route(
+            &format!("/repos/{REPO}/labels"),
+            post(move |Json(body): Json<Value>| {
+                let seen = on_create.clone();
+                async move {
+                    let mut seen = seen.lock().unwrap();
+                    seen.created.push(body);
+                    Json(json!({"id": 100 + seen.created.len()}))
+                }
+            }),
+        )
+        .route(
+            &format!("/repos/{REPO}/metarecords"),
+            post(move |headers: HeaderMap| {
+                let seen = on_write.clone();
+                async move {
+                    seen.lock().unwrap().requests.push(("write", header(&headers)));
+                    "{}"
+                }
+            }),
+        )
+        .route(
+            &format!("/repos/{REPO}/query"),
+            post(move |headers: HeaderMap| {
+                let seen = on_query.clone();
+                async move {
+                    seen.lock().unwrap().requests.push(("query", header(&headers)));
+                    "{}"
+                }
+            }),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -39,31 +72,54 @@ async fn spawn_stub() -> (String, Seen) {
 }
 
 #[tokio::test]
-async fn the_requests_of_a_command_carry_its_key_and_name() {
+async fn a_command_creates_its_context_at_its_first_write() {
     let (url, seen) = spawn_stub().await;
     let proxy = DaemonProxy::new(url);
+    let write = format!("/repos/{REPO}/metarecords");
+    let query = format!("/repos/{REPO}/query");
 
     let key = proxy.command_begin("metarecord:field set rating 4");
-    proxy.request("POST", "/repos/r/metarecords", None).await.unwrap();
+    proxy.request("POST", &query, None).await.unwrap();
+    proxy.request("POST", &write, None).await.unwrap();
     // A command run from inside another is part of it.
     assert_eq!(proxy.command_begin("nested"), key);
-    proxy.request("POST", "/repos/r/metarecords", None).await.unwrap();
+    proxy.request("POST", &write, None).await.unwrap();
     proxy.command_end(&key);
-    proxy.request("POST", "/repos/r/metarecords", None).await.unwrap();
+    proxy.request("POST", &write, None).await.unwrap();
     proxy.command_end(&key);
-    proxy.request("POST", "/repos/r/metarecords", None).await.unwrap();
+    proxy.request("POST", &write, None).await.unwrap();
+    // Another command, another context.
+    let other = proxy.command_begin("other");
+    proxy.request("POST", &write, None).await.unwrap();
+    proxy.command_end(&other);
 
-    let seen = seen.lock().unwrap().clone();
-    let name = metafolder_core::context::encode("metarecord:field set rating 4");
-    let during = (Some(key.clone()), Some(name));
-    assert_eq!(seen[0], during);
-    assert_eq!(seen[1], during, "the nested command writes in the outer one's label");
-    assert_eq!(seen[2], during, "until the outer one ends");
-    assert_eq!(seen[3], (None, None), "outside any command, nothing is said");
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.created,
+        [
+            json!({"name": "metarecord:field set rating 4", "description": null, "parent": null}),
+            json!({"name": "other", "description": null, "parent": null}),
+        ],
+        "a read creates nothing; one context per command"
+    );
+    let first = Some("101".to_string());
+    assert_eq!(
+        seen.requests,
+        [
+            ("query", None),
+            ("write", first.clone()),
+            ("write", first.clone()),
+            ("write", first),
+            ("write", None),
+            ("write", Some("102".to_string())),
+        ],
+        "the nested command writes in the outer one's context, until the outer one ends"
+    );
+    drop(seen);
 
-    // Ending a command that is not the current one changes nothing.
+    // Ending a command that is not the current one changes nothing. (Here,
+    // not in a test of its own: the running command is the process's.)
     let other = proxy.command_begin("other");
     proxy.command_end("not-it");
-    assert_ne!(other, key);
     assert_eq!(proxy.command_begin("again"), other);
 }

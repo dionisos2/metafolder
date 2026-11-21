@@ -33,6 +33,38 @@ impl BlockingClient {
     }
 }
 
+impl BlockingClient {
+    /// The log context to send a request with
+    /// ([`crate::daemon_proxy::log_context_for`]), the running command's own
+    /// created first if it is to be.
+    fn log_context(&self, method: &str, path: &str) -> Result<Option<i64>, DaemonError> {
+        use crate::daemon_proxy::{context_created, log_context_for, LogContext};
+        match log_context_for(method, path) {
+            LogContext::Send(context) => Ok(context),
+            LogContext::Create { key, repo, body, .. } => {
+                // Through `request`: a work context gone meanwhile is
+                // forgotten there, and the context is created outside it.
+                let labels = format!("/repos/{}/labels", repo.as_simple());
+                let created = match self.request("POST", &labels, Some(&body)) {
+                    Ok(created) => created,
+                    Err(_) if crate::work_context::label_for(path).is_none() => {
+                        let LogContext::Create { body, .. } = log_context_for(method, path) else {
+                            return Ok(None);
+                        };
+                        self.request("POST", &labels, Some(&body))?
+                    }
+                    Err(e) => return Err(e),
+                };
+                let id = created["id"].as_i64().ok_or_else(|| DaemonError {
+                    status: None,
+                    message: "the daemon created no log context".into(),
+                })?;
+                Ok(Some(context_created(&key, repo, id)))
+            }
+        }
+    }
+}
+
 impl DaemonClient for BlockingClient {
     fn request(
         &self,
@@ -58,14 +90,8 @@ impl DaemonClient for BlockingClient {
         if let Some(token) = &self.token {
             req = req.header("Authorization", format!("Bearer {token}"));
         }
-        if let Some(label) = crate::work_context::label_for(path) {
-            req = req.header(metafolder_core::context::LABEL_HEADER, label.to_string());
-        }
-        if let Some((key, name)) = crate::daemon_proxy::current_command() {
-            use metafolder_core::context;
-            req = req
-                .header(context::COMMAND_HEADER, &key)
-                .header(context::COMMAND_NAME_HEADER, context::encode(&name));
+        if let Some(label) = self.log_context(method, path)? {
+            req = req.header(metafolder_core::context::LOG_CONTEXT_HEADER, label.to_string());
         }
         let result = match body {
             Some(json) => req.send_json(json),

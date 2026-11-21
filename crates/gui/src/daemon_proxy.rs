@@ -85,22 +85,63 @@ tokio::task_local! {
     static NOT_ACTIVITY: bool;
 }
 
-/// The command the shell is running, told to the daemon with every request —
-/// this proxy's and the blocking client's — so what it writes is one label
-/// (doc "Log contexts"). The process's: one GUI, one shell.
+/// The command the shell is running, whose writes — this proxy's and the
+/// blocking client's — are in a log context of its own (doc "Log
+/// contexts"). The process's: one GUI, one shell.
 static COMMAND: Mutex<Option<RunningCommand>> = Mutex::new(None);
 
-/// The key and name of the command under way, to send with a request.
-pub(crate) fn current_command() -> Option<(String, String)> {
-    COMMAND.lock_recover().as_ref().map(|r| (r.key.clone(), r.name.clone()))
-}
-
-/// The command under way: its key and name, and how many commands deep the
-/// shell is in it — one run from inside it is part of it.
+/// The command under way: its key (the shell's handle on it) and name, how
+/// many commands deep the shell is in it — one run from inside it is part of
+/// it —, and the context it created in each repository, at its first request
+/// there that may write.
 struct RunningCommand {
     key: String,
     name: String,
     depth: usize,
+    created: std::collections::HashMap<uuid::Uuid, i64>,
+}
+
+/// What a request is to name as its log context.
+pub(crate) enum LogContext {
+    /// This one (`None`: none).
+    Send(Option<i64>),
+    /// The command's own, to create first: `POST /repos/<repo>/labels` with
+    /// `body`, then [`context_created`].
+    Create { key: String, repo: uuid::Uuid, body: Value, parent: Option<i64> },
+}
+
+/// The log context of a request to `path`: the running command's own in that
+/// repository — to create when the request may write and it has none yet —,
+/// else the work context in force there (doc "The GUI's work context").
+pub(crate) fn log_context_for(method: &str, path: &str) -> LogContext {
+    use metafolder_core::context;
+    let work = crate::work_context::label_for(path);
+    let Some(repo) = context::repo_of(path) else { return LogContext::Send(work) };
+    let guard = COMMAND.lock_recover();
+    let Some(running) = guard.as_ref() else { return LogContext::Send(work) };
+    if let Some(&own) = running.created.get(&repo) {
+        return LogContext::Send(Some(own));
+    }
+    if !context::may_write(method, path) {
+        return LogContext::Send(work);
+    }
+    LogContext::Create {
+        key: running.key.clone(),
+        repo,
+        body: serde_json::json!({"name": running.name, "description": null, "parent": work}),
+        parent: work,
+    }
+}
+
+/// The command `key` created context `id` in `repo`: the context its
+/// requests there name from now on — the first one created, should two
+/// requests have raced to create it.
+pub(crate) fn context_created(key: &str, repo: uuid::Uuid, id: i64) -> i64 {
+    let mut guard = COMMAND.lock_recover();
+    match guard.as_mut().filter(|r| r.key == key) {
+        Some(running) => *running.created.entry(repo).or_insert(id),
+        None => id,
+    }
 }
 
 /// How long an abort that found no call in flight is kept for the call it may
@@ -151,7 +192,7 @@ impl DaemonProxy {
     /// A command starts: its key, which [`Self::command_end`] takes back. One
     /// started while another runs is part of it, and gets the outer key — the
     /// approximation of a shell that knows which command runs, not which call
-    /// each command made: two commands running at once share a label.
+    /// each command made: two commands running at once share a context.
     pub fn command_begin(&self, name: &str) -> String {
         let mut guard = COMMAND.lock_recover();
         match guard.as_mut() {
@@ -160,8 +201,13 @@ impl DaemonProxy {
                 running.key.clone()
             }
             None => {
-                let key = metafolder_core::context::new_command_key();
-                *guard = Some(RunningCommand { key: key.clone(), name: name.into(), depth: 1 });
+                let key = uuid::Uuid::new_v4().as_simple().to_string();
+                *guard = Some(RunningCommand {
+                    key: key.clone(),
+                    name: name.into(),
+                    depth: 1,
+                    created: Default::default(),
+                });
                 key
             }
         }
@@ -296,21 +342,58 @@ impl DaemonProxy {
         timing: Option<(&str, Option<&str>)>,
     ) -> Result<ProxyResponse, String> {
         validate_path(path)?;
-        let response = self.send(method, path, body.clone(), self.token(), timing).await?;
+        let context = match self.log_context(method, path).await? {
+            Ok(context) => context,
+            Err(refused) => return Ok(refused),
+        };
+        let response = self.send(method, path, body.clone(), self.token(), timing, context).await?;
         // A 401 means our cached token is stale (the daemon regenerated it).
         // Drop it, re-read the file once and retry.
         if response.status == 401 {
             self.invalidate_token();
             if let Some(token) = self.token() {
-                return self.send(method, path, body, Some(token), timing).await;
+                return self.send(method, path, body, Some(token), timing, context).await;
             }
         }
         // The work context's label was pruned meanwhile: the daemon wrote
         // nothing, the context is closed, and the request goes again outside it.
         if crate::work_context::forget_if_gone(path, response.status, &response.body) {
-            return self.send(method, path, body, self.token(), timing).await;
+            let context = match self.log_context(method, path).await? {
+                Ok(context) => context,
+                Err(refused) => return Ok(refused),
+            };
+            return self.send(method, path, body, self.token(), timing, context).await;
         }
         Ok(response)
+    }
+
+    /// The log context to send a request with ([`log_context_for`]), the
+    /// command's own created first if it is to be; `Err` with the daemon's
+    /// answer when it refused to create it.
+    async fn log_context(
+        &self,
+        method: &str,
+        path: &str,
+    ) -> Result<Result<Option<i64>, ProxyResponse>, String> {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let (key, repo, body, parent) = match log_context_for(method, path) {
+                LogContext::Send(context) => return Ok(Ok(context)),
+                LogContext::Create { key, repo, body, parent } => (key, repo, body, parent),
+            };
+            let labels = format!("/repos/{}/labels", repo.as_simple());
+            let created = Box::pin(self.request_inner("POST", &labels, Some(body), None)).await?;
+            if let Some(id) = created.body["id"].as_i64().filter(|_| created.status < 300) {
+                return Ok(Ok(Some(context_created(&key, repo, id))));
+            }
+            // Its parent, the work context, was closed as gone meanwhile:
+            // once more, outside it.
+            if attempts == 1 && crate::work_context::label_for(path) != parent {
+                continue;
+            }
+            return Ok(Err(created));
+        }
     }
 
     /// Writes the call to the repository's slow-operation log if it was slow.
@@ -354,6 +437,7 @@ impl DaemonProxy {
         body: Option<Value>,
         token: Option<String>,
         timing: Option<(&str, Option<&str>)>,
+        log_context: Option<i64>,
     ) -> Result<ProxyResponse, String> {
         let url = format!("{}{}", self.base_url(), path);
         let method: reqwest::Method =
@@ -363,17 +447,12 @@ impl DaemonProxy {
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
-        if let Some(label) = crate::work_context::label_for(path) {
-            request = request.header(metafolder_core::context::LABEL_HEADER, label.to_string());
+        if let Some(label) = log_context {
+            request =
+                request.header(metafolder_core::context::LOG_CONTEXT_HEADER, label.to_string());
         }
         if NOT_ACTIVITY.try_with(|v| *v).unwrap_or(false) {
             request = request.header(metafolder_core::context::ACTIVITY_HEADER, "off");
-        }
-        if let Some((key, name)) = current_command() {
-            use metafolder_core::context;
-            request = request
-                .header(context::COMMAND_HEADER, key)
-                .header(context::COMMAND_NAME_HEADER, context::encode(&name));
         }
         if let Some((op_id, client_context)) = timing {
             request = request.header(crate::slow::OP_ID_HEADER, op_id);

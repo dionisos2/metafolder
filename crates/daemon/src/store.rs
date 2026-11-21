@@ -206,10 +206,6 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::reverters($conn, op)
             }
-            fn label_of_command(&self, key: Uuid) -> Result<Option<i64>> {
-                let $me = self;
-                Log::label_of_command($conn, key)
-            }
             fn watcher_label(&self) -> Result<Option<i64>> {
                 let $me = self;
                 Log::watcher_label($conn)
@@ -464,8 +460,6 @@ pub trait Log {
     /// The operations that reverted `op` (their `reverts_op_id` is `op`),
     /// oldest first.
     fn reverters(&self, op: i64) -> Result<Vec<i64>>;
-    /// The label the command `key` opened at its first write, if it did.
-    fn label_of_command(&self, key: Uuid) -> Result<Option<i64>>;
     /// The label the watcher's flushes are opened under, once there is one
     /// (doc "Log contexts").
     fn watcher_label(&self) -> Result<Option<i64>>;
@@ -688,9 +682,6 @@ pub trait WriteTxn: Store {
 
     /// A new label; its id. Its parent, when it has one, is there.
     fn create_label(&self, meta: &LabelMeta) -> Result<i64>;
-    /// A new label opened by the command `key`, which its later writes find
-    /// with [`Log::label_of_command`].
-    fn create_command_label(&self, meta: &LabelMeta, key: Uuid) -> Result<i64>;
     /// Removes a label that holds nothing (no operation, no child).
     fn drop_label(&self, id: i64) -> Result<()>;
     /// Notes that `reverter`'s operations revert `reverted`'s: the whole label
@@ -716,7 +707,7 @@ pub trait WriteTxn: Store {
     /// `ids` (an entry goes whole, doc "Log storage"), and the labels they
     /// leave empty — no operation, no child — but the watcher's: how many
     /// operations, and how many labels.
-    fn delete_ops(&self, ids: &[i64]) -> Result<(usize, usize)>;
+    fn delete_ops(&self, ids: &[i64]) -> Result<usize>;
 
     fn commit(self: Box<Self>) -> Result<()>;
 }

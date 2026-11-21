@@ -1,6 +1,6 @@
 //! The GUI's work context (doc "The GUI's work context"): a label the user
 //! opens on a repository (`context:set`), which every later request of the
-//! GUI's to that repository writes in (`X-Metafolder-Label`, doc "Labels and
+//! GUI's to that repository writes in (`X-Metafolder-Log-Context`, doc "Labels and
 //! contexts") until it is closed (`context:unset`) — naming the work under way,
 //! so it can be looked at, or undone, whole.
 //!
