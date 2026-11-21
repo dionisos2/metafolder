@@ -491,7 +491,7 @@ nothing_pending() { [ "$(wear_pending)" = 0 ]; }
 scenario_activity() {
     needs_keyboard activity || return 0
     new_repo activity
-    for i in $(seq 1 20); do df_mf metarecord add note:string=x >/dev/null; done
+    for i in $(seq 1 30); do df_mf metarecord add note:string=x >/dev/null; done
     df_mf metarecord -q 'note = "x"' field set tag:string=t
     assert "activity: a write to many records leaves lists pending" test "$(wear_pending)" -gt 0
     # Forty seconds of keys, one every three: past the thirty an idle repository
