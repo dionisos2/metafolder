@@ -53,9 +53,10 @@ fn a_mass_add_is_one_entry_that_reads_as_one_operation_per_record() {
     write(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
     let written = store.last_write_keys();
     assert_eq!(written.get("log_entries"), Some(&1), "one entry: {written:?}");
-    assert_eq!(written.get("log_snaps"), None, "no snapshot is written: {written:?}");
+    assert_eq!(written.get("log_targets"), Some(&1), "one chunk: {written:?}");
     assert_eq!(written.get("log_entries_by_context"), Some(&1), "{written:?}");
-    assert_eq!(written.get("log_entries_by_metarecord"), Some(&1), "{written:?}");
+    // A record's history is indexed at the fold, not at the write.
+    assert_eq!(written.get("log_entries_by_metarecord"), None, "{written:?}");
     assert_eq!(written.get("metarecords"), None, "{written:?}");
     // The log is counted by entry (doc "Log storage"); it reads as a record's
     // operation each.
@@ -546,12 +547,13 @@ fn a_replacement_of_long_texts_is_undone_whole() {
     assert!(store.check_derived().unwrap().is_empty());
 }
 
-/// The history of a record reads each newer stub once for all the records it is
-/// asked about, not once per record: what a revert plan asks of each of its
-/// operations (`changed_since` reads what came after it on its record), over a
-/// mass write followed by others.
+/// The history of a record reads its own keys of `log_entries_by_metarecord`,
+/// and each newer entry once for all the records it is asked about, not once
+/// per record: what a revert plan asks of each of its operations
+/// (`changed_since` reads what came after it on its record), over a mass
+/// write followed by others.
 #[test]
-fn the_stubs_after_an_operation_are_read_once_for_a_whole_plan() {
+fn the_entries_after_an_operation_are_read_once_for_a_whole_plan() {
     use metafolder_daemon::revert;
     fn plan_reads(later: usize) -> u64 {
         let (mut store, _dir) = open();
@@ -574,6 +576,7 @@ fn the_stubs_after_an_operation_are_read_once_for_a_whole_plan() {
         store.reads() - before
     }
     let (none, some) = (plan_reads(0), plan_reads(20));
-    // Each of the 20 stubs read about once, not 400 times.
-    assert!(some <= none + 20 * 4, "{none} keys with no stub after, {some} with 20");
+    // A key of its history per record and later write, and each of the 20
+    // entries read about once, not 400 times.
+    assert!(some <= none + 400 * 20 + 20 * 4, "{none} keys with no entry after, {some} with 20");
 }

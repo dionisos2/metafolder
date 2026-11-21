@@ -3,21 +3,23 @@
 //! operation id in `log_entries`; the targets and their before are in
 //! `log_targets`, in chunks of [`CHUNK`] targets.
 
-use std::collections::HashMap;
-
 use anyhow::{bail, ensure, Context, Result};
 use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 use super::codec::{self, Dec, Enc};
-use super::{KvTxn, Read, ROOT};
+use super::{KvTxn, Read};
 use crate::log::OpRow;
 use crate::rows::FieldRow;
 use crate::store::NewOp;
 
 /// The targets a chunk of `log_targets` holds, the last one excepted.
 pub(crate) const CHUNK: u64 = 4096;
+
+/// About how many targets a step of the idle fold indexes in
+/// `log_entries_by_metarecord`.
+pub(crate) const INDEX_BUDGET: u64 = 64 * 1024;
 
 /// What an operation does to each of its targets (doc "Log storage").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -450,29 +452,41 @@ pub(super) struct Loaded {
 }
 
 impl Read<'_> {
-    /// The entry whose first operation is `first`.
-    pub(super) fn entry(&self, first: i64) -> Result<Option<Entry>> {
-        self.count(1)?;
-        match self.t.log_entries.get(self.r, &super::be(first))? {
-            Some(v) => Ok(Some(Entry { first, h: Header::decode(v)? })),
-            None => Ok(None),
-        }
-    }
-
     /// The entry that holds operation `id`: the last that begins at or before
-    /// it, if it reaches it.
+    /// it, if it reaches it. An entry the store's cache holds that reaches it
+    /// is that one: the entries are disjoint, and change only with a write.
     pub(super) fn entry_at(&self, id: i64) -> Result<Option<Entry>> {
+        if let Some((cache, generation)) = self.entries {
+            let cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+            if cache.generation == generation {
+                if let Some((first, h)) = cache.entries.range(..=id).next_back() {
+                    let entry = Entry { first: *first, h: h.clone() };
+                    if entry.covers(id) {
+                        return Ok(Some(entry));
+                    }
+                }
+            }
+        }
         let end = super::be(id);
         let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&end[..]));
         self.count(1)?;
-        match self.t.log_entries.rev_range(self.r, &range)?.next() {
+        let found = match self.t.log_entries.rev_range(self.r, &range)?.next() {
             Some(e) => {
                 let (k, v) = e?;
                 let entry = Entry { first: super::from_be(k), h: Header::decode(v)? };
-                Ok(entry.covers(id).then_some(entry))
+                entry.covers(id).then_some(entry)
             }
-            None => Ok(None),
+            None => None,
+        };
+        if let (Some((cache, generation)), Some(entry)) = (self.entries, &found) {
+            let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+            if cache.generation != generation || cache.entries.len() >= ENTRY_CACHE {
+                cache.entries.clear();
+                cache.generation = generation;
+            }
+            cache.entries.insert(entry.first, entry.h.clone());
         }
+        Ok(found)
     }
 
     /// Chunk `n` of the entry `first`.
@@ -543,21 +557,10 @@ impl Read<'_> {
         let mut out = Vec::new();
         let mut entry: Option<Entry> = None;
         let mut loaded = Loaded::default();
-        // The writes to many records of the memo, newest first, are not read
-        // again for a record's history.
-        let memo = if entity.is_some() { self.memoed()? } else { None };
         for id in ids {
             if !entry.as_ref().is_some_and(|e| e.covers(id)) {
-                let memoed = memo.as_ref().and_then(|m| {
-                    let at = m.partition_point(|m| m.entry.first > id);
-                    m.get(at).filter(|m| m.entry.covers(id)).map(|m| m.entry.clone())
-                });
-                entry = match memoed {
-                    Some(e) => Some(e),
-                    None => Some(
-                        self.entry_at(id)?.with_context(|| format!("operation {id} vanished"))?,
-                    ),
-                };
+                entry =
+                    Some(self.entry_at(id)?.with_context(|| format!("operation {id} vanished"))?);
             }
             let e = entry.as_ref().expect("just found");
             out.push(match entity {
@@ -619,66 +622,43 @@ impl Read<'_> {
         Ok(Entry { first, h: Header::decode(v)? }.last())
     }
 
-    /// The targets of a write to many records, and the place of each: read
-    /// from its chunks.
-    fn indexed_targets(&self, entry: &Entry) -> Result<HashMap<Uuid, usize>> {
-        let mut index = HashMap::new();
+    /// The targets of `entry`, read from its chunks.
+    pub(super) fn targets(&self, entry: &Entry) -> Result<Vec<Uuid>> {
+        let mut out = Vec::with_capacity(entry.h.targets as usize);
         for n in 0..chunks_of(entry.h.targets) {
-            for (k, u) in self.chunk(entry.first, n)?.targets.into_iter().enumerate() {
-                index.insert(u, (n * CHUNK) as usize + k);
-            }
-        }
-        Ok(index)
-    }
-
-    /// The entries of writes to many records, newest first, which the nil
-    /// uuid lists in `log_entries_by_metarecord`.
-    fn listed_entries(&self) -> Result<Vec<i64>> {
-        let (lo, hi) = (
-            super::key(&[ROOT.as_slice(), &super::be(0)]),
-            super::key(&[ROOT.as_slice(), &super::be(i64::MAX)]),
-        );
-        let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
-        let mut out = Vec::new();
-        for e in self.t.log_entries_by_metarecord.rev_range(self.r, &range)? {
-            self.count(1)?;
-            out.push(super::from_be(&e?.0[16..]));
+            out.extend(self.chunk(entry.first, n)?.targets);
         }
         Ok(out)
     }
 
-    /// Every write to many records of the log, newest first, with the place
-    /// of each of its targets, from the store's memo: read at the first
-    /// question after a write, and kept until the next. `None` in a write
-    /// transaction, or when they name more records than the memo keeps.
-    fn memoed(&self) -> Result<Option<std::sync::Arc<Vec<Memoed>>>> {
-        let Some((memo, generation)) = self.targets_memo else { return Ok(None) };
-        let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
-        if memo.generation == Some(generation) {
-            return Ok(memo.entries.clone());
-        }
-        let mut entries = Vec::new();
-        let mut named = 0usize;
-        let mut kept = true;
-        for first in self.listed_entries()? {
-            let entry =
-                self.entry(first)?.context("a write to many records listed and not there")?;
-            named += entry.h.targets as usize;
-            if named > MEMO_TARGETS {
-                kept = false;
-                break;
-            }
-            let index = self.indexed_targets(&entry)?;
-            entries.push(Memoed { entry, index });
-        }
-        memo.generation = Some(generation);
-        memo.entries = kept.then(|| std::sync::Arc::new(entries));
-        Ok(memo.entries.clone())
+    /// The last operation `log_entries_by_metarecord` indexes: every one up to
+    /// it, none after (doc "Log storage").
+    pub(super) fn indexed_up_to(&self) -> Result<i64> {
+        self.count(1)?;
+        Ok(super::State::LogIndexedUpTo.get(self.t, self.r)?.unwrap_or(0))
     }
 
-    /// A record's operations after `after`, ascending: those of the entries
-    /// that name it alone, and those of the writes to many records that name
-    /// it among others.
+    /// The entries holding an operation after `after`, oldest first.
+    pub(super) fn entries_after(&self, after: i64) -> Result<Vec<Entry>> {
+        let mut out = Vec::new();
+        let mut start = after + 1;
+        if let Some(e) = self.entry_at(start)? {
+            start = e.last() + 1;
+            out.push(e);
+        }
+        let from = super::be(start);
+        let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
+        for e in self.t.log_entries.range(self.r, &range)? {
+            self.count(1)?;
+            let (k, v) = e?;
+            out.push(Entry { first: super::from_be(k), h: Header::decode(v)? });
+        }
+        Ok(out)
+    }
+
+    /// A record's operations after `after`, ascending: those
+    /// `log_entries_by_metarecord` indexes, then those of the entries the
+    /// idle fold has not indexed yet, found among their targets.
     pub(super) fn entity_op_ids_after(&self, entity: Uuid, after: i64) -> Result<Vec<i64>> {
         let mut ids = Vec::new();
         for e in self.t.log_entries_by_metarecord.prefix_iter(self.r, entity.as_bytes())? {
@@ -688,50 +668,69 @@ impl Read<'_> {
                 ids.push(id);
             }
         }
-        let mut place = |entry: &Entry, index: &HashMap<Uuid, usize>| {
-            if let Some(id) = index.get(&entity).map(|k| entry.first + *k as i64) {
-                if id > after {
+        let indexed = self.indexed_up_to()?;
+        let from = indexed.max(after);
+        for entry in self.entries_after(from)? {
+            for (k, u) in self.targets(&entry)?.into_iter().enumerate() {
+                let id = entry.first + k as i64;
+                if u == entity && id > from {
                     ids.push(id);
                 }
             }
-        };
-        if let Some(memo) = self.memoed()? {
-            for m in memo.iter() {
-                if m.entry.last() <= after {
-                    break;
-                }
-                place(&m.entry, &m.index);
-            }
-        } else {
-            for first in self.listed_entries()? {
-                let entry =
-                    self.entry(first)?.context("a write to many records listed and not there")?;
-                if entry.last() <= after {
-                    break;
-                }
-                place(&entry, &self.indexed_targets(&entry)?);
-            }
         }
         ids.sort_unstable();
+        ids.dedup();
         Ok(ids)
+    }
+
+    /// The operations that revert operation `op`: the revert of `first ·
+    /// last` reverts each of them, in order (doc "Log storage").
+    pub(super) fn reverters_of(&self, op: i64) -> Result<Vec<i64>> {
+        let Some(entry) = self.entry_at(op)? else { return Ok(Vec::new()) };
+        let mut out = Vec::new();
+        let mut read = 1;
+        for e in self.t.log_reverted_by.prefix_iter(self.r, &super::be(entry.first))? {
+            read += 1;
+            let (first, last, revert) = reverted_key(e?.0);
+            if (first..=last).contains(&op) {
+                out.push(revert + (op - first));
+            }
+        }
+        self.count(read)?;
+        Ok(out)
     }
 }
 
-/// How many targets the entries a memo keeps may name in all: past it, the
-/// history of a record reads them from the log.
-const MEMO_TARGETS: usize = 4_000_000;
-
-/// The writes to many records of the committed store, with the place of each
-/// target, for the generation they were read at.
-#[derive(Default)]
-pub(super) struct TargetsMemo {
-    generation: Option<u64>,
-    entries: Option<std::sync::Arc<Vec<Memoed>>>,
+/// `entry's first op · first reverted · last reverted · the op that reverts
+/// the first`, a key of `log_reverted_by`.
+fn reverted_by_key(entry: i64, first: i64, last: i64, revert: i64) -> Vec<u8> {
+    super::key(&[&super::be(entry), &super::be(first), &super::be(last), &super::be(revert)])
 }
 
-pub(super) struct Memoed {
-    entry: Entry,
-    index: HashMap<Uuid, usize>,
+/// The first and last reverted, and the revert of the first, of a key of
+/// `log_reverted_by`.
+fn reverted_key(k: &[u8]) -> (i64, i64, i64) {
+    (super::from_be(&k[8..16]), super::from_be(&k[16..24]), super::from_be(&k[24..32]))
+}
+
+/// How many entries the store's cache keeps.
+const ENTRY_CACHE: usize = 100_000;
+
+/// The entries of the log reads looked up, by first operation id, for the
+/// generation of the store they were read at.
+#[derive(Default)]
+pub(super) struct EntryCache {
+    generation: u64,
+    entries: std::collections::BTreeMap<i64, Header>,
+}
+
+/// The targets of the last entry of the log, while writes extend it: kept by
+/// the store between them, so that an extension reads no chunk to know it
+/// does not name its target already.
+pub(super) struct LastTargets {
+    first: i64,
+    targets: u64,
+    set: std::collections::HashSet<Uuid>,
 }
 
 impl KvTxn<'_> {
@@ -742,57 +741,74 @@ impl KvTxn<'_> {
         self.read_in(&txn, &mut |read: &Read| (f.take().expect("called once"))(read))
     }
 
-    /// Appends an entry of `chunks` (doc "Log storage"), listed under the nil
-    /// uuid when it is a write to many records (`listed`), each target under
-    /// its uuid otherwise. Its first operation id.
-    pub(super) fn put_entry(&self, h: &Header, chunks: &[Chunk], listed: bool) -> Result<i64> {
-        let mut w = self.txn.borrow_mut();
-        let t = self.t;
-        let first = super::State::NextLogOp.get(&t, &w)?.unwrap_or(1);
-        debug_assert_eq!(chunks.iter().map(|c| c.targets.len() as u64).sum::<u64>(), h.targets);
-        let at = super::be(first);
-        t.log_entries.put(&mut w, &at, &h.encode()?)?;
-        for (n, chunk) in chunks.iter().enumerate() {
-            t.log_targets.put(&mut w, &chunk_key(first, n as u64), &chunk.encode())?;
+    /// Appends an entry of `chunks` (doc "Log storage"). Its first operation
+    /// id.
+    pub(super) fn put_entry(&self, h: &Header, chunks: &[Chunk]) -> Result<i64> {
+        let first = {
+            let mut w = self.txn.borrow_mut();
+            let t = self.t;
+            let first = super::State::NextLogOp.get(&t, &w)?.unwrap_or(1);
+            debug_assert_eq!(chunks.iter().map(|c| c.targets.len() as u64).sum::<u64>(), h.targets);
+            let at = super::be(first);
+            t.log_entries.put(&mut w, &at, &h.encode()?)?;
+            for (n, chunk) in chunks.iter().enumerate() {
+                t.log_targets.put(&mut w, &chunk_key(first, n as u64), &chunk.encode())?;
+            }
+            let mut count = Enc::default();
+            count.varint(h.targets);
+            let key = super::key(&[&super::be(h.context), &at]);
+            t.log_entries_by_context.put(&mut w, &key, &count.0)?;
+            self.class(h.origin.as_deref()).put(&mut w, &at, &[])?;
+            super::State::NextLogOp.put(&t, &mut w, first + h.targets as i64)?;
+            first
+        };
+        if let Some(reverted) = h.reverts {
+            for (entry, from, to) in self.reverted_spans(reverted, h.targets as i64)? {
+                let key = reverted_by_key(entry, from, to, first + (from - reverted));
+                self.t.log_reverted_by.put(&mut self.txn.borrow_mut(), &key, &[])?;
+            }
         }
-        let mut count = Enc::default();
-        count.varint(h.targets);
-        t.log_entries_by_context.put(
-            &mut w,
-            &super::key(&[&super::be(h.context), &at]),
-            &count.0,
-        )?;
-        if listed {
-            t.log_entries_by_metarecord.put(&mut w, &super::key(&[ROOT.as_slice(), &at]), &[])?;
-        } else {
-            let mut k = 0i64;
-            for chunk in chunks {
-                for u in &chunk.targets {
-                    let key = super::key(&[u.as_bytes(), &super::be(first + k)]);
-                    t.log_entries_by_metarecord.put(&mut w, &key, &[])?;
-                    k += 1;
+        Ok(first)
+    }
+
+    /// The entries the operations `from..from + n` are in, and the span of
+    /// them each holds: `(entry, first, last)`. An operation the log no longer
+    /// holds is passed over.
+    fn reverted_spans(&self, from: i64, n: i64) -> Result<Vec<(i64, i64, i64)>> {
+        let end = from + n - 1;
+        self.read_log(|r| {
+            let mut out = Vec::new();
+            let mut id = from;
+            while id <= end {
+                match r.entry_at(id)? {
+                    Some(e) => {
+                        let last = e.last().min(end);
+                        out.push((e.first, id, last));
+                        id = last + 1;
+                    }
+                    None => {
+                        let at = super::be(id);
+                        let range =
+                            (std::ops::Bound::Excluded(&at[..]), std::ops::Bound::Unbounded);
+                        r.count(1)?;
+                        match r.t.log_entries.range(r.r, &range)?.next() {
+                            Some(e) => id = super::from_be(e?.0),
+                            None => break,
+                        }
+                    }
                 }
             }
-        }
-        self.class(h.origin.as_deref()).put(&mut w, &at, &[])?;
-        if let Some(target) = h.reverts {
-            for k in 0..h.targets as i64 {
-                let key = super::key(&[&super::be(target + k), &super::be(first + k)]);
-                t.log_reverted_by.put(&mut w, &key, &[])?;
-            }
-        }
-        super::State::NextLogOp.put(&t, &mut w, first + h.targets as i64)?;
-        Ok(first)
+            Ok(out)
+        })
     }
 
     /// Adds the operation `h` on `target` to the last entry of the log, when it
     /// differs from it only by its target (doc "Log storage"): the same
     /// context, origin, effect, file action and parameters, a revert of the
     /// operation after the last one the entry reverts, and a target the entry
-    /// does not name. Only an entry written one operation at a time is
-    /// extended: whether it names the target is then one range of
-    /// `log_entries_by_metarecord`. The operation's id, `None` when it is not
-    /// added.
+    /// does not name. A deletion is not extended: the undo of a deletion of
+    /// many records knows it by its entry. The operation's id, `None` when it
+    /// is not added.
     pub(super) fn extend_last(
         &self,
         h: &Header,
@@ -804,6 +820,9 @@ impl KvTxn<'_> {
             let w = self.txn.borrow();
             super::State::NextLogOp.get(&t, &w)?.unwrap_or(1)
         };
+        if h.effect == Effect::Delete {
+            return Ok(None);
+        }
         let Some(mut entry) = self.read_log(|r| r.entry_at(next - 1))? else { return Ok(None) };
         let e = &entry.h;
         let reverts_next = match (e.reverts, h.reverts) {
@@ -820,24 +839,26 @@ impl KvTxn<'_> {
         if !same || entry.last() != next - 1 {
             return Ok(None);
         }
-        let at = super::be(entry.first);
-        let named = {
-            let w = self.txn.borrow();
-            if t.log_entries_by_metarecord.get(&w, &super::key(&[ROOT.as_slice(), &at]))?.is_some()
-            {
-                return Ok(None);
-            }
-            let (lo, hi) = (
-                super::key(&[target.as_bytes(), &at]),
-                super::key(&[target.as_bytes(), &super::be(entry.last())]),
-            );
-            let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
-            let found = t.log_entries_by_metarecord.range(&w, &range)?.next().is_some();
-            found
-        };
-        if named {
+        // The entry's targets: those the store kept since the last write that
+        // extended it, else its chunks.
+        let mut last = self.last_targets.borrow_mut();
+        if !last.as_ref().is_some_and(|l| l.first == entry.first && l.targets == entry.h.targets) {
+            let kept = self.last_targets_kept.lock().unwrap_or_else(|e| e.into_inner()).take();
+            *last = match kept.filter(|l| l.first == entry.first && l.targets == entry.h.targets) {
+                Some(l) => Some(l),
+                None => {
+                    let set = self.read_log(|r| r.targets(&entry))?.into_iter().collect();
+                    Some(LastTargets { first: entry.first, targets: entry.h.targets, set })
+                }
+            };
+        }
+        let known = last.as_mut().expect("just loaded");
+        if !known.set.insert(target) {
             return Ok(None);
         }
+        known.targets += 1;
+        drop(last);
+        let at = super::be(entry.first);
         let (n, rank) = (entry.h.targets / CHUNK, (entry.h.targets % CHUNK) as usize);
         let mut chunk = if rank == 0 {
             Chunk { targets: Vec::new(), before: Vec::new(), pending: RoaringBitmap::new() }
@@ -847,6 +868,12 @@ impl KvTxn<'_> {
         chunk.targets.push(target);
         chunk.before.push(before);
         entry.h.targets += 1;
+        // The revert's key for the entry the previous operation reverted grows
+        // when that entry holds the next one too.
+        let revert_key = match h.reverts {
+            Some(reverted) => Some(self.grown_revert_key(reverted, next)?),
+            None => None,
+        };
         let mut w = self.txn.borrow_mut();
         t.log_targets.put(&mut w, &chunk_key(entry.first, n), &chunk.encode())?;
         t.log_entries.put(&mut w, &at, &entry.h.encode()?)?;
@@ -857,33 +884,67 @@ impl KvTxn<'_> {
             &super::key(&[&super::be(entry.h.context), &at]),
             &count.0,
         )?;
-        t.log_entries_by_metarecord.put(
-            &mut w,
-            &super::key(&[target.as_bytes(), &super::be(next)]),
-            &[],
-        )?;
-        if let Some(reverted) = h.reverts {
-            let key = super::key(&[&super::be(reverted), &super::be(next)]);
-            t.log_reverted_by.put(&mut w, &key, &[])?;
+        if let Some((gone, key)) = revert_key {
+            if let Some(gone) = gone {
+                t.log_reverted_by.delete(&mut w, &gone)?;
+            }
+            if let Some(key) = key {
+                t.log_reverted_by.put(&mut w, &key, &[])?;
+            }
         }
         super::State::NextLogOp.put(&t, &mut w, next + 1)?;
         Ok(Some(next))
     }
 
-    /// Removes an entry and every key of it.
+    /// The key of `log_reverted_by` operation `revert` adds when it reverts
+    /// `reverted`, the previous one of its entry reverting `reverted - 1`:
+    /// the key of the previous one grown, which it replaces, when one entry
+    /// holds both; a key of its own else. Nothing when the log no longer holds
+    /// `reverted`.
+    #[allow(clippy::type_complexity)]
+    fn grown_revert_key(
+        &self,
+        reverted: i64,
+        revert: i64,
+    ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        let Some(e) = self.read_log(|r| r.entry_at(reverted))? else { return Ok((None, None)) };
+        let previous = {
+            let w = self.txn.borrow();
+            let mut found = None;
+            for k in self.t.log_reverted_by.prefix_iter(&w, &super::be(e.first))? {
+                let k = k?.0;
+                let (first, last, by) = reverted_key(k);
+                if last == reverted - 1 && by + (last - first) == revert - 1 {
+                    found = Some((k.to_vec(), first, by));
+                }
+            }
+            found
+        };
+        Ok(match previous {
+            Some((gone, first, by)) => {
+                (Some(gone), Some(reverted_by_key(e.first, first, reverted, by)))
+            }
+            None => (None, Some(reverted_by_key(e.first, reverted, reverted, revert))),
+        })
+    }
+
+    /// Removes an entry and every key of it: those it has as an entry, as an
+    /// entry reverted, and as a revert.
     pub(super) fn remove_entry(&self, entry: &Entry) -> Result<()> {
         let t = self.t;
         let at = super::be(entry.first);
-        let listed = {
-            let w = self.txn.borrow();
-            t.log_entries_by_metarecord.get(&w, &super::key(&[ROOT.as_slice(), &at]))?.is_some()
+        let indexed = self.read_log(|r| r.indexed_up_to())?;
+        let targets: Vec<Uuid> =
+            if entry.first <= indexed { self.read_log(|r| r.targets(entry))? } else { Vec::new() };
+        let reverts = match entry.h.reverts {
+            Some(reverted) => self.reverted_spans(reverted, entry.h.targets as i64)?,
+            None => Vec::new(),
         };
-        let targets: Vec<Uuid> = if listed {
-            Vec::new()
-        } else {
+        let reverted: Vec<Vec<u8>> = {
+            let w = self.txn.borrow();
             let mut out = Vec::new();
-            for n in 0..chunks_of(entry.h.targets) {
-                out.extend(self.read_log(|r| r.chunk(entry.first, n))?.targets);
+            for k in t.log_reverted_by.prefix_iter(&w, &at)? {
+                out.push(k?.0.to_vec());
             }
             out
         };
@@ -894,20 +955,54 @@ impl KvTxn<'_> {
         }
         t.log_entries_by_context
             .delete(&mut w, &super::key(&[&super::be(entry.h.context), &at]))?;
-        t.log_entries_by_metarecord.delete(&mut w, &super::key(&[ROOT.as_slice(), &at]))?;
         for (k, u) in targets.iter().enumerate() {
             let key = super::key(&[u.as_bytes(), &super::be(entry.first + k as i64)]);
             t.log_entries_by_metarecord.delete(&mut w, &key)?;
         }
-        if let Some(target) = entry.h.reverts {
-            for k in 0..entry.h.targets as i64 {
-                let key = super::key(&[&super::be(target + k), &super::be(entry.first + k)]);
+        for k in reverted {
+            t.log_reverted_by.delete(&mut w, &k)?;
+        }
+        if let Some(r) = entry.h.reverts {
+            for (e, from, to) in reverts {
+                let key = reverted_by_key(e, from, to, entry.first + (from - r));
                 t.log_reverted_by.delete(&mut w, &key)?;
             }
         }
         t.log_watcher_entries.delete(&mut w, &at)?;
         t.log_user_entries.delete(&mut w, &at)?;
         Ok(())
+    }
+
+    /// Indexes the targets of the operations after the last one
+    /// `log_entries_by_metarecord` indexes, about `budget` of them: one key
+    /// `uuid · op id` each, and the pointer moved (doc "Log storage").
+    /// Whether there were any.
+    pub(super) fn index_log_step(&self, budget: u64) -> Result<bool> {
+        let indexed = self.read_log(|r| r.indexed_up_to())?;
+        let entries = self.read_log(|r| r.entries_after(indexed))?;
+        if entries.is_empty() {
+            return Ok(false);
+        }
+        let mut done = 0u64;
+        let mut up_to = indexed;
+        for entry in entries {
+            let targets = self.read_log(|r| r.targets(&entry))?;
+            let mut w = self.txn.borrow_mut();
+            for (k, u) in targets.iter().enumerate() {
+                let id = entry.first + k as i64;
+                if id > indexed {
+                    let key = super::key(&[u.as_bytes(), &super::be(id)]);
+                    self.t.log_entries_by_metarecord.put(&mut w, &key, &[])?;
+                }
+            }
+            done += targets.len() as u64;
+            up_to = entry.last();
+            if done >= budget {
+                break;
+            }
+        }
+        super::State::LogIndexedUpTo.put(&self.t, &mut self.txn.borrow_mut(), up_to)?;
+        Ok(true)
     }
 
     /// Writes into the chunks of the log the before of deleted records the

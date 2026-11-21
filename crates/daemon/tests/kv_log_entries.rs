@@ -289,3 +289,65 @@ fn an_entry_is_extended_only_by_the_same_operation_on_a_new_target_last_in_the_l
     assert!(same.iter().all(|o| o.entity_uuid == uuids[0]));
     assert_eq!(entries(&store) as usize, start as usize + 5 + same.len(), "one entry each");
 }
+
+// ── Beside the entries (doc "Log storage") ──────────────────────────────────
+
+/// A record's history is indexed by the idle fold, not by the write: it reads
+/// the same on either side.
+#[test]
+fn a_records_history_is_indexed_at_the_fold_and_reads_the_same() {
+    let dir = TempDir::new("kv-log-entries-history");
+    let mut store = KvStore::open_unsynced(dir.path()).unwrap();
+    let uuids = records(&mut store, 300);
+    let ids = store.dense_ids(&uuids).unwrap();
+    write(&mut store, |w| w.mass_add_ids("tag", s("blue"), &ids).unwrap());
+    write(&mut store, |w| w.set_field(uuids[7], "n", Value::Int(70)).unwrap());
+    assert_eq!(store.last_write_keys().get("log_entries_by_metarecord"), None, "not at the write");
+    let history = |store: &KvStore, u: Uuid| -> Vec<(i64, String)> {
+        let ops = store.entity_ops_after(u, 0).unwrap();
+        assert!(ops.iter().all(|o| o.entity_uuid == u));
+        ops.into_iter().map(|o| (o.id, o.op_type)).collect()
+    };
+    let before: Vec<_> = uuids.iter().map(|&u| history(&store, u)).collect();
+    assert_eq!(before[7].len(), 3, "created, tagged, set: {:?}", before[7]);
+    assert_eq!(before[8].len(), 2);
+    store.fold().unwrap();
+    assert_eq!(
+        store.last_write_keys().get("log_entries_by_metarecord"),
+        Some(&(300 + 300 + 1)),
+        "one key per target of every entry"
+    );
+    let after: Vec<_> = uuids.iter().map(|&u| history(&store, u)).collect();
+    assert_eq!(after, before);
+    // What comes after the fold is read from the entries, the rest indexed.
+    write(&mut store, |w| w.set_field(uuids[8], "n", Value::Int(80)).unwrap());
+    assert_eq!(history(&store, uuids[8]).len(), 3);
+}
+
+/// A revert of a write to many records is one key of `log_reverted_by` per
+/// entry it reverts, an interval of its operations.
+#[test]
+fn a_revert_of_many_operations_is_one_key_per_entry_it_reverts() {
+    use metafolder_daemon::revert;
+    let dir = TempDir::new("kv-log-entries-reverted");
+    let mut store = KvStore::open_unsynced(dir.path()).unwrap();
+    let uuids = records(&mut store, 5000);
+    let ids = store.dense_ids(&uuids).unwrap();
+    let mut w = Writer::begin(&mut store, Some("tag".into())).unwrap();
+    let ctx = w.label_id();
+    w.mass_add_ids("tag", s("blue"), &ids).unwrap();
+    w.commit().unwrap();
+    let tagged = revert::label_ops(&store, ctx).unwrap();
+    let mut w = Writer::begin(&mut store, Some("undo".into())).unwrap();
+    let undo = w.label_id();
+    revert::apply(&mut w, &tagged).unwrap();
+    w.commit().unwrap();
+    assert_eq!(store.last_write_keys().get("log_reverted_by"), Some(&1), "one entry reverted");
+    let undone = revert::label_ops(&store, undo).unwrap();
+    assert_eq!(undone.len(), 5000);
+    for k in [0usize, 1, 4095, 4096, 4999] {
+        let rev = undone.iter().find(|o| o.reverts_op_id == Some(tagged[k].id)).unwrap();
+        assert_eq!(store.reverters(tagged[k].id).unwrap(), vec![rev.id], "operation {k}");
+        assert!(store.reverters(rev.id).unwrap().is_empty());
+    }
+}

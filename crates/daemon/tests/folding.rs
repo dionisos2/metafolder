@@ -69,6 +69,8 @@ fn an_operation_in_flight_is_activity_and_the_quiet_starts_when_it_ends() {
     let long_ago = std::time::Instant::now() - hour;
     repo.activity.note_at(long_ago);
     assert!(repo.activity.idle_for() >= hour);
+    // What the setup wrote is folded, the history of its records indexed.
+    while folding::step(&repo, Duration::from_secs(30)).unwrap() == Some(true) {}
     assert_eq!(folding::step(&repo, Duration::from_secs(30)).unwrap(), Some(false));
 
     let operation = folding::begin_operation(&repo);

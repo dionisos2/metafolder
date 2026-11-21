@@ -567,7 +567,9 @@ impl KvTxn<'_> {
             consider(self.gram_fold_size(&field)?, List::Grams(field));
         }
         match best {
-            None => Ok(false),
+            // Last, the history of the records, which the writes leave to the
+            // fold (doc "Log storage").
+            None => self.index_log_step(super::super::entry::INDEX_BUDGET),
             Some((_, List::Part(part))) => self.fold_part(part).map(|()| true),
             Some((_, List::Events(field))) => self.fold_events(&field).map(|()| true),
             Some((_, List::Grams(field))) => self.fold_gram_field(&field).map(|()| true),

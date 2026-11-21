@@ -6,10 +6,7 @@
 //! entry of N targets: the field, the value or values, and the records that
 //! changed, by uuid, in the order of their dense ids. It holds the N operation
 //! ids `first` to `first + N - 1`, and what reads the log is given the
-//! operations a write to each record alone would have logged. It is listed
-//! under the nil uuid in `log_entries_by_metarecord`, which no metarecord
-//! has: a record's operations after an id are its own and those of the
-//! entries listed there that name it.
+//! operations a write to each record alone would have logged.
 
 use std::collections::BTreeMap;
 
@@ -24,7 +21,7 @@ use super::derived::{
 };
 use super::entry::{self, Effect, Entry, FileAction, Header, Params, CHUNK};
 use super::mass::{entry_key, read_part, Listed, DELETES_PART, THAWED_PART};
-use super::{be, key, name_key, KvTxn, Read, ROOT};
+use super::{name_key, KvTxn, Read};
 use crate::rows::FieldRow;
 use crate::store::{MassApplied, MassKind as Kind};
 
@@ -170,7 +167,7 @@ impl KvTxn<'_> {
         let chunks = entry::chunks(&targets, false, |k| {
             held.get_mut(k).map(std::mem::take).unwrap_or_default()
         });
-        let first = self.put_entry(&h, &chunks, true)?;
+        let first = self.put_entry(&h, &chunks)?;
         let last = first + changed.len() as i64 - 1;
         Ok(Some(MassApplied { changed, last_op: last, touches_watch: false }))
     }
@@ -307,7 +304,7 @@ impl KvTxn<'_> {
         // The before of every target is in its record, which the deletion
         // keeps as it was until the fold copies it into the chunks.
         let targets = self.uuids_of_ids(&changed)?;
-        let first = self.put_entry(&h, &entry::chunks(&targets, true, |_| Vec::new()), true)?;
+        let first = self.put_entry(&h, &entry::chunks(&targets, true, |_| Vec::new()))?;
         let last = first + changed.len() as i64 - 1;
         let entry = Listed {
             op: first as u64,
@@ -357,7 +354,7 @@ impl KvTxn<'_> {
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
-        let Some(entry) = self.listed_entry(first_op, last_op)? else { return Ok(None) };
+        let Some(entry) = self.entry_covering(first_op, last_op)? else { return Ok(None) };
         let (Effect::Add | Effect::Remove, Params::Value(field, value)) =
             (entry.h.effect, &entry.h.params)
         else {
@@ -385,19 +382,10 @@ impl KvTxn<'_> {
         )
     }
 
-    /// The write to many records that holds the operations
-    /// `first_op..=last_op`, when one does.
-    fn listed_entry(&self, first_op: i64, last_op: i64) -> Result<Option<Entry>> {
-        let Some(entry) = self.read_log(|r| r.entry_at(first_op))? else { return Ok(None) };
-        if !entry.covers(last_op) {
-            return Ok(None);
-        }
-        let listed = {
-            let txn = self.txn.borrow();
-            let k = key(&[ROOT.as_slice(), &be(entry.first)]);
-            self.t.log_entries_by_metarecord.get(&txn, &k)?.is_some()
-        };
-        Ok(listed.then_some(entry))
+    /// The entry that holds the operations `first_op..=last_op`, when one does.
+    fn entry_covering(&self, first_op: i64, last_op: i64) -> Result<Option<Entry>> {
+        let entry = self.read_log(|r| r.entry_at(first_op))?;
+        Ok(entry.filter(|e| e.covers(last_op)))
     }
 
     /// The operations `first_op..=last_op` of `entry`, as they are stored.
@@ -449,14 +437,16 @@ impl KvTxn<'_> {
         first_op: i64,
         last_op: i64,
     ) -> Result<Option<MassApplied>> {
-        let Some(entry) = self.listed_entry(first_op, last_op)?.filter(|e| e.deletes()) else {
+        let Some(entry) = self.entry_covering(first_op, last_op)?.filter(|e| e.deletes()) else {
             return Ok(None);
         };
         let targets = self.targets_of_ops(&entry, first_op, last_op)?;
         // The fold wrote the records out of the store when the chunks hold
         // their rows: they are put back from there. Some only: not as a whole.
+        // A deletion of one record, which no deletion extends, is undone as
+        // one.
         let folded = !targets.iter().any(|t| t.pending);
-        if !folded && !targets.iter().all(|t| t.pending) {
+        if !folded && !targets.iter().all(|t| t.pending) || folded && entry.h.targets < 2 {
             return Ok(None);
         }
         // The mark that names every one of these operations, which a fold

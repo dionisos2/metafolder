@@ -269,10 +269,12 @@ pub struct KvStore {
     /// How many write transactions committed: what a memo of the committed
     /// store is valid for.
     generation: std::sync::atomic::AtomicU64,
-    /// The targets of the writes to many records of the log, read once for
-    /// every read of a record's history until the next write (doc "Log
-    /// storage").
-    targets_memo: std::sync::Mutex<entry::TargetsMemo>,
+    /// The targets of the last entry of the log, as the last write that
+    /// extended it left them (doc "Log storage").
+    last_targets: std::sync::Mutex<Option<entry::LastTargets>>,
+    /// The entries of the log reads looked up, for the generation they were
+    /// read at: what a record's history asks of each of its operations.
+    entry_cache: std::sync::Mutex<entry::EntryCache>,
     /// Where the copy is, shared with whoever reports it, so that reading it
     /// never waits on the store.
     resident: memory::ResidencyHandle,
@@ -367,6 +369,9 @@ enum State {
     NextReindex,
     /// The next dense id.
     NextMetarecordId,
+    /// The last operation `log_entries_by_metarecord` indexes (doc "Log
+    /// storage").
+    LogIndexedUpTo,
 }
 
 impl State {
@@ -381,13 +386,14 @@ impl State {
             State::NextWriteNumber => b"next_write_number",
             State::NextReindex => b"next_reindex",
             State::NextMetarecordId => b"next_metarecord_id",
+            State::LogIndexedUpTo => b"log_entries_by_metarecord_indexed_up_to",
         }
     }
 
     fn db(self, t: &Tables) -> Db {
         match self {
             State::PrimaryVersion | State::DerivedVersion => t.version,
-            State::NextMetarecordId => t.global_derived_state,
+            State::NextMetarecordId | State::LogIndexedUpTo => t.global_derived_state,
             _ => t.global_primary_state,
         }
     }
@@ -666,7 +672,8 @@ impl KvStore {
             thawed: Default::default(),
             written: std::sync::Mutex::new([0; table::TABLES]),
             generation: Default::default(),
-            targets_memo: Default::default(),
+            last_targets: Default::default(),
+            entry_cache: Default::default(),
             memory: None,
             resident: Default::default(),
             durable,
@@ -767,10 +774,9 @@ struct Read<'a> {
     mass: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
-    /// The store's memo of the targets of writes to many records, and the
-    /// generation the read sees; `None` in a write transaction, whose writes
-    /// the memo does not know.
-    targets_memo: Option<(&'a std::sync::Mutex<entry::TargetsMemo>, u64)>,
+    /// The store's cache of the entries of the log it read, and the
+    /// generation the read sees; `None` in a write transaction.
+    entries: Option<(&'a std::sync::Mutex<entry::EntryCache>, u64)>,
 }
 
 impl Read<'_> {
@@ -1493,14 +1499,7 @@ macro_rules! kv_reads {
             }
             fn reverters(&self, op: i64) -> Result<Vec<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| {
-                    let mut out = Vec::new();
-                    for e in $read.t.log_reverted_by.prefix_iter($read.r, &be(op))? {
-                        out.push(from_be(&e?.0[8..]));
-                    }
-                    $read.count(out.len() as u64 + 1)?;
-                    Ok(out)
-                })
+                $with(&mut |$read: &Read| $read.reverters_of(op))
             }
             fn label_of_command(&self, key: Uuid) -> Result<Option<i64>> {
                 let $me = self;
@@ -1559,10 +1558,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         values: None,
         mass: me.mass_pending(),
         universe: Default::default(),
-        targets_memo: Some((
-            &me.targets_memo,
-            me.generation.load(std::sync::atomic::Ordering::Relaxed),
-        )),
+        entries: Some((&me.entry_cache, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
     })
 });
 
@@ -1662,7 +1658,7 @@ impl KvTxn<'_> {
             values: Some(&values),
             mass: self.mass_pending(),
             universe: Default::default(),
-            targets_memo: None,
+            entries: None,
         })
     }
 }
@@ -1707,6 +1703,10 @@ pub struct KvTxn<'e> {
     deletes: TxnFlag<'e>,
     /// The store's flag that records given back hold the log's before.
     thawed: TxnFlag<'e>,
+    /// The targets of the last entry of the log as this transaction extends
+    /// it, and where the store keeps them once it commits.
+    last_targets: RefCell<Option<entry::LastTargets>>,
+    last_targets_kept: &'e std::sync::Mutex<Option<entry::LastTargets>>,
 }
 
 /// A flag of the store as a write transaction sees it. The flags say what the
@@ -2364,6 +2364,8 @@ impl<'e> KvTxn<'e> {
             grams: RefCell::new(HashMap::new()),
             grams_changed: RefCell::new(Default::default()),
             events: RefCell::new(HashMap::new()),
+            last_targets: RefCell::new(None),
+            last_targets_kept: &store.last_targets,
         })
     }
 
@@ -2394,6 +2396,11 @@ impl<'e> KvTxn<'e> {
             flag.publish();
         }
         self.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // What a transaction that fails leaves is not kept: the next one reads
+        // the chunks.
+        if let Some(last) = self.last_targets.into_inner() {
+            *self.last_targets_kept.lock().unwrap_or_else(|e| e.into_inner()) = Some(last);
+        }
         Ok(())
     }
 }
@@ -2484,7 +2491,7 @@ impl KvTxn<'_> {
                     values: None,
                     mass: false,
                     universe: Default::default(),
-                    targets_memo: None,
+                    entries: None,
                 };
                 let Some(meta) = self.t.log_contexts.get(&txn, &be(label))? else { break };
                 let meta = dec_label(meta)?;
@@ -2783,7 +2790,7 @@ impl WriteTxn for KvTxn<'_> {
                 before: vec![before],
                 pending: Default::default(),
             };
-            last = self.put_entry(&h, &[chunk], false)?;
+            last = self.put_entry(&h, &[chunk])?;
         }
         Ok(last)
     }

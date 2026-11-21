@@ -85,11 +85,12 @@ log, of the same context, and the targets are disjoint. A revert's entry is exte
 only by the revert of the next operation (first reverted = last reverted + 1). So a
 loop of `mf … field add` over a thousand files, inside one context, is one entry.
 
-Only an entry written one operation at a time is extended, not a write to many records:
-whether it already names the target is then one range of `log_entries_by_metarecord`
-(the target's keys between the entry's first and last ids). An operation added to an
-entry takes its timestamp. The cost is the last chunk rewritten by each write that
-extends it, up to 4096 uuids (`tests/kv_log_entries.rs`).
+A deletion is not extended: the undo of a deletion of many records knows it by its
+entry. Whether the entry already names the target is asked of its targets, which the
+store keeps in memory between the writes that extend it (read from the chunks once,
+and again after a write that failed). An operation added to an entry takes its
+timestamp. The cost is the last chunk rewritten by each write that extends it, up to
+4096 uuids (`tests/kv_log_entries.rs`).
 
 Compaction happens at the append only, where nothing is to be rewritten. Compacting
 entries afterwards stays possible: every key of the absorbed entry (`log_targets`,
@@ -100,14 +101,15 @@ one that stays.
 
 |!Table |!Key |!Kept |
 |`log_entries_by_context` |context · first op id → target count |at the append; a compaction updates the count. A context's operations, their number, its first and last |
-|`log_reverted_by` |reverted entry's first op id · first reverted · last reverted · revert's first op id |at the append, one key per pair of entries; a revert of a whole context writes one per entry it covers |
+|`log_reverted_by` |reverted entry's first op id · first reverted · last reverted · the op that reverts the first |at the append, one key per pair of entries; a revert of a whole context writes one per entry it covers |
 |`log_watcher_entries`, `log_user_entries` |first op id |at the append: the two retention classes ([[Automatic retention]]) |
-|`log_entries_by_metarecord` |uuid · op id |at the idle fold ([[Folding in idle time]]), one key per target, up to `log_entries_by_metarecord_indexed_up_to` in `global_derived_state` |
+|`log_entries_by_metarecord` |uuid · op id |at the idle fold ([[Folding in idle time]]), one key per target, up to `log_entries_by_metarecord_indexed_up_to` in `global_derived_state`; a step indexes about 64 Ki targets |
 
 Whether `X` is reverted: the entry holding `X` is known; its keys in
-`log_reverted_by` are read, and if first ≤ `X` ≤ last, `X` is reverted by the revert's
-`first + (X − first reverted)`. A revert's entry that grows replaces its key; a prune of
-the revert removes its keys.
+`log_reverted_by` are read, and if first ≤ `X` ≤ last, `X` is reverted by the op that
+reverts the first, plus `X − first reverted`. A revert's entry that grows replaces its
+key; a prune of the revert removes its keys, and a prune of the reverted entry those
+under it.
 
 A metarecord's history after an id reads `log_entries_by_metarecord`, then the entries
 not yet indexed, searching their targets (in any order: a compaction appends to them).

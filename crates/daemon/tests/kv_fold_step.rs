@@ -55,6 +55,8 @@ fn a_fold_step_folds_one_list_and_the_biggest_first() {
     assert!(store.fold_step().unwrap());
     assert_eq!(store.pending_events("mood").unwrap(), 0);
 
+    // Last, the history of the records the log holds (doc "Log storage").
+    assert!(store.fold_step().unwrap());
     assert!(!store.fold_step().unwrap(), "nothing left");
     // What was written reads the same folded.
     for u in &uuids {

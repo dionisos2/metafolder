@@ -2111,6 +2111,7 @@ impl KvStore {
         txn.fold_all_mass()?;
         txn.fold_all_events()?;
         txn.fold_grams()?;
+        while txn.index_log_step(super::entry::INDEX_BUDGET)? {}
         txn.finish()?;
         self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
         self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);

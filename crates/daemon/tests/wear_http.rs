@@ -202,7 +202,9 @@ async fn an_explicit_fold_writes_the_pending_lists_in() {
 
     let (status, folded) = request(&app, "POST", &format!("/repos/{repo}/fold"), None).await;
     assert_eq!(status, StatusCode::OK, "{folded}");
-    assert_eq!(folded["folded"], json!(1), "one list: {folded}");
+    // The list, and the history of the records the writes logged (doc "Log
+    // storage").
+    assert_eq!(folded["folded"], json!(2), "one list and the log: {folded}");
     let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
     assert_eq!(wear["mass_entries"], json!(0), "{wear}");
     // Nothing left: nothing folded.
