@@ -585,3 +585,54 @@ fn a_new_store_has_no_meta_table() {
     drop(KvStore::open(dir.path()).unwrap());
     assert!(!has_table(&raw_env(dir.path()), "meta"));
 }
+
+/// A mark of layout 10's `mass` table, in its form: a deletion of many records
+/// still pending (part `u32::MAX`) or the records its undo gave back (part
+/// `u32::MAX − 1`), naming `id` as its operation `op`.
+fn mark10(dir: &std::path::Path, part: u32, op: u64, id: u32) {
+    let env = raw_env(dir);
+    let mass = open_raw(&env, "mass");
+    let mut ids = roaring::RoaringBitmap::new();
+    ids.insert(id);
+    let mut bitmap = Vec::new();
+    ids.serialize_into(&mut bitmap).unwrap();
+    let mut v = Vec::new();
+    v.extend_from_slice(&1i64.to_be_bytes()); // kind: remove
+    v.extend_from_slice(&0u32.to_be_bytes()); // field: none
+    v.extend_from_slice(&0i64.to_be_bytes()); // values: none
+    v.extend_from_slice(&(bitmap.len() as u32).to_be_bytes());
+    v.extend_from_slice(&bitmap);
+    let key = [&part.to_be_bytes()[..], &op.to_be_bytes()[..]].concat();
+    let mut w = env.write_txn().unwrap();
+    mass.put(&mut w, &key, &v).unwrap();
+    w.commit().unwrap();
+}
+
+/// The dense id of `uuid` in a store of layout 10.
+fn id10(dir: &std::path::Path, uuid: Uuid) -> u32 {
+    let env = raw_env(dir);
+    let ids = open_raw(&env, "ids");
+    let r = env.read_txn().unwrap();
+    u32::from_be_bytes(ids.get(&r, uuid.as_bytes()).unwrap().unwrap().try_into().unwrap())
+}
+
+/// The marks of the log a layout 10 store keeps among its pending writes go
+/// with the log (doc "Persisted format changes"): a deletion still pending
+/// leaves its records deleted, the records an undo gave back stay as they are,
+/// and nothing of either is left pending.
+#[test]
+fn a_store_of_layout_10_drops_the_marks_of_its_log() {
+    let dir = fixture10();
+    let (deleted, given_back) = (Uuid::from_u128(2005), Uuid::from_u128(2006));
+    mark10(dir.path(), u32::MAX, 7, id10(dir.path(), deleted));
+    mark10(dir.path(), u32::MAX - 1, 8, id10(dir.path(), given_back));
+    let kv = KvStore::open(dir.path()).unwrap();
+    let gone = deleted.simple().to_string();
+    let want: Vec<String> = expected10().into_iter().filter(|l| !l.starts_with(&gone)).collect();
+    assert_eq!(state(&kv), want, "the deletion pending stays done, the rest as it was");
+    assert!(!kv.metarecords().unwrap().contains(&deleted));
+    assert!(kv.metarecords().unwrap().contains(&given_back));
+    assert_eq!(kv.pending_mass().unwrap(), 0);
+    assert_eq!(kv.check().unwrap(), Vec::<String>::new());
+    assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
+}
