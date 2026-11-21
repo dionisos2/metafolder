@@ -1787,14 +1787,12 @@ impl<'c> Writer<'c> {
         after: Vec<FieldRow>,
     ) -> Result<()> {
         self.observe_effects(op_type, &before, &after, entity);
-        let delta = crate::version::net(&before, &after);
         self.pending.push(NewOp {
             op_type,
             entity,
             field_name: field_name.map(str::to_string),
             before,
             after,
-            delta,
             reverts_op_id: self.reverting,
             origin: self.origin.clone(),
         });

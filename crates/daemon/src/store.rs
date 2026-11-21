@@ -146,10 +146,6 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::added($conn, op_id)
             }
-            fn version_delta(&self, op_id: i64) -> Result<u64> {
-                let $me = self;
-                Log::version_delta($conn, op_id)
-            }
             fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;
                 Log::first_op($conn)
@@ -431,9 +427,6 @@ pub trait Log {
     /// The rows an `append_field` operation added — what a revert takes off;
     /// none for any other operation.
     fn added(&self, op_id: i64) -> Result<Vec<FieldRow>>;
-    /// What the operation added to its entity's version (doc "Metarecord
-    /// version"): subtracted, it takes the version back before the operation.
-    fn version_delta(&self, op_id: i64) -> Result<u64>;
     /// The oldest operation still in the log, `None` on an empty log.
     fn first_op(&self) -> Result<Option<i64>>;
     /// The operations at or before `from`, newest first — all of them, or the
@@ -512,10 +505,11 @@ pub trait Store: Rows + Log {}
 
 impl<T: Rows + Log + ?Sized> Store for T {}
 
-/// [`Log::version_before_label`], for any store: the entity's version now —
-/// that of a metarecord without rows once it is deleted, which is what its
-/// deletion left of the sum — and each of its operations since the label's
-/// first, newest first, taken back: what it added to the version subtracted.
+/// [`Log::version_before_label`], for any store: the entity's rows now, and
+/// each of its operations since the label's first, newest first, undone on
+/// them as a revert would — then the version of what that leaves (doc "Log
+/// storage"). The log keeps no version. A metarecord with no rows — one
+/// deleted then — has the version of no rows.
 pub fn version_before_label<S: Rows + Log + ?Sized>(
     store: &S,
     label: i64,
@@ -527,14 +521,28 @@ pub fn version_before_label<S: Rows + Log + ?Sized>(
     if first.op_type == "create_metarecord" {
         return Ok(None);
     }
-    let mut version = match store.version(entity)? {
-        Some(v) => v,
-        None => crate::version::base(entity),
-    };
+    let mut rows = store.rows(entity)?;
     for op in store.entity_ops_after(entity, first.id - 1)?.iter().rev() {
-        version = crate::version::apply(version, 0, store.version_delta(op.id)?);
+        let field = op.field_name.as_deref();
+        match op.op_type.as_str() {
+            "create_metarecord" => rows.clear(),
+            "delete_metarecord" | "set_metarecord" => rows = store.snapshots(op.id)?,
+            "append_field" => {
+                for added in store.added(op.id)? {
+                    if let Some(at) = rows.iter().position(|r| *r == added) {
+                        rows.remove(at);
+                    }
+                }
+            }
+            "delete_field" => rows.extend(store.snapshots(op.id)?),
+            // A set and the file operations: their field is what they took off.
+            _ => {
+                rows.retain(|r| Some(r.name.as_str()) != field);
+                rows.extend(store.snapshots(op.id)?);
+            }
+        }
     }
-    Ok(Some(version))
+    Ok(Some(crate::version::of_rows(entity, &rows)))
 }
 
 /// What a write to many records does to a field.
@@ -570,8 +578,6 @@ pub struct NewOp {
     /// off), the rest is only what the write's effects and its version
     /// delta are computed from.
     pub after: Vec<FieldRow>,
-    /// What it added to the entity's version ([`crate::version::net`]).
-    pub delta: u64,
     /// The operation this one undoes, when a revert writes it.
     pub reverts_op_id: Option<i64>,
     /// Who wrote it (`log::ORIGIN_WATCHER`, `ORIGIN_TRASH`), `None` for a

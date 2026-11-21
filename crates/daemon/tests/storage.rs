@@ -583,17 +583,9 @@ fn test_large_revision_chain_across_bulk_chunks() {
         if i > 0 {
             assert_eq!(op.id, ops[i - 1].id + 1, "id sequence at op {i}");
         }
-        // A new field: nothing taken off, and the row it wrote is its version delta.
+        // A new field: nothing taken off (the log keeps no version, doc "Log
+        // storage").
         assert_eq!(conn.snapshots(op.id).unwrap().len(), 0, "before-snapshot of op {i}");
-        let wrote = metafolder_daemon::rows::FieldRow {
-            name: format!("f{i}"),
-            value: Value::Int(i as i64),
-        };
-        assert_eq!(
-            conn.version_delta(op.id).unwrap(),
-            metafolder_daemon::version::rows_sum(&[wrote]),
-            "version delta of op {i}"
-        );
     }
     assert_eq!(conn.head().unwrap(), Some(ops.last().unwrap().id));
 }

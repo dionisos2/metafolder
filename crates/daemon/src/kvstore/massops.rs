@@ -138,7 +138,6 @@ impl Stub {
             .opt_bytes(self.origin.as_deref().map(str::as_bytes))
             .bytes(self.type_name().as_bytes())
             .bytes(ROOT.as_slice())
-            .opt_int(None)
             .opt_bytes(Some(self.field.as_bytes()))
             .opt_int(self.reverts)
             .int(self.values.len() as i64);
@@ -206,7 +205,6 @@ impl Stub {
         r.opt_bytes()?;
         r.bytes()?;
         r.bytes()?;
-        r.opt_int()?;
         r.opt_bytes()?;
         r.opt_int()?;
         let mut values = Vec::new();
@@ -509,23 +507,6 @@ impl Read<'_> {
         }
         self.count(out.len() as u64 + 1)?;
         Ok(out)
-    }
-
-    /// What operation `op_id` added to its entity's version: the number an
-    /// ordinary operation keeps, and for a stub's the one its own rows give.
-    pub(super) fn version_delta(&self, op_id: i64) -> Result<u64> {
-        if let Some(stub) = self.stub_at(op_id)? {
-            let before = self.snapshot_rows(op_id)?;
-            return Ok(crate::version::net(&before, &stub.snapshot(op_id, true)));
-        }
-        self.count(1)?;
-        let raw = self
-            .t
-            .log_entries
-            .get(self.r, &be(op_id))?
-            .context("an operation that is not there")?;
-        let delta = super::op_delta(raw)?.context("an operation with no version delta")?;
-        Ok(delta as u64)
     }
 
     /// The rows operation `op_id` took off its record, a stub's included.

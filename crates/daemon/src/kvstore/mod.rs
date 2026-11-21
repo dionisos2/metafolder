@@ -594,9 +594,6 @@ fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
         .opt_bytes(op.origin.as_deref().map(str::as_bytes))
         .bytes(op.op_type.as_str().as_bytes())
         .bytes(op.entity.as_bytes())
-        // What the operation added to its entity's version; a stub has no
-        // one number for its records (doc "Log storage").
-        .opt_int(Some(op.delta as i64))
         .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
         .opt_int(op.reverts_op_id);
     out.0
@@ -606,8 +603,6 @@ fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
     let mut r = In(b);
     let (label_id, timestamp, origin) = (r.int()?, r.int()?, r.opt_string()?);
     let (op_type, entity_uuid) = (r.string()?, uuid_of(r.bytes()?));
-    // The version delta: read by [`op_delta`].
-    r.opt_int()?;
     Ok(OpRow {
         id,
         label_id,
@@ -618,18 +613,6 @@ fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
         field_name: r.opt_string()?,
         reverts_op_id: r.opt_int()?,
     })
-}
-
-/// What an ordinary operation added to its entity's version, from its stored
-/// form (a stub has none).
-fn op_delta(v: &[u8]) -> Result<Option<i64>> {
-    let mut r = In(v);
-    r.int()?;
-    r.int()?;
-    r.opt_bytes()?;
-    r.bytes()?;
-    r.bytes()?;
-    r.opt_int()
 }
 
 /// An operation's timestamp, from its stored form (the second field).
@@ -1562,10 +1545,6 @@ macro_rules! kv_reads {
             fn added(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.added_rows(op_id))
-            }
-            fn version_delta(&self, op_id: i64) -> Result<u64> {
-                let $me = self;
-                $with(&mut |$read: &Read| $read.version_delta(op_id))
             }
             fn first_op(&self) -> Result<Option<i64>> {
                 let $me = self;

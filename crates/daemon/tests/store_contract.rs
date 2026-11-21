@@ -125,12 +125,10 @@ fn the_log_walks_back_from_head() {
     let last = store.op(head).unwrap().expect("the head operation");
     assert_eq!(last.entity_uuid, child);
     assert_eq!(last.field_name.as_deref(), Some("rating"));
-    // The log keeps what a write took off, and the version it added: no state
-    // a write left, the row it wrote being the delta.
+    // The log keeps what a write took off: no state a write left, and no
+    // version (doc "Log storage").
     assert!(store.snapshots(head).unwrap().is_empty(), "no rating before");
     assert!(store.added(head).unwrap().is_empty(), "not an append");
-    let wrote = metafolder_daemon::rows::FieldRow { name: "rating".into(), value: Value::Int(3) };
-    assert_eq!(store.version_delta(head).unwrap(), metafolder_daemon::version::rows_sum(&[wrote]));
 
     // The read back from HEAD: newest first, bounded or whole.
     let back = store.ops_back(head, None).unwrap();
@@ -237,7 +235,6 @@ fn appended_operations_chain_from_head() {
         field_name: Some(field.into()),
         before: Vec::new(),
         after: vec![metafolder_daemon::rows::FieldRow { name: field.into(), value: Value::Int(3) }],
-        delta: 7,
         reverts_op_id: None,
         origin: None,
     };
