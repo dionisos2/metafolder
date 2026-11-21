@@ -1275,12 +1275,10 @@ impl KvTxn<'_> {
         drop(w);
         let n = self.next(super::State::NextWriteNumber)? as u64;
         let fields: BTreeSet<&str> = entries.iter().map(|e| e.field.as_str()).collect();
-        let record = super::mass::Record {
-            ops: vec![n; rows.len()],
-            rows: rows.to_vec(),
-            tombs: Vec::new(),
-            cleared: fields.into_iter().map(|f| (f.to_string(), n)).collect(),
-        };
+        let mut record = super::mass::Record::plain(rows.to_vec());
+        for field in fields {
+            record.fix_field(field, n);
+        }
         self.t.metarecords.put(&mut self.txn.borrow_mut(), &id.to_be_bytes(), &record.encode())?;
         Ok(())
     }

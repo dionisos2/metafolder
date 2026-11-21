@@ -2652,10 +2652,10 @@ impl WriteTxn for KvTxn<'_> {
                 .into());
             }
         }
-        let op = self.write_number(&loaded)?;
+        let n = self.write_number(&loaded)?;
         let mut rows = loaded.rows.clone();
-        rows.push((FieldRow { name: name.to_string(), value: value.clone() }, op));
-        self.save_record(&loaded, rows, Vec::new(), Vec::new())?;
+        rows.push(FieldRow { name: name.to_string(), value: value.clone() });
+        self.save_record(&loaded, rows, n, &[(name, Some(value))])?;
         self.file_position(name, value, id)?;
         self.count_type(name, value, 1)?;
         self.derive_row(uuid, name, value, 1, valued_in(&before, name))
@@ -2664,19 +2664,13 @@ impl WriteTxn for KvTxn<'_> {
     fn delete_row(&self, owner: Uuid, name: &str, value: &Value) -> Result<()> {
         let Some(id) = self.live_id(owner)? else { return Ok(()) };
         let loaded = self.load_record(id)?;
-        let Some(at) = loaded.rows.iter().position(|(r, _)| r.name == name && &r.value == value)
-        else {
+        let Some(at) = loaded.rows.iter().position(|r| r.name == name && &r.value == value) else {
             return Ok(());
         };
-        let op = self.write_number(&loaded)?;
+        let n = self.write_number(&loaded)?;
         let mut rows = loaded.rows.clone();
-        let (row, _) = rows.remove(at);
-        let tombs = if loaded.entries.is_empty() {
-            Vec::new()
-        } else {
-            vec![(name.to_string(), value.clone(), op)]
-        };
-        self.save_record(&loaded, rows, tombs, Vec::new())?;
+        let row = rows.remove(at);
+        self.save_record(&loaded, rows, n, &[(name, Some(value))])?;
         self.row_gone(owner, &row, &loaded.plain_rows())
     }
 
@@ -2684,23 +2678,16 @@ impl WriteTxn for KvTxn<'_> {
         let Some(id) = self.live_id(uuid)? else { return Ok(()) };
         let loaded = self.load_record(id)?;
         let wanted = |row: &FieldRow| name.is_none_or(|n| n == row.name);
-        let gone: Vec<FieldRow> =
-            loaded.rows.iter().filter(|(r, _)| wanted(r)).map(|(r, _)| r.clone()).collect();
+        let gone: Vec<FieldRow> = loaded.rows.iter().filter(|r| wanted(r)).cloned().collect();
         if gone.is_empty() {
             return Ok(());
         }
-        let op = self.write_number(&loaded)?;
-        let kept: Vec<(FieldRow, u64)> =
-            loaded.rows.iter().filter(|(r, _)| !wanted(r)).cloned().collect();
-        let mut cleared: Vec<(String, u64)> = Vec::new();
-        if !loaded.entries.is_empty() {
-            for row in &gone {
-                if !cleared.iter().any(|(n, _)| *n == row.name) {
-                    cleared.push((row.name.clone(), op));
-                }
-            }
-        }
-        self.save_record(&loaded, kept, Vec::new(), cleared)?;
+        let n = self.write_number(&loaded)?;
+        let kept: Vec<FieldRow> = loaded.rows.iter().filter(|r| !wanted(r)).cloned().collect();
+        let mut fields: Vec<&str> = gone.iter().map(|r| r.name.as_str()).collect();
+        fields.dedup();
+        let fixed: Vec<(&str, Option<&Value>)> = fields.into_iter().map(|f| (f, None)).collect();
+        self.save_record(&loaded, kept, n, &fixed)?;
         let before = loaded.plain_rows();
         for row in &gone {
             self.row_gone(uuid, row, &before)?;
