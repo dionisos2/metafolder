@@ -26,6 +26,11 @@
 //       prints the CSS zoom of the panel body holding that element
 //   scroll <selector> [<text> [<inner selector> [<inner text>]]]
 //       prints how far that element is scrolled down (its scrollTop, rounded)
+//   watch-size <selector> [<text> [<inner selector> [<inner text>]]]
+//       starts recording every height that element takes (a ResizeObserver),
+//       from the one it has now
+//   sizes <selector> [<text> [<inner selector> [<inner text>]]]
+//       prints the heights recorded since watch-size, in order, one per change
 //   focused <selector> [<text> [<inner selector> [<inner text>]]]
 //       succeeds when that element holds the keyboard focus
 //   no-field
@@ -97,6 +102,16 @@ function inPage(action, args) {
   if (action === 'zoom') {
     return getComputedStyle(hit.closest('.mf-panel-body') ?? hit).zoom;
   }
+  if (action === 'watch-size') {
+    const record = [Math.round(hit.getBoundingClientRect().height)];
+    hit.__mfSizes = record;
+    new ResizeObserver(() => {
+      const height = Math.round(hit.getBoundingClientRect().height);
+      if (record[record.length - 1] !== height) record.push(height);
+    }).observe(hit);
+    return 'watching';
+  }
+  if (action === 'sizes') return (hit.__mfSizes ?? []).join(' ');
   if (action === 'scroll') return Math.round(hit.scrollTop);
   if (hit instanceof HTMLInputElement || hit instanceof HTMLTextAreaElement) return hit.value;
   return (hit.textContent ?? '').trim();
@@ -107,7 +122,7 @@ function fail(code, message) {
   process.exit(code);
 }
 
-if (!['ready', 'no-field', 'click', 'bounds', 'contextmenu', 'text', 'zoom', 'scroll', 'focused'].includes(action)) fail(2, `unknown action ${action}`);
+if (!['ready', 'no-field', 'click', 'bounds', 'contextmenu', 'text', 'zoom', 'scroll', 'focused', 'watch-size', 'sizes'].includes(action)) fail(2, `unknown action ${action}`);
 if (action !== 'ready' && action !== 'no-field' && !args[0]) fail(2, `${action} needs a selector`);
 
 const timer = setTimeout(() => fail(2, `no answer from the page within ${TIMEOUT_MS} ms`), TIMEOUT_MS);

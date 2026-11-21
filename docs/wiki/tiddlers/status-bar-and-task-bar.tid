@@ -41,6 +41,13 @@ something new to read, or when you ask:
 * <<key "bar:toggle tasks" "v b">> and <<key "bar:toggle question" "v q">> (`bar:toggle tasks|question`), or the bar's ''×'', hide it, and show it again;
 * ''every new entry shows a hidden bar again'' — a task, a script, a slow call, a question that was not in it at the last look (user decision, November 2026). What only changes — a task's progress, an entry leaving — does not.
 
+Nor does a bar change height while shown. The question bar is ''always two lines
+high'', asking or not: the question on the left, cut after two lines with its whole
+text on hover; on the right the keys, which are never cut, and below them the hint and
+the ''script keys'' box, the hint giving way first (user decision, November 2026).
+A question wrapping onto as many lines as its length took moved the panels at every
+answer.
+
 A hidden question bar does not suspend the question: its keys still answer it, as the
 task bar's ''your answer'' says.
 

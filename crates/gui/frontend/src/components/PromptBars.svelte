@@ -58,44 +58,67 @@
 <!-- A running script's question (POST /gui/input) lives here, not on the
      status line, so an error message can never hide it. -->
 {#if shownBar && !keysOnly}
+  <!-- Two lines of a fixed height, asking or not: the panels above keep their
+       size from one question to the next, whatever its length. A question
+       longer than its two lines is cut, and given whole on hover; the hint
+       gives way before it (doc "Status bar and task bar"). -->
   <div class="input-wait" data-help-topic="scripting">
     {#if !question}
-      <span class="hint dim">no question asked</span>
+      <span class="question dim">no question asked</span>
+      <div class="side">
+        <div class="line">{@render hide()}</div>
+      </div>
     {:else}
-    <span class="question">{question.prompt}</span>
-    {#each question.keys as key (key)}
-      <span class="keycap" class:off={!store.ui.scriptKeys}>{key}</span>
-    {/each}
-    <!-- The script's keys are borrowed from the panels: this is where they are
-         given back, without abandoning the question (doc "Script sessions"). -->
-    <label class="script-keys" title="Let the script's keys take priority over the GUI shortcuts">
-      <input
-        type="checkbox"
-        checked={store.ui.scriptKeys}
-        onchange={(event) => {
-          // A focused checkbox IS a text input as far as key handling goes, and
-          // would swallow every shortcut — including the script's own keys —
-          // until the user clicked elsewhere. Hand the focus straight back.
-          (event.currentTarget as HTMLElement).blur();
-          void dispatch('script-keys:toggle');
-        }}
-      />
-      script keys
-    </label>
-    <span class="hint dim">escape gives the keys back, shift+escape stops the script, ctrl+escape kills it</span>
+      <span class="question" title={question.prompt}>{question.prompt}</span>
+      <div class="side">
+        <div class="line">
+          {#each question.keys as key (key)}
+            <span class="keycap" class:off={!store.ui.scriptKeys}>{key}</span>
+          {/each}
+          {@render hide()}
+        </div>
+        <div class="line">
+          <span class="hint dim"
+            >escape gives the keys back, shift+escape stops the script, ctrl+escape kills it</span
+          >
+          <!-- The script's keys are borrowed from the panels: this is where
+               they are given back, without abandoning the question (doc
+               "Script sessions"). -->
+          <label
+            class="script-keys"
+            title="Let the script's keys take priority over the GUI shortcuts"
+          >
+            <input
+              type="checkbox"
+              checked={store.ui.scriptKeys}
+              onchange={(event) => {
+                // A focused checkbox IS a text input as far as key handling
+                // goes, and would swallow every shortcut — including the
+                // script's own keys — until the user clicked elsewhere. Hand
+                // the focus straight back.
+                (event.currentTarget as HTMLElement).blur();
+                void dispatch('script-keys:toggle');
+              }}
+            />
+            script keys
+          </label>
+        </div>
+      </div>
     {/if}
-    <button
-      class="hide"
-      class:alone={!question}
-      title="Hide the question bar (bar:toggle question)"
-      onclick={(event) => {
-        // Hand the focus straight back, or the button would keep the keys.
-        (event.currentTarget as HTMLElement).blur();
-        void dispatch('bar:toggle question');
-      }}>×</button
-    >
   </div>
 {/if}
+
+{#snippet hide()}
+  <button
+    class="hide"
+    title="Hide the question bar (bar:toggle question)"
+    onclick={(event) => {
+      // Hand the focus straight back, or the button would keep the keys.
+      (event.currentTarget as HTMLElement).blur();
+      void dispatch('bar:toggle question');
+    }}>×</button
+  >
+{/snippet}
 
 <style>
   .key-hints {
@@ -135,24 +158,59 @@
     color: var(--mf-fg-dim, #8a8a96);
   }
   /* A script's input question: a dedicated, persistent bar, visually distinct
-     from the status/error line so the two never compete for the same slot. */
+     from the status/error line so the two never compete for the same slot. Its
+     height is two lines, never more nor less: the question on the left, cut
+     after two lines; on the right the keys, then the hint and the checkbox —
+     the hint is cut first when room runs out. */
   .input-wait {
-    display: flex;
-    flex-wrap: wrap;
+    --line: 1.5em;
+    box-sizing: border-box;
+    height: calc(2 * var(--line) + 14px);
+    display: grid;
+    grid-template-columns: fit-content(60%) 1fr;
     align-items: center;
-    gap: 6px 10px;
+    gap: 0 16px;
     padding: 6px 10px;
+    overflow: hidden;
     background: var(--mf-bg-raised, #26262e);
     border-top: 2px solid var(--mf-accent, #4c56c4);
     font-size: 1em;
+    line-height: var(--line);
   }
   .input-wait .question {
     font-weight: 600;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .input-wait .question.dim {
+    font-weight: normal;
+    color: var(--mf-fg-dim, #8a8a96);
+    font-size: 0.9em;
+  }
+  /* As wide as its keys at least: they are never cut. */
+  .input-wait .side {
+    display: flex;
+    flex-direction: column;
+  }
+  .input-wait .line {
+    height: var(--line);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+    overflow: hidden;
   }
   .input-wait .keycap {
+    flex: none;
     font-family: var(--mf-font-mono, monospace);
     font-weight: 600;
-    padding: 1px 7px;
+    line-height: 1.2;
+    padding: 0 7px;
     border-radius: 4px;
     border: 1px solid var(--mf-accent, #4c56c4);
     color: var(--mf-accent, #4c56c4);
@@ -165,15 +223,16 @@
     text-decoration: line-through;
   }
   .input-wait .script-keys {
+    flex: none;
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    margin-left: auto;
     color: var(--mf-fg-dim, #8a8a96);
     font-size: 0.9em;
     cursor: pointer;
   }
   .input-wait .hide {
+    flex: none;
     padding: 0 4px;
     border: none;
     background: none;
@@ -181,13 +240,18 @@
     font: inherit;
     cursor: pointer;
   }
-  .input-wait .hide.alone {
-    margin-left: auto;
-  }
   .input-wait .hide:hover {
     color: var(--mf-fg, #d8d8e0);
   }
+  /* Takes what the line leaves, and claims no width of its own (contain):
+     the question and the keys are served first. */
   .input-wait .hint.dim {
+    flex: 1 1 0;
+    min-width: 0;
+    contain: inline-size;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--mf-fg-dim, #8a8a96);
     font-size: 0.9em;
   }

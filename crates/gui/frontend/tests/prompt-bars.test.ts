@@ -33,6 +33,20 @@ describe('the question bar', () => {
     const caps = [...document.querySelectorAll('.input-wait .keycap')].map((el) => el.textContent);
     expect(caps).toEqual(['y', 'n']);
   });
+
+  test('gives the whole question on hover, since a long one is cut to two lines', () => {
+    // The bar has a fixed height, so that the panels never move from one
+    // question to the next (doc "Status bar and task bar").
+    const prompt = `Has ${'/a/long/path'.repeat(20)} the tag rock?`;
+    store.ui.questions = questionsState({ questions: [{ id: 1, prompt, keys: ['y', 'n'] }] });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(PromptBars, { target });
+    flushSync();
+    const question = document.querySelector('.input-wait .question');
+    expect(question?.textContent).toBe(prompt);
+    expect(question?.getAttribute('title')).toBe(prompt);
+  });
 });
 
 describe('the pending key hints', () => {

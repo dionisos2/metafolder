@@ -49,7 +49,7 @@
 # Usage:  scripts/dev/gui-e2e.sh [--unsandboxed] [--keep-logs] [scenario...]
 #   with no scenario, runs them all: undo-redo log-panel activity mass-delete duplicates duplicate-keep duplicate-walk orphans trash remove
 #   field-keys reconcile ignore sync repos list tag-query folder-list panel-txn reveal layout script
-#   script-escape script-workspaces errors picker refs hierarchy hierarchy-form prompt history
+#   script-escape script-sizes script-workspaces errors picker refs hierarchy hierarchy-form prompt history
 #   keybindings keybindings-pick validate-keys open-with tab-close close-layout pick-button suggested-key config-files walk open-viewers
 #   edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory help-keys help-cursor hints zoom order user-commands
 #   settle macro clipboard saved-workspaces, and
@@ -81,7 +81,7 @@ done
 # inspector the clicking scenarios drive (webview.mjs), and every click after it
 # fails — forty tries of four seconds each.
 [ ${#SCENARIOS[@]} -gt 0 ] \
-    || SCENARIOS=(undo-redo log-panel activity mass-delete duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-workspaces
+    || SCENARIOS=(undo-redo log-panel activity mass-delete duplicates duplicate-keep duplicate-walk orphans trash remove field-keys reconcile ignore sync repos list folder-list panel-txn reveal layout script script-escape script-sizes script-workspaces
         errors picker refs hierarchy hierarchy-form prompt history keybindings keybindings-pick validate-keys open-with tab-close close-layout
         pick-button suggested-key walk open-viewers edit-text slideshow context-menu open-tree-node shell-line shell-cwd repos-memory
         help-keys help-cursor zoom refresh order user-commands settle macro paste clipboard saved-workspaces devtools)
@@ -166,6 +166,24 @@ if key=$(mf gui input y n); then
 else
     mf gui message "e2e-ask: no answer"
 fi
+SCRIPT
+# A script for the `script-sizes` scenario: questions of every length, asked
+# one after the other with its progress reported in between, as the shipped
+# tag scripts do.
+cat >"$CONFIG_HOME/metafolder/scripts/e2e-ask-many.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Summary: e2e: asks a series of questions of different lengths
+i=0
+for prompt in "Short?" \
+    "A much longer question, naming a file deep in a tree: /music/some artist/some album/01 - a track with a long title.flac — has it the tag genre/rock/progressive?" \
+    "Again?" "Last one, of a middling length: keep it?"; do
+    i=$((i + 1))
+    mf gui progress --done "$i" --total 4 --phase "question $i" >/dev/null
+    if [ "$i" = 2 ]; then keys="y n m s q left right up down"; else keys="y n"; fi
+    # shellcheck disable=SC2086
+    key=$(mf gui input --prompt "$prompt" $keys) || exit 1
+    mf gui message "e2e-ask-many: $i got $key"
+done
 SCRIPT
 # A panel for the `keybindings` scenario: it suggests a key for a command of
 # its own, the way a panel's `addKeybinding` does. `e2e-keys:list` is the
@@ -1219,8 +1237,8 @@ scenario_script() {
 }
 
 # Escape gives a script's keys back, Shift+Escape stops it (doc "Script
-# sessions"); and the question bar floats over the panels, which keep their size
-# while it comes and goes (doc "Status bar and task bar").
+# sessions"); and the question bar, once shown, stays when the question goes,
+# so the panels keep their size (doc "Status bar and task bar").
 scenario_script_escape() {
     needs_keyboard script-escape || return 0
     new_repo script-escape
@@ -1249,6 +1267,33 @@ scenario_script_escape() {
         grep -q "e2e-ask: got" <<<"$(mfg status-bar --workspace "$WS")"
     assert_eq "script escape: the panel has its size back, unchanged" \
         "$before" "$(webview bounds '[data-slot-body=left]')"
+}
+
+# Between two questions of a script, nothing moves the panels: neither the
+# question bar nor the task bar change height, whatever the length of the
+# question (doc "Status bar and task bar"). Only the first question may show the
+# bar.
+scenario_script_sizes() {
+    needs_clicks script-sizes || return 0
+    new_repo script-sizes
+    local runner sizes i
+    show_panel left metarecord-list view:refresh metarecord-list
+
+    mfg command --timeout-ms 60000 script:run e2e-ask-many >/dev/null 2>&1 &
+    runner=$!
+    assert "script sizes: the script asks" until_ok 20 asking
+    assert "script sizes: the question bar is shown" until_ok 10 shows '.input-wait'
+    webview watch-size '[data-slot-body=left]' >/dev/null || die "watch-size"
+    for i in 1 2 3 4; do
+        until_ok 20 asking || break
+        run answer:send y
+        until_ok 10 says "e2e-ask-many: $i got y" || break
+    done
+    wait "$runner"
+    assert_eq "script sizes: the script answered every question" \
+        "info"$'\t'"e2e-ask-many: 4 got y" "$(mfg status-bar --workspace "$WS")"
+    sizes=$(webview sizes '[data-slot-body=left]')
+    assert_eq "script sizes: the panel kept one height throughout" "${sizes%% *}" "$sizes"
 }
 
 # In the keybindings form, Enter on a suggestion highlighted in the command's
