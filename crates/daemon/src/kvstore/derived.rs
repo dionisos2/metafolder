@@ -1332,9 +1332,10 @@ impl KvTxn<'_> {
         count_before: u64,
     ) -> Result<()> {
         let id = self.id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
-        // A field with events pending takes this row as one more, of one
-        // id: what is stored is behind, and is not written past them.
-        let eventful = self.eventful(field)? > 0;
+        // A field with index writes pending in this id's chunk takes this
+        // row as one more, of one id: what is stored there is behind, and is
+        // not written past them.
+        let eventful = self.pending_at(field, id)?;
         // Before the partitions learn of the row: whether its text is one
         // the field does not hold yet.
         let text = match search_text(value) {

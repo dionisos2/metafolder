@@ -156,20 +156,45 @@ fn settled(store: &mut KvStore, target: Uuid) {
     assert_eq!(every_answer(store, target), pending, "after a reindex");
 }
 
+/// A value added to many records, in a field with nothing pending, goes
+/// straight into its posting: a few keys, one per chunk, and no pending index
+/// write to replay.
 #[test]
-fn a_value_added_to_many_records_is_one_event() {
+fn a_value_added_to_many_records_goes_into_its_posting() {
     let (mut store, _dir) = open();
     let all = records(&mut store, 300);
     let changed = write(&mut store, |w| w.mass_add("tag", s("fresh"), &all[..200]).unwrap());
     assert_eq!(changed.len(), 200);
     let written = store.last_write_keys();
-    assert_eq!(written.get("index_pending_writes"), Some(&1), "{written:?}");
+    assert_eq!(written.get("index_pending_writes"), None, "{written:?}");
+    assert_eq!(store.pending_events("tag").unwrap(), 0);
+    write(&mut store, |w| w.mass_remove("tag", &s("blue"), &all[..150]).unwrap());
+    assert_eq!(store.pending_events("tag").unwrap(), 0, "nor a value removed");
 
     // Those that hold it already are left alone, and not reported.
     let again = write(&mut store, |w| w.mass_add("tag", s("fresh"), &all[100..260]).unwrap());
     assert_eq!(again, all[200..260].to_vec());
     let q = Query::Eq { field: "tag".into(), value: s("fresh"), aspect: Aspect::Raw };
     assert_eq!(common::engines::both(&store, &q, &[]).len(), 260);
+    settled(&mut store, all[0]);
+}
+
+/// Behind a set pending in a chunk, an add or a removal there waits too: in
+/// its posting, the replay of the older set would take it out again.
+#[test]
+fn behind_a_pending_set_an_add_is_a_pending_index_write() {
+    let (mut store, _dir) = open();
+    let all = records(&mut store, 300);
+    write(&mut store, |w| w.mass_set("tag", vec![s("only")], &all[..100]).unwrap());
+    assert_eq!(store.pending_events("tag").unwrap(), 1);
+    write(&mut store, |w| w.mass_add("tag", s("fresh"), &all[50..200]).unwrap());
+    write(&mut store, |w| w.mass_remove("tag", &s("only"), &all[..20]).unwrap());
+    assert_eq!(store.pending_events("tag").unwrap(), 3);
+    // Another field has nothing pending: its add is written in.
+    write(&mut store, |w| w.mass_add("mood", s("calm"), &all[..200]).unwrap());
+    assert_eq!(store.pending_events("mood").unwrap(), 0);
+    let q = Query::Eq { field: "tag".into(), value: s("fresh"), aspect: Aspect::Raw };
+    assert_eq!(common::engines::both(&store, &q, &[]).len(), 150);
     settled(&mut store, all[0]);
 }
 
@@ -213,11 +238,13 @@ fn every_mass_operation_reads_as_the_rows_it_wrote() {
 fn a_field_with_many_pending_events_is_left_to_the_idle_fold() {
     let (mut store, _dir) = open();
     let all = records(&mut store, 100);
+    // A set first: the adds behind it wait too.
+    write(&mut store, |w| w.mass_set("tag", vec![s("v")], &all).unwrap());
     for i in 0..100 {
         write(&mut store, |w| w.mass_add("tag", s(&format!("v{i}")), &all[i % 50..]).unwrap());
     }
     // No limit: only the idle fold (doc "Folding in idle time") writes them in.
-    assert_eq!(store.pending_events("tag").unwrap(), 100);
+    assert_eq!(store.pending_events("tag").unwrap(), 101);
     settled(&mut store, all[0]);
 }
 
@@ -248,10 +275,12 @@ fn a_sorted_page_on_a_field_with_pending_events_reads_the_page() {
     let (mut store, _dir) = open();
     let all = records(&mut store, 3_000);
     write(&mut store, |w| {
+        // A set first: the add and the removal behind it wait too.
+        w.mass_set("tag", vec![s("green")], &all[2_000..2_400]).unwrap();
         w.mass_add("tag", s("amber"), &all[..1_500]).unwrap();
         w.mass_remove("tag", &s("blue"), &all[..600]).unwrap();
     });
-    assert_eq!(store.pending_events("tag").unwrap(), 2);
+    assert_eq!(store.pending_events("tag").unwrap(), 3);
     let q = Query::IsPresent { field: "rank".into(), aspect: Aspect::Raw };
     let cost = |store: &KvStore, ascending: bool| {
         let sort = [SortBy { field: "tag".into(), ascending }];

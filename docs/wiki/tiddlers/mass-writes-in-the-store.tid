@@ -36,14 +36,21 @@ Everything ordered against the pending writes takes a number from one clock,
 pending index write, a field or a value written by hand on a record a pending write
 names. It is never set back. Only the order of the numbers matters.
 
-!! One pending index write per operation
+!! Pending index writes
+
+An ''add'' or a ''removal'' to many records goes straight into the value's posting —
+`∪ B` or `∖ B`, one key per chunk of B, no record read — in every chunk where the field
+has nothing pending: nearly always (user decision, November 2026). A ''set'' or an
+''unset'' cannot: it would have to take B out of every value the records held, which only
+reading them, or every value of the field, tells. It waits for the fold.
 
 A field has a list of ''pending index writes'' (table `index_pending_writes`, keyed by
-field, chunk and write number). A write to many records appends one, naming the
-records — a bitmap of dense ids — and files nothing per record. It is filed ''by chunk''
-of 65 536 ids, as the postings are: one key per chunk it touches, under one write number,
-each holding the ids of its chunk. Chunks name disjoint ids, so replaying a field's keys
-chunk by chunk is replaying them, for each id, in the order they were written:
+field, chunk and write number). A set or an unset to many records appends one, naming the
+records — a bitmap of dense ids — and files nothing per record; so does an add or a
+removal in a chunk where one is pending, behind it. It is filed ''by chunk'' of 65 536 ids,
+as the postings are: one key per chunk it touches, under one write number, each holding
+the ids of its chunk. Chunks name disjoint ids, so replaying a field's keys chunk by
+chunk is replaying them, for each id, in the order they were written:
 
 |!Kind |!Content |!A value's holders become |
 |add |type · value |`∪ B` for the value; `∖ B` for `nothing` |
@@ -75,9 +82,9 @@ before, for one read of its (empty) list.
 
 !! Order
 
-While a field has pending index writes, a write to ''one'' record of it is one too, of
-one id: written into what is stored, it would be overwritten by the replay of an older
-one. The counts and the sets above are kept at each write, in order, and never
+While a field has pending index writes in a chunk, a write there — to ''one'' record, or
+an add or a removal to many — is one too: written into what is stored, it would be
+overwritten by the replay of an older one. In the other chunks it is written in. The counts and the sets above are kept at each write, in order, and never
 replayed.
 
 !! The fold

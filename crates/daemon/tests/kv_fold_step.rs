@@ -35,10 +35,12 @@ fn a_fold_step_folds_one_list_and_the_biggest_first() {
     // what it names (the entries are small, doc "Value encoding in the store").
     let uuids: Vec<Uuid> = uuids.into_iter().step_by(2).collect();
     write(&mut store, |w| {
+        // Sets: a write to many records that waits for the fold (an add to
+        // a field with nothing pending goes into its posting at once).
         for v in ["jazz", "rock", "folk"] {
-            w.mass_add("tag", s(v), &uuids).unwrap();
+            w.mass_set("tag", vec![s(v)], &uuids).unwrap();
         }
-        w.mass_add("mood", s("calm"), &uuids).unwrap();
+        w.mass_set("mood", vec![s("calm")], &uuids).unwrap();
     });
     // Three lists: the entries of the part (the biggest), the events of `tag`,
     // those of `mood`.
@@ -64,9 +66,9 @@ fn a_fold_step_folds_one_list_and_the_biggest_first() {
     // What was written reads the same folded.
     for u in &uuids {
         let rows = store.rows(*u).unwrap();
-        for v in ["blue", "jazz", "rock", "folk"] {
-            assert!(rows.iter().any(|r| r.name == "tag" && r.value == s(v)), "{v}");
-        }
+        // Each set replaced the one before: the last is what is left.
+        let tags: Vec<&Value> = rows.iter().filter(|r| r.name == "tag").map(|r| &r.value).collect();
+        assert_eq!(tags, [&s("folk")]);
         assert!(rows.iter().any(|r| r.name == "mood" && r.value == s("calm")));
     }
 }

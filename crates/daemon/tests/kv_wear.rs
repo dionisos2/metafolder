@@ -36,8 +36,10 @@ fn the_wear_counts_what_is_pending_and_the_ids_nobody_holds() {
             .collect()
     });
     write(&mut store, |w| {
-        w.mass_add("tag", s("b"), &uuids).unwrap();
-        w.mass_add("tag", s("c"), &uuids).unwrap();
+        // Sets: what waits for the fold (an add to a field with nothing
+        // pending goes into its posting at once).
+        w.mass_set("tag", vec![s("b")], &uuids).unwrap();
+        w.mass_set("tag", vec![s("c")], &uuids).unwrap();
     });
     let worn = store.wear().unwrap();
     assert_eq!((worn.mass_entries, worn.mass_parts), (2, 1));

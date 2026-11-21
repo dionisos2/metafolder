@@ -286,9 +286,77 @@ impl KvTxn<'_> {
                 }
             }
         }
-        self.append_event(field, &event)?;
+        match kind {
+            // An add or a removal goes into the value's posting in every
+            // chunk where the field has nothing pending — nearly always:
+            // `∪ B` or `∖ B`, one key per chunk. Behind a pending write of a
+            // chunk, it waits too, or the replay of the older one would
+            // undo it.
+            Kind::Add | Kind::Remove => {
+                let (direct, waiting) = self.split_pending(field, &event.ids)?;
+                if !direct.is_empty() {
+                    let (value, key) = (&event.values[0], &event.keys[0]);
+                    let have = self.stored_holders(field, key)?;
+                    let add = kind == Kind::Add;
+                    let ids = if add { &direct - &have } else { &direct & &have };
+                    self.store_holders(field, Some(value), key, &ids, add)?;
+                }
+                if !waiting.is_empty() {
+                    self.append_event(field, &Event { ids: waiting, ..event.clone() })?;
+                }
+            }
+            // A set or an unset does not know the values it removes: it
+            // waits for the fold, which finds them.
+            Kind::Replace => self.append_event(field, &event)?,
+        }
         // The rows the write did not put into the records.
         self.append_entries(kind, field, &listed, &event.ids)
+    }
+
+    /// The chunks in which `field` has pending index writes, as the
+    /// transaction sees them.
+    fn pending_chunks(&self, field: &str) -> Result<BTreeSet<u16>> {
+        let mut out = BTreeSet::new();
+        if self.eventful(field)? == 0 {
+            return Ok(out);
+        }
+        let prefix = name_key(field);
+        for entry in self.t.index_pending_writes.prefix_iter(&self.txn.borrow(), &prefix)? {
+            let k = entry?.0;
+            let chunk = k.get(prefix.len()..prefix.len() + 2).context("a chunk in the key")?;
+            out.insert(u16::from_be_bytes(chunk.try_into().expect("two bytes")));
+        }
+        Ok(out)
+    }
+
+    /// Whether `field` has pending index writes in the chunk of `id`: a row
+    /// of one record written there is one more, after them.
+    pub(in super::super) fn pending_at(&self, field: &str, id: u32) -> Result<bool> {
+        if self.eventful(field)? == 0 {
+            return Ok(false);
+        }
+        let prefix = [&name_key(field)[..], &((id >> 16) as u16).to_be_bytes()].concat();
+        Ok(self.t.index_pending_writes.prefix_iter(&self.txn.borrow(), &prefix)?.next().is_some())
+    }
+
+    /// `ids` split into those of the chunks where `field` has nothing
+    /// pending, and the others.
+    fn split_pending(
+        &self,
+        field: &str,
+        ids: &RoaringBitmap,
+    ) -> Result<(RoaringBitmap, RoaringBitmap)> {
+        let chunks = self.pending_chunks(field)?;
+        if chunks.is_empty() {
+            return Ok((ids.clone(), RoaringBitmap::new()));
+        }
+        let mut waiting = RoaringBitmap::new();
+        for (chunk, part) in by_chunk(ids) {
+            if chunks.contains(&chunk) {
+                waiting |= part;
+            }
+        }
+        Ok((ids - &waiting, waiting))
     }
 
     /// A row of one record came or went in a field that has events pending:
