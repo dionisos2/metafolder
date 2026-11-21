@@ -741,6 +741,9 @@ pub fn command_end(app: AppHandle<'_>, key: String) {
     app.daemon.command_end(&key);
 }
 
+// One argument per field of the call the frontend makes: the Tauri command's
+// wire, not a function to call from Rust.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn daemon_request(
     app: AppHandle<'_>,

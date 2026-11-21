@@ -121,7 +121,7 @@ export async function mount(root, metafolder) {
     }
     try {
       const log = /** @type {{head?: number|null, head_log_context?: number|null,
-       *                      labels?: Label[], next_before?: number|null,
+       *                      log_contexts?: Label[], next_before?: number|null,
        *                      total_log_contexts?: number}} */ (
         await daemon.call('GET', `/repos/${repo}/log/contexts?limit=${limit}`)
       );
@@ -179,11 +179,11 @@ export async function mount(root, metafolder) {
   async function loadLevel(node) {
     if (node.kind !== 'label' || repo === null) return;
     const [nested, own] = await Promise.all([
-      /** @type {Promise<{labels?: Label[]}>} */ (
+      /** @type {Promise<{log_contexts?: Label[]}>} */ (
         daemon.call('GET', `/repos/${repo}/log/contexts?parent=${node.id}&limit=500`)
       ),
       node.label.operations > 0
-        ? /** @type {Promise<{label?: {operation_count?: number}, operations?: Op[]}>} */ (
+        ? /** @type {Promise<{log_context?: {operation_count?: number}, operations?: Op[]}>} */ (
           daemon.call(
             'GET',
             `/repos/${repo}/log/contexts/${node.id}?newest=1&limit=${LEVEL_OPS}&snapshots=0`,

@@ -666,8 +666,8 @@ declare namespace Metafolder {
 
   /** What `log.revert` wrote: the daemon's revert answer, with the notes. */
   interface Reverted {
-    /** The label the revert wrote in; `null` when it wrote nothing. */
-    label: number | null;
+    /** The log context the revert wrote in; `null` when it wrote nothing. */
+    log_context: number | null;
     reverted_operations?: number[];
     skipped_operations?: { op_id: number; reason: string }[];
     notes: string[];
