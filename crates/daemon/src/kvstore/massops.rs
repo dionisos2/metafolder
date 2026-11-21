@@ -19,8 +19,8 @@ use super::derived::{
     count_prefix, decode_set, dense, referrers_prefix, set_prefix, COUNT_BITS, NO_TARGET, PARENTS,
     REFERRERS, SETS,
 };
-use super::entry::{self, Effect, Entry, FileAction, Header, Params, CHUNK};
-use super::mass::{entry_key, read_part, Listed, DELETES_PART, THAWED_PART};
+use super::entry::{self, Effect, Entry, FileAction, Header, Params};
+use super::mass::{entry_key, read_part, Written};
 use super::{name_key, KvTxn, Read};
 use crate::rows::FieldRow;
 use crate::store::{MassApplied, MassKind as Kind};
@@ -306,20 +306,12 @@ impl KvTxn<'_> {
         let targets = self.uuids_of_ids(&changed)?;
         let first = self.put_entry(&h, &entry::chunks(&targets, true, |_| Vec::new()))?;
         let last = first + changed.len() as i64 - 1;
-        let entry = Listed {
-            op: first as u64,
-            kind: Kind::Remove,
-            field: String::new(),
-            values: Vec::new(),
-            ids: changed.clone(),
-        };
-        self.t.mass.put(
-            &mut self.txn.borrow_mut(),
-            &entry_key(DELETES_PART, entry.op),
-            &entry.encode(),
-        )?;
-        self.mass_lists.set(true);
-        self.deletes.set(true);
+        // A pending write of kind `delete` in each part, which the operation
+        // of an id is its rank in (doc "Mass writes in the store").
+        self.append_listed(Written::Delete, "", &[], &changed, |taken| {
+            let lowest = taken.min().expect("a part of the ids");
+            Some((first + changed.rank(lowest) as i64 - 1, taken.clone()))
+        })?;
         Ok(Some(MassApplied { changed, last_op: last, touches_watch }))
     }
 
@@ -449,24 +441,6 @@ impl KvTxn<'_> {
         if !folded && !targets.iter().all(|t| t.pending) || folded && entry.h.targets < 2 {
             return Ok(None);
         }
-        // The mark that names every one of these operations, which a fold
-        // took away.
-        let mark = if folded {
-            None
-        } else {
-            let marks = {
-                let txn = self.txn.borrow();
-                super::mass::read_part(&self.t, &txn, DELETES_PART)?
-            };
-            let found = marks.into_iter().find(|m| {
-                let (from, to) = (m.op as i64, m.op as i64 + m.ids.len() as i64 - 1);
-                from <= first_op && last_op <= to
-            });
-            if found.is_none() {
-                return Ok(None);
-            }
-            found
-        };
         let n = (last_op - first_op + 1) as usize;
         let Some(ids) = self.ids_in_order(&targets) else { return Ok(None) };
         let universe = self.read_chunked(super::derived::LIVE, &[])?;
@@ -585,38 +559,8 @@ impl KvTxn<'_> {
         for (field, parent) in parents {
             self.set_member(PARENTS, Some(&field), parent, true)?;
         }
-        let Some(mark) = mark else {
-            return Ok(Some(MassApplied { changed: ids, last_op, touches_watch }));
-        };
-        // The mark keeps the operations it still names, each at its own number.
-        let mut w = self.txn.borrow_mut();
-        // The records are back with the rows the deletion took, which the log
-        // goes on reading in them until the first write that changes them.
-        let given_back = Listed {
-            op: first_op as u64,
-            kind: Kind::Remove,
-            field: String::new(),
-            values: Vec::new(),
-            ids: ids.clone(),
-        };
-        self.t.mass.put(&mut w, &entry_key(THAWED_PART, given_back.op), &given_back.encode())?;
-        self.thawed.set(true);
-        self.t.mass.delete(&mut w, &entry_key(DELETES_PART, mark.op))?;
-        let ranks: Vec<u32> = mark.ids.iter().collect();
-        let (lo, hi) = ((first_op - mark.op as i64) as usize, (last_op - mark.op as i64) as usize);
-        for (from, part) in [(0, &ranks[..lo]), (hi + 1, &ranks[hi + 1..])] {
-            if part.is_empty() {
-                continue;
-            }
-            let entry = Listed {
-                op: mark.op + from as u64,
-                kind: Kind::Remove,
-                field: String::new(),
-                values: Vec::new(),
-                ids: part.iter().copied().collect(),
-            };
-            self.t.mass.put(&mut w, &entry_key(DELETES_PART, entry.op), &entry.encode())?;
-        }
+        // A deletion still pending stays so: the records it gave back hold its
+        // before until it is folded, or a write to one copies it first.
         Ok(Some(MassApplied { changed: ids, last_op, touches_watch }))
     }
 
@@ -698,122 +642,47 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// Folds the oldest deletion pending: the records it deleted are written
-    /// out of the store, after their rows went to the chunks of its
-    /// operations (which read them from the records until then) and to the
-    /// histograms. Returns whether there was one.
-    pub(super) fn fold_one_delete(&self) -> Result<bool> {
-        let prefix = DELETES_PART.to_be_bytes();
-        let found = {
-            let txn = self.txn.borrow();
-            let mut entries = self.t.mass.prefix_iter(&txn, &prefix)?;
-            match entries.next() {
-                Some(e) => {
-                    let (k, v) = e?;
-                    let op = u64::from_be_bytes(k[4..12].try_into().expect("a number"));
-                    Some((k.to_vec(), Listed::decode(op, v)?))
-                }
-                None => None,
-            }
-        };
-        let Some((entry_key_bytes, listed)) = found else {
-            self.deletes.set(false);
-            return Ok(false);
-        };
-        // A record about to leave the store may be one an earlier deletion
-        // gave back: that deletion's rows go to the chunks first.
-        self.freeze_given_back(&listed.ids)?;
-        let first = listed.op as i64;
-        let mut befores = Vec::new();
-        for (rank, id) in listed.ids.iter().enumerate() {
-            let rows = self.load_record(id)?.plain_rows();
-            for row in &rows {
-                self.drop_hist(&row.name, &row.value)?;
-            }
-            // An operation a prune took has nothing to keep.
-            befores.push((first + rank as i64, rows));
-            if befores.len() as u64 == CHUNK {
-                self.write_befores(std::mem::take(&mut befores))?;
-            }
-        }
-        self.write_befores(befores)?;
-        self.t.mass.delete(&mut self.txn.borrow_mut(), &entry_key_bytes)?;
-        Ok(true)
-    }
-
     /// Copies into the chunks of the log the rows the records of `ids` held
-    /// that a deletion took and gave back, which the log reads in the records until
-    /// now: the entry, the write, the deletion about to change them. Nothing
-    /// is read when no record is waiting.
+    /// that a deletion took and gave back, which the log reads in the records
+    /// until now, and takes them off the deletion's pending write: the entry,
+    /// the write, the deletion about to change them. Nothing is read when no
+    /// deletion is pending.
     pub(super) fn freeze_given_back(&self, ids: &RoaringBitmap) -> Result<()> {
-        if ids.is_empty() || !self.thawed_pending() {
+        if ids.is_empty() || !self.deletes_pending() {
             return Ok(());
         }
-        let marks = {
-            let txn = self.txn.borrow();
-            read_part(&self.t, &txn, THAWED_PART)?
-        };
-        let mut waiting = false;
-        for mark in marks {
-            let hit = &mark.ids & ids;
-            if hit.is_empty() {
-                waiting = true;
-                continue;
-            }
-            let mut befores = Vec::new();
-            for id in hit.iter() {
-                let op = mark.op as i64 + (mark.ids.rank(id) - 1) as i64;
-                befores.push((op, self.load_record(id)?.plain_rows()));
-            }
-            // An operation a prune took has nothing to keep.
-            self.write_befores(befores)?;
-            // The mark keeps the operations still waiting, each at its number.
-            let mut w = self.txn.borrow_mut();
-            self.t.mass.delete(&mut w, &entry_key(THAWED_PART, mark.op))?;
-            let mut run: Vec<u32> = Vec::new();
-            let mut start = 0usize;
-            let flush = |run: &mut Vec<u32>, start: usize, w: &mut _| -> Result<bool> {
-                if run.is_empty() {
-                    return Ok(false);
-                }
-                let rest = Listed {
-                    op: mark.op + start as u64,
-                    kind: Kind::Remove,
-                    field: String::new(),
-                    values: Vec::new(),
-                    ids: run.drain(..).collect(),
-                };
-                self.t.mass.put(w, &entry_key(THAWED_PART, rest.op), &rest.encode())?;
-                Ok(true)
-            };
-            for (rank, id) in mark.ids.iter().enumerate() {
-                if hit.contains(id) {
-                    waiting |= flush(&mut run, start, &mut w)?;
-                } else {
-                    if run.is_empty() {
-                        start = rank;
-                    }
-                    run.push(id);
-                }
-            }
-            waiting |= flush(&mut run, start, &mut w)?;
+        let mut parts = std::collections::BTreeSet::new();
+        for id in ids {
+            parts.insert(super::mass::part_of(id));
         }
-        if !waiting {
-            self.thawed.set(false);
+        for part in parts {
+            let entries = {
+                let txn = self.txn.borrow();
+                read_part(&self.t, &txn, part)?
+            };
+            for mut e in entries.into_iter().filter(|e| e.kind == Written::Delete) {
+                let hit = &e.ids & ids;
+                if hit.is_empty() {
+                    continue;
+                }
+                let mut befores = Vec::new();
+                for id in &hit {
+                    if let Some(op) = e.deleted_by(id) {
+                        befores.push((op, self.load_record(id)?.plain_rows()));
+                    }
+                }
+                // An operation a prune took has nothing to keep.
+                self.write_befores(befores)?;
+                e.ids -= &hit;
+                let key = entry_key(part, e.op);
+                let mut w = self.txn.borrow_mut();
+                if e.ids.is_empty() {
+                    self.t.pending_writes.delete(&mut w, &key)?;
+                } else {
+                    self.t.pending_writes.put(&mut w, &key, &e.encode())?;
+                }
+            }
         }
         Ok(())
-    }
-
-    /// [`Self::freeze_given_back`] for every record waiting: a reindex is
-    /// about to number the ids again, which the marks name them by.
-    pub(super) fn freeze_all_given_back(&self) -> Result<()> {
-        if !self.thawed_pending() {
-            return Ok(());
-        }
-        let mut all = RoaringBitmap::new();
-        for mark in read_part(&self.t, &self.txn.borrow(), THAWED_PART)? {
-            all |= &mark.ids;
-        }
-        self.freeze_given_back(&all)
     }
 }

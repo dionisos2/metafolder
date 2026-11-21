@@ -74,7 +74,7 @@ fn a_mass_write_is_not_written_into_the_records() {
     write(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
     let written = store.last_write_keys();
     assert_eq!(written.get("metarecords"), None, "a record was rewritten: {written:?}");
-    assert_eq!(written.get("mass"), Some(&1), "one part, one entry: {written:?}");
+    assert_eq!(written.get("pending_writes"), Some(&1), "one part, one entry: {written:?}");
     for &u in &uuids {
         assert!(tags(&store, u).contains(&"jazz".to_string()));
     }

@@ -31,6 +31,9 @@ fn a_fold_step_folds_one_list_and_the_biggest_first() {
             .map(|_| w.create_metarecord(vec![Field::new("tag", s("blue"))]).unwrap().uuid)
             .collect()
     });
+    // Every other record: ids no run compresses, so that each list weighs
+    // what it names (the entries are small, doc "Value encoding in the store").
+    let uuids: Vec<Uuid> = uuids.into_iter().step_by(2).collect();
     write(&mut store, |w| {
         for v in ["jazz", "rock", "folk"] {
             w.mass_add("tag", s(v), &uuids).unwrap();

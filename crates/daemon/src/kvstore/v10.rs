@@ -8,7 +8,7 @@
 use anyhow::{bail, Result};
 use metafolder_core::metarecord::Value;
 
-use super::mass::{Kind, Listed, Record};
+use super::mass::{Kind, Listed, Record, Written};
 use super::{derived::decode_set, In};
 use crate::rows::{self, FieldRow, RawValue};
 
@@ -99,7 +99,8 @@ pub(super) fn dec_listed(op: u64, bytes: &[u8]) -> Result<Listed> {
     for _ in 0..n {
         values.push(get_value(&mut r)?);
     }
-    Ok(Listed { op, kind, field, values, ids: decode_set(r.bytes()?)? })
+    let kind = Written::of(kind, &values);
+    Ok(Listed { op, kind, field, values, ids: decode_set(r.bytes()?)?, deletion: None })
 }
 
 #[cfg(test)]

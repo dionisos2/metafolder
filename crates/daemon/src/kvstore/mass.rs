@@ -16,9 +16,13 @@
 //! | a fixed field (f, n)         | an entry older than `n` does not touch `f`   |
 //! | a fixed value (f, v, n)      | an entry older than `n` does not touch `v` of `f` |
 //!
-//! | table | key           | value                                |
-//! |-------|---------------|--------------------------------------|
-//! | mass  | part · number | field · kind · values · ids of part  |
+//! | table          | key                 | value                                |
+//! |----------------|---------------------|--------------------------------------|
+//! | pending_writes | part · write number | kind · its content · ids of the part |
+//!
+//! A deletion of many records is a pending write too, of kind `delete`: it
+//! changes no row, and says that the records it names still hold the before of
+//! the log's entry for them (doc "Log storage").
 //!
 //! A record's value is its rows, as ever, then — only when an entry names it —
 //! its fixed fields and values; one without reads as before.
@@ -32,7 +36,7 @@ use roaring::RoaringBitmap;
 
 use super::codec::{self, Dec, Enc};
 use super::derived::decode_set;
-use super::{get_value, put_value, In, KvStore, KvTxn, Out, State, Tables};
+use super::{KvStore, KvTxn, State, Tables};
 use crate::rows::FieldRow;
 pub(crate) use crate::store::MassKind as Kind;
 
@@ -43,17 +47,6 @@ pub(crate) const PART_BITS: u32 = 16;
 pub(crate) fn part_of(id: u32) -> u32 {
     id >> PART_BITS
 }
-
-/// The part under which the deletions of many records wait for the fold: no id
-/// has it, and the entries of the parts, which an id's high bits name, are
-/// never this far.
-pub(crate) const DELETES_PART: u32 = u32::MAX;
-
-/// The part under which the records a deletion gave back wait for their rows to
-/// be copied: while one is not written, the log reads the deletion's rows in the
-/// record itself, and the mark says where — an entry of the same form as a
-/// deletion's, the `k`-th id being the record of the operation `op + k`.
-pub(crate) const THAWED_PART: u32 = u32::MAX - 1;
 
 /// A record as stored.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -143,52 +136,134 @@ impl Record {
     }
 }
 
+/// What a pending write does to the records it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Written {
+    Add,
+    Remove,
+    /// The values replace the field's.
+    Set,
+    /// The field taken off.
+    Unset,
+    /// The records deleted: no row changes, their before is the log's.
+    Delete,
+}
+
+impl Written {
+    /// The kind of a write to many records of `values`.
+    pub(crate) fn of(kind: Kind, values: &[Value]) -> Written {
+        match kind {
+            Kind::Add => Written::Add,
+            Kind::Remove => Written::Remove,
+            Kind::Replace if values.is_empty() => Written::Unset,
+            Kind::Replace => Written::Set,
+        }
+    }
+}
+
 /// One entry of a part's list.
 #[derive(Clone, Debug)]
 pub(crate) struct Listed {
+    /// Its write number.
     pub(crate) op: u64,
-    pub(crate) kind: Kind,
+    pub(crate) kind: Written,
     pub(crate) field: String,
     pub(crate) values: Vec<Value>,
+    /// The records it names: for a deletion, those that still hold its
+    /// before.
     pub(crate) ids: RoaringBitmap,
+    /// A deletion: the operation of the log that deleted the lowest id it
+    /// took in the part, and those ids — the operation of an id is its rank
+    /// among them, whatever `ids` lost since.
+    pub(crate) deletion: Option<(i64, RoaringBitmap)>,
+}
+
+/// A bitmap, as an entry holds it.
+fn put_set(out: &mut Enc, ids: &RoaringBitmap) {
+    let mut ids = ids.clone();
+    ids.optimize();
+    let mut bytes = Vec::with_capacity(ids.serialized_size());
+    ids.serialize_into(&mut bytes).expect("writing to a vector");
+    out.bytes(&bytes);
 }
 
 impl Listed {
+    /// `kind · content · varint len · ids`, the content being `varint len ·
+    /// field` and then: a value (add, remove), `varint count · { value }`
+    /// (set), nothing (unset); for a deletion `varint op · varint len · ids
+    /// taken`. Values in the compact form (doc "Value encoding in the store").
     pub(super) fn encode(&self) -> Vec<u8> {
-        let mut out = Out::default();
-        out.int(match self.kind {
-            Kind::Add => 0,
-            Kind::Remove => 1,
-            Kind::Replace => 2,
-        })
-        .bytes(self.field.as_bytes())
-        .int(self.values.len() as i64);
-        for v in &self.values {
-            put_value(&mut out, v);
+        let mut out = Enc::default();
+        let kind = match self.kind {
+            Written::Add => 0,
+            Written::Remove => 1,
+            Written::Set => 2,
+            Written::Unset => 3,
+            Written::Delete => 4,
+        };
+        out.raw(&[kind]);
+        match self.kind {
+            Written::Add | Written::Remove => {
+                out.bytes(self.field.as_bytes()).value(&self.values[0]);
+            }
+            Written::Set => {
+                out.bytes(self.field.as_bytes()).varint(self.values.len() as u64);
+                for v in &self.values {
+                    out.value(v);
+                }
+            }
+            Written::Unset => {
+                out.bytes(self.field.as_bytes());
+            }
+            Written::Delete => {
+                let (op, taken) = self.deletion.as_ref().expect("a deletion says what it took");
+                out.varint(*op as u64);
+                put_set(&mut out, taken);
+            }
         }
-        let mut ids = self.ids.clone();
-        ids.optimize();
-        let mut bytes = Vec::with_capacity(ids.serialized_size());
-        ids.serialize_into(&mut bytes).expect("writing to a vector");
-        out.bytes(&bytes);
+        put_set(&mut out, &self.ids);
         out.0
     }
 
     pub(super) fn decode(op: u64, bytes: &[u8]) -> Result<Listed> {
-        let mut r = In(bytes);
-        let kind = match r.int()? {
-            0 => Kind::Add,
-            1 => Kind::Remove,
-            2 => Kind::Replace,
-            other => bail!("an entry of kind {other}"),
+        let mut r = Dec(bytes);
+        let kind = match r.take(1)?[0] {
+            0 => Written::Add,
+            1 => Written::Remove,
+            2 => Written::Set,
+            3 => Written::Unset,
+            4 => Written::Delete,
+            other => bail!("a pending write of kind {other}"),
         };
-        let field = r.string()?;
-        let n = r.int()?;
-        let mut values = Vec::new();
-        for _ in 0..n {
-            values.push(get_value(&mut r)?);
+        let (mut field, mut values, mut deletion) = (String::new(), Vec::new(), None);
+        match kind {
+            Written::Add | Written::Remove => {
+                field = r.string()?;
+                values.push(r.value()?);
+            }
+            Written::Set => {
+                field = r.string()?;
+                for _ in 0..r.varint()? {
+                    values.push(r.value()?);
+                }
+            }
+            Written::Unset => field = r.string()?,
+            Written::Delete => {
+                let first = r.varint()? as i64;
+                deletion = Some((first, decode_set(r.bytes()?)?));
+            }
         }
-        Ok(Listed { op, kind, field, values, ids: decode_set(r.bytes()?)? })
+        let ids = decode_set(r.bytes()?)?;
+        if !r.is_empty() {
+            bail!("a pending write of trailing bytes");
+        }
+        Ok(Listed { op, kind, field, values, ids, deletion })
+    }
+
+    /// The operation of the log that deleted `id`, for a deletion that took it.
+    pub(crate) fn deleted_by(&self, id: u32) -> Option<i64> {
+        let (first, taken) = self.deletion.as_ref()?;
+        taken.contains(id).then(|| first + taken.rank(id) as i64 - 1)
     }
 }
 
@@ -199,7 +274,7 @@ pub(super) fn entry_key(part: u32, op: u64) -> Vec<u8> {
 /// The entries of `part`, oldest first.
 pub(crate) fn read_part(t: &Tables, r: &RoTxn<'_>, part: u32) -> Result<Vec<Listed>> {
     let mut out = Vec::new();
-    for entry in t.mass.prefix_iter(r, &part.to_be_bytes())? {
+    for entry in t.pending_writes.prefix_iter(r, &part.to_be_bytes())? {
         let (k, v) = entry?;
         out.push(Listed::decode(u64::from_be_bytes(k[4..12].try_into().expect("a number")), v)?);
     }
@@ -222,8 +297,9 @@ pub(crate) fn effective(record: &Record, entries: &[&Listed]) -> Vec<FieldRow> {
             rows.iter().any(|r| r.name == e.field && &r.value == value)
         };
         match e.kind {
-            Kind::Add | Kind::Replace => {
-                if e.kind == Kind::Replace {
+            Written::Delete => {}
+            Written::Add | Written::Set | Written::Unset => {
+                if e.kind != Written::Add {
                     rows.retain(|r| r.name != e.field || fixed(&r.value));
                 }
                 for v in &e.values {
@@ -232,7 +308,7 @@ pub(crate) fn effective(record: &Record, entries: &[&Listed]) -> Vec<FieldRow> {
                     }
                 }
             }
-            Kind::Remove => {
+            Written::Remove => {
                 for v in e.values.iter().filter(|v| !fixed(v)) {
                     rows.retain(|r| !(r.name == e.field && &r.value == v));
                 }
@@ -281,7 +357,7 @@ pub(crate) fn record_ids(t: &Tables, r: &RoTxn<'_>, mass: bool) -> Result<Roarin
         ids.insert(super::derived::dense(entry?.0));
     }
     if mass {
-        for entry in t.mass.iter(r)? {
+        for entry in t.pending_writes.iter(r)? {
             ids |= Listed::decode(0, entry?.1)?.ids;
         }
     }
@@ -326,10 +402,17 @@ impl KvStore {
     /// How many entries are pending, in every part.
     pub fn pending_mass(&self) -> Result<usize> {
         let r = self.env.read_txn()?;
-        // What a fold would write: the marks of records given back wait for a
-        // write, not for a fold.
-        let given_back = self.t.mass.prefix_iter(&r, &THAWED_PART.to_be_bytes())?.count();
-        Ok((self.t.mass.len(&r)? as usize).saturating_sub(given_back))
+        Ok(self.t.pending_writes.len(&r)? as usize)
+    }
+
+    /// Whether a deletion of many records is pending, as `r` sees the store.
+    pub(super) fn deletion_pending(&self, r: &RoTxn<'_>) -> Result<bool> {
+        for entry in self.t.pending_writes.iter(r)? {
+            if entry?.1.first() == Some(&4) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether any part has entries: a read looks for them only if so.
@@ -348,6 +431,12 @@ pub(super) struct Loaded {
 }
 
 impl Loaded {
+    /// Whether a pending write that changes rows names it: a deletion
+    /// changes none, and a write to the record takes it off first.
+    pub(super) fn rewritten(&self) -> bool {
+        self.entries.iter().any(|e| e.kind != Written::Delete)
+    }
+
     /// The rows it holds.
     pub(super) fn plain_rows(&self) -> Vec<FieldRow> {
         self.rows.clone()
@@ -357,11 +446,6 @@ impl Loaded {
 impl KvTxn<'_> {
     pub(super) fn mass_pending(&self) -> bool {
         self.mass_lists.get()
-    }
-
-    /// Whether records given back wait for their rows to be copied.
-    pub(super) fn thawed_pending(&self) -> bool {
-        self.thawed.get()
     }
 
     pub(super) fn deletes_pending(&self) -> bool {
@@ -381,7 +465,7 @@ impl KvTxn<'_> {
             Some(v) => Record::decode(v)?,
             None => Record::default(),
         };
-        let entries = if self.mass_pending() {
+        let entries: Vec<Listed> = if self.mass_pending() {
             let part = self.part_entries(part_of(id))?;
             part.into_iter().filter(|e| e.ids.contains(id)).collect()
         } else {
@@ -398,7 +482,7 @@ impl KvTxn<'_> {
     /// The number of a write to this record that an entry could be older
     /// than: a fresh one when an entry names the record, `0` when none can.
     pub(super) fn write_number(&self, loaded: &Loaded) -> Result<u64> {
-        if loaded.entries.is_empty() {
+        if !loaded.rewritten() {
             Ok(0)
         } else {
             Ok(self.next(State::NextWriteNumber)? as u64)
@@ -418,7 +502,7 @@ impl KvTxn<'_> {
         // A record a deletion gave back keeps the rows it took, in the log,
         // before the first write that changes them.
         self.freeze_given_back(&RoaringBitmap::from_iter([loaded.id]))?;
-        let record = if loaded.entries.is_empty() {
+        let record = if !loaded.rewritten() {
             Record::plain(rows)
         } else {
             let mut record = Record { rows, ..loaded.raw.clone() };
@@ -448,6 +532,26 @@ impl KvTxn<'_> {
         // An entry changes the rows of the records it names: what the log
         // reads of a deletion in a record given back is copied first.
         self.freeze_given_back(ids)?;
+        let kind = Written::of(kind, values);
+        self.append_listed(kind, field, values, ids, |_| None)
+    }
+
+    /// Appends a pending write of `kind` to the parts of `ids`, under one write
+    /// number: `deletion` says, for a part's ids, what a deletion took.
+    pub(super) fn append_listed(
+        &self,
+        kind: Written,
+        field: &str,
+        values: &[Value],
+        ids: &RoaringBitmap,
+        deletion: impl Fn(&RoaringBitmap) -> Option<(i64, RoaringBitmap)>,
+    ) -> Result<()> {
+        // Nothing may name a deleted record (doc "Mass writes in the store").
+        debug_assert!(
+            ids.is_subset(&self.read_chunked(super::derived::LIVE, &[])?)
+                || kind == Written::Delete,
+            "a pending write naming a record that is not live"
+        );
         let op = self.next(State::NextWriteNumber)? as u64;
         let mut parts = BTreeSet::new();
         for id in ids {
@@ -464,60 +568,109 @@ impl KvTxn<'_> {
                 kind,
                 field: field.to_string(),
                 values: values.to_vec(),
+                deletion: deletion(&in_part),
                 ids: in_part,
             };
-            self.t.mass.put(&mut self.txn.borrow_mut(), &entry_key(part, op), &entry.encode())?;
+            let key = entry_key(part, op);
+            self.t.pending_writes.put(&mut self.txn.borrow_mut(), &key, &entry.encode())?;
         }
         self.mass_lists.set(true);
+        if kind == Written::Delete {
+            self.deletes.set(true);
+        }
         Ok(())
     }
 
     /// Writes a part's entries into its records, and empties the list. A
-    /// metarecord that is gone is not written back.
+    /// deletion's records first give the chunks of the log their before, and
+    /// those still deleted their rows to the histograms (which count rows no
+    /// universe sifts); a deleted record is folded too: its record says what
+    /// the entries it keeps in the indexes describe, which a restoration
+    /// relies on.
     pub(super) fn fold_part(&self, part: u32) -> Result<()> {
-        if part == DELETES_PART || part == THAWED_PART {
-            return Ok(());
-        }
         let entries = self.part_entries(part)?;
         if entries.is_empty() {
             return Ok(());
         }
+        let rewriting: Vec<&Listed> =
+            entries.iter().filter(|e| e.kind != Written::Delete).collect();
+        let mut befores = Vec::new();
+        for e in entries.iter().filter(|e| e.kind == Written::Delete) {
+            for id in &e.ids {
+                let rows = self.load_record(id)?.plain_rows();
+                if !self.live_in(&self.txn.borrow(), id)? {
+                    for row in &rows {
+                        self.drop_hist(&row.name, &row.value)?;
+                    }
+                }
+                if let Some(op) = e.deleted_by(id) {
+                    befores.push((op, rows));
+                }
+            }
+        }
+        self.write_befores(befores)?;
         let mut ids = RoaringBitmap::new();
-        for e in &entries {
+        for e in &rewriting {
             ids |= &e.ids;
         }
-        // A deleted record is folded too: its record says what the entries it
-        // keeps in the indexes describe, which a restoration relies on.
         for id in ids {
             let raw = match self.t.metarecords.get(&self.txn.borrow(), &id.to_be_bytes())? {
                 Some(v) => Record::decode(v)?,
                 None => Record::default(),
             };
-            let named = naming(&entries, id);
+            let named: Vec<&Listed> =
+                rewriting.iter().copied().filter(|e| e.ids.contains(id)).collect();
             self.put_record(id, &effective(&raw, &named))?;
         }
         let mut w = self.txn.borrow_mut();
         for e in &entries {
-            self.t.mass.delete(&mut w, &entry_key(part, e.op))?;
+            self.t.pending_writes.delete(&mut w, &entry_key(part, e.op))?;
         }
         Ok(())
     }
 
     /// [`Self::fold_part`] for every part with entries.
     pub(super) fn fold_all_mass(&self) -> Result<()> {
-        // The deletions first: they read the records of the metarecords they
-        // took out with the entries still applied, which a part's fold would
-        // leave behind for a record that is gone.
-        while self.fold_one_delete()? {}
         let mut parts = BTreeSet::new();
-        for entry in self.t.mass.iter(&self.txn.borrow())? {
+        for entry in self.t.pending_writes.iter(&self.txn.borrow())? {
             let (k, _) = entry?;
             parts.insert(u32::from_be_bytes(k[..4].try_into().expect("a part")));
         }
         for part in parts {
             self.fold_part(part)?;
         }
+        self.deletes.set(false);
         Ok(())
+    }
+
+    /// Folds the part of the oldest deletion pending, if one is: its records
+    /// are read with the entries of their parts still applied. Whether there
+    /// was one.
+    pub(super) fn fold_one_delete(&self) -> Result<bool> {
+        if !self.deletes_pending() {
+            return Ok(false);
+        }
+        let mut found: Option<(u64, u32)> = None;
+        for entry in self.t.pending_writes.iter(&self.txn.borrow())? {
+            let (k, v) = entry?;
+            if v.first() == Some(&4) {
+                let op = u64::from_be_bytes(k[4..12].try_into().expect("a number"));
+                let part = u32::from_be_bytes(k[..4].try_into().expect("a part"));
+                if found.is_none_or(|(o, _)| op < o) {
+                    found = Some((op, part));
+                }
+            }
+        }
+        match found {
+            Some((_, part)) => {
+                self.fold_part(part)?;
+                Ok(true)
+            }
+            None => {
+                self.deletes.set(false);
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -530,12 +683,14 @@ mod tests {
     }
 
     fn entry(op: u64, kind: Kind, field: &str, values: &[i64]) -> Listed {
+        let values: Vec<Value> = values.iter().map(|v| Value::Int(*v)).collect();
         Listed {
             op,
-            kind,
+            kind: Written::of(kind, &values),
             field: field.into(),
-            values: values.iter().map(|v| Value::Int(*v)).collect(),
+            values,
             ids: [1].into_iter().collect(),
+            deletion: None,
         }
     }
 
@@ -590,5 +745,37 @@ mod tests {
         // Newer: everything applies.
         let set = [entry(6, Kind::Replace, "a", &[2])];
         assert_eq!(applied(&record, &set), vec![row("a", 2)]);
+    }
+
+    #[test]
+    fn every_kind_of_pending_write_comes_back() {
+        let ids: RoaringBitmap = [3, 4, 9].into_iter().collect();
+        let of = |kind, values: Vec<Value>| Listed {
+            op: 12,
+            kind,
+            field: if kind == Written::Delete { String::new() } else { "tag".into() },
+            values,
+            ids: ids.clone(),
+            deletion: (kind == Written::Delete).then(|| (40, [2, 3, 4, 9].into_iter().collect())),
+        };
+        let s = |t: &str| Value::String(t.into());
+        for e in [
+            of(Written::Add, vec![s("x")]),
+            of(Written::Remove, vec![Value::Nothing]),
+            of(Written::Set, vec![s("x"), s("y")]),
+            of(Written::Unset, vec![]),
+            of(Written::Delete, vec![]),
+        ] {
+            let back = Listed::decode(12, &e.encode()).unwrap();
+            assert_eq!(
+                (back.kind, &back.field, &back.values, &back.ids, &back.deletion),
+                (e.kind, &e.field, &e.values, &e.ids, &e.deletion)
+            );
+        }
+        // The operation of an id is its rank among what the deletion took.
+        let deleted = of(Written::Delete, vec![]);
+        assert_eq!(deleted.deleted_by(2), Some(40));
+        assert_eq!(deleted.deleted_by(9), Some(43));
+        assert_eq!(deleted.deleted_by(5), None);
     }
 }

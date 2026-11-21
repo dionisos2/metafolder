@@ -101,7 +101,7 @@ of that part. A mass write thus writes as many keys as it has parts, and no reco
 |remove |field · type · value |takes the value out |
 |set |field · type · values (one or more) |the field's values become these |
 |unset |field |the field goes |
-|delete |the first op id of its log entry |nothing: it marks the moment whose rows are the before of the deletion (below) |
+|delete |the op id of the lowest id it took in the part, and the ids it took there (the op of an id is its rank among them, whatever the bitmap lost since) |nothing: it marks the moment whose rows are the before of the deletion (below) |
 
 The kinds are the effects of the log ([[Log storage]]). The ids of a pending write
 are live when it is appended — they are taken from `live_metarecords` —, which the

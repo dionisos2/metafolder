@@ -1058,8 +1058,8 @@ fn reverting_the_same_deletion_again_after_its_redo_brings_the_records_back() {
 
 /// A record a write to one record changed after a write to many is read with
 /// the later write winning. Folding a deletion of it, then undoing that, must
-/// not let the older entry, still pending on the record's part, win again: the
-/// record is put back as the deletion took it.
+/// not let the older entry win again: the record is put back as the deletion
+/// took it.
 #[test]
 fn undoing_a_folded_deletion_keeps_a_later_write_over_a_pending_mass_write() {
     use metafolder_daemon::revert;
@@ -1092,10 +1092,12 @@ fn undoing_a_folded_deletion_keeps_a_later_write_over_a_pending_mass_write() {
     let label = w.label_id();
     w.mass_delete_ids(&all).unwrap();
     w.commit().unwrap();
-    // One step of the idle fold: the deletion, which goes first; the part's
-    // entries are still pending (the user came back to work).
+    // One step of the idle fold: the deletion, which goes first, and the
+    // part's other entries with it — a deletion is a pending write of its
+    // part (doc "Mass writes in the store"), so none older is left to win
+    // over the record once given back.
     assert!(store.fold_step().unwrap());
-    assert!(store.wear().unwrap().mass_entries > 0, "the part is still pending");
+    assert_eq!(store.wear().unwrap().mass_entries, 0, "the part folded whole");
 
     let ops = revert::label_ops(&store, label).unwrap();
     let mut w = Writer::begin(&mut store, None).unwrap();
@@ -1311,5 +1313,41 @@ fn giving_back_every_holder_of_a_position_makes_the_folders_parents_again() {
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
     assert_eq!(Rows::metarecord_count(&store).unwrap(), all.len());
+    sound(&store);
+}
+
+/// A deletion of many records is a pending write of kind `delete` (doc "Mass
+/// writes in the store"): its undo leaves it, the records it gave back still
+/// holding its before; a write to one of them takes that one off it first.
+#[test]
+fn a_deletion_is_a_pending_write_that_its_undo_leaves() {
+    use metafolder_daemon::revert;
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 40);
+    let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
+    let label = w.label_id();
+    let ids = w.dense_ids(&uuids).unwrap();
+    w.mass_delete_ids(&ids).unwrap();
+    w.commit().unwrap();
+    assert_eq!(store.last_write_keys().get("pending_writes"), Some(&1), "one part");
+    assert_eq!(store.wear().unwrap().mass_entries, 1);
+    let ops = revert::label_ops(&store, label).unwrap();
+
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    revert::apply(&mut w, &ops).unwrap();
+    w.commit().unwrap();
+    assert_eq!(store.last_write_keys().get("pending_writes"), None, "the undo leaves it");
+    assert_eq!(store.wear().unwrap().mass_entries, 1);
+
+    write(&mut store, |w| w.set_field(uuids[7], "tag", s("purple")).unwrap());
+    assert_eq!(store.last_write_keys().get("pending_writes"), Some(&1), "the record taken off");
+    for op in &ops {
+        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
+    }
+    store.fold().unwrap();
+    assert_eq!(store.wear().unwrap().mass_entries, 0);
+    for op in &ops {
+        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
+    }
     sound(&store);
 }

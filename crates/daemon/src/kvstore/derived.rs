@@ -1220,19 +1220,19 @@ impl KvTxn<'_> {
             }
         }
         // A record of a deletion of many records still pending is given back
-        // as that deletion's own undo does it, for this one operation: the
-        // mark names the id, and the operation is its rank.
+        // as that deletion's own undo does it, for this one operation: its
+        // pending write names the id, and the operation is its rank.
         if self.deletes_pending() {
-            let marks = {
+            let entries = {
                 let txn = self.txn.borrow();
-                super::mass::read_part(&self.t, &txn, super::mass::DELETES_PART)?
+                super::mass::read_part(&self.t, &txn, super::mass::part_of(id))?
             };
-            if let Some(mark) = marks.iter().find(|m| m.ids.contains(id)) {
-                let op = mark.op as i64 + (mark.ids.rank(id) - 1) as i64;
+            let op = entries.iter().filter(|e| e.ids.contains(id)).find_map(|e| e.deleted_by(id));
+            if let Some(op) = op {
                 if self.mass_undelete_log(op, op)?.is_some() {
                     return Ok(Some(self.load_record(id)?.plain_rows()));
                 }
-                // The mark is gone before the record is given back.
+                // The deletion is folded before the record is given back.
                 while self.fold_one_delete()? {}
             }
         }
@@ -1982,9 +1982,6 @@ impl KvStore {
         // What the lists hold is written into the records first: the records
         // are filed again below, and the rows are derived from them.
         txn.fold_all_mass()?;
-        // The records a deletion gave back are named by id: copy what the log
-        // reads in them before the ids change.
-        txn.freeze_all_given_back()?;
         txn.drop_left_behind()?;
         // Whose each live id is, off the primary numbering (`ids`), not off
         // its index.
@@ -2062,13 +2059,7 @@ impl KvStore {
         if folded {
             self.mass.store(self.pending_mass()? > 0, std::sync::atomic::Ordering::Relaxed);
             let r = self.env.read_txn()?;
-            let deleting = self
-                .t
-                .mass
-                .prefix_iter(&r, &super::mass::DELETES_PART.to_be_bytes())?
-                .next()
-                .is_some();
-            self.deletes.store(deleting, std::sync::atomic::Ordering::Relaxed);
+            self.deletes.store(self.deletion_pending(&r)?, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(folded)
     }
@@ -2079,7 +2070,7 @@ impl KvStore {
         let r = self.env.read_txn()?;
         let mut wear = Wear::default();
         let mut parts = std::collections::BTreeSet::new();
-        for entry in self.t.mass.iter(&r)? {
+        for entry in self.t.pending_writes.iter(&r)? {
             let (k, v) = entry?;
             wear.mass_entries += 1;
             wear.mass_bytes += (k.len() + v.len()) as u64;

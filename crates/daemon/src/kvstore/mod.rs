@@ -64,7 +64,7 @@ struct Tables {
     global_primary_state: Db,
     metarecords: Db,
     live_metarecords: Db,
-    mass: Db,
+    pending_writes: Db,
     field_types: Db,
     log_entries: Db,
     log_targets: Db,
@@ -103,7 +103,7 @@ const NAMES: [&str; table::TABLES] = [
     "global_primary_state",
     "metarecords",
     "live_metarecords",
-    "mass",
+    "pending_writes",
     "field_types",
     "log_entries",
     "log_targets",
@@ -152,14 +152,14 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, log_entries, log_targets, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_label_keys, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, pending_writes, field_types, log_entries, log_targets, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_label_keys, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
             dbs;
         Ok(Tables {
             version,
             global_primary_state,
             metarecords,
             live_metarecords,
-            mass,
+            pending_writes,
             field_types,
             log_entries,
             log_targets,
@@ -199,7 +199,7 @@ impl Tables {
             self.global_primary_state,
             self.metarecords,
             self.live_metarecords,
-            self.mass,
+            self.pending_writes,
             self.field_types,
             self.log_entries,
             self.log_targets,
@@ -259,10 +259,6 @@ pub struct KvStore {
     /// Whether a deletion of many records is pending, whose records are still
     /// stored: when none is, no read sifts what it finds through the universe.
     deletes: std::sync::atomic::AtomicBool,
-    /// Whether records given back by the undo of a deletion still hold the
-    /// rows the log reads as its before: when none does, no write looks for
-    /// them (doc "Mass operations in the log").
-    thawed: std::sync::atomic::AtomicBool,
     /// The keys the last committed write transaction wrote, per table — what
     /// the write cost assertions count ([`KvStore::last_write_keys`]).
     written: std::sync::Mutex<[u64; table::TABLES]>,
@@ -669,7 +665,6 @@ impl KvStore {
             reads: Default::default(),
             mass: Default::default(),
             deletes: Default::default(),
-            thawed: Default::default(),
             written: std::sync::Mutex::new([0; table::TABLES]),
             generation: Default::default(),
             last_targets: Default::default(),
@@ -680,14 +675,9 @@ impl KvStore {
         };
         {
             let r = store.env.read_txn()?;
-            let given_back =
-                store.t.mass.prefix_iter(&r, &mass::THAWED_PART.to_be_bytes())?.count();
-            store.thawed.store(given_back > 0, std::sync::atomic::Ordering::Relaxed);
-            let pending = store.t.mass.len(&r)? as usize > given_back;
+            let pending = store.t.pending_writes.len(&r)? > 0;
             store.mass.store(pending, std::sync::atomic::Ordering::Relaxed);
-            let deleting =
-                store.t.mass.prefix_iter(&r, &mass::DELETES_PART.to_be_bytes())?.next().is_some();
-            store.deletes.store(deleting, std::sync::atomic::Ordering::Relaxed);
+            store.deletes.store(store.deletion_pending(&r)?, std::sync::atomic::Ordering::Relaxed);
         }
         let mut derived = derived;
         if layout != Some(LAYOUT) {
@@ -1701,8 +1691,6 @@ pub struct KvTxn<'e> {
     mass_lists: TxnFlag<'e>,
     /// The store's flag that a deletion of many records is pending.
     deletes: TxnFlag<'e>,
-    /// The store's flag that records given back hold the log's before.
-    thawed: TxnFlag<'e>,
     /// The targets of the last entry of the log as this transaction extends
     /// it, and where the store keeps them once it commits.
     last_targets: RefCell<Option<entry::LastTargets>>,
@@ -2037,8 +2025,12 @@ impl KvStore {
         // heed opens a database in a transaction of its own.
         const GONE: [&str; 4] = ["op_children", "restorations", "ops_by_rev", "revisions"];
         const ROWS: [&str; 4] = ["cells", "field_cells", "row_owner", "by_field"];
-        // `records` of layouts 8 to 10: the table `metarecords` is now.
+        // `records` of layouts 8 to 10: the table `metarecords` is now; `mass`,
+        // `pending_writes`.
         let old_records = open_old_table(&self.env, "records")?;
+        let old_mass = open_old_table(&self.env, "mass")?;
+        // The ids a deletion of many records still pending took out.
+        let mut pending_deleted = roaring::RoaringBitmap::new();
         let r = self.env.read_txn()?;
         let (rows, gone) = self
             .env
@@ -2114,10 +2106,26 @@ impl KvStore {
                     Ok(record.encode())
                 })?;
                 old.clear(w.unjournaled())?;
-                reencode(t.mass, &mut w, |k, v| {
+            }
+            // The pending writes, but for the marks of the deletions pending
+            // and of the records they gave back: layout 11 empties the log
+            // they name, and a deletion is a pending write of its own there.
+            if let Some(old) = old_mass.filter(|_| from.is_some_and(|layout| layout >= 8)) {
+                let all: Vec<(Vec<u8>, Vec<u8>)> = old
+                    .iter(&w)?
+                    .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())))
+                    .collect::<heed::Result<_>>()?;
+                for (k, v) in all {
+                    let part = u32::from_be_bytes(k[..4].try_into()?);
                     let op = u64::from_be_bytes(k[4..12].try_into()?);
-                    Ok(v10::dec_listed(op, v)?.encode())
-                })?;
+                    let listed = v10::dec_listed(op, &v)?;
+                    match part {
+                        u32::MAX => pending_deleted |= &listed.ids,
+                        p if p == u32::MAX - 1 => {}
+                        _ => t.pending_writes.put(&mut w, &k, &listed.encode())?,
+                    }
+                }
+                old.clear(w.unjournaled())?;
             }
             // The rows, a metarecord's together (both tables keep them in
             // uuid order).
@@ -2171,15 +2179,7 @@ impl KvStore {
                     live.insert(id);
                 }
             }
-            let pending_deletes: Vec<(Vec<u8>, Vec<u8>)> = t
-                .mass
-                .prefix_iter(&w, &mass::DELETES_PART.to_be_bytes())?
-                .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())))
-                .collect::<heed::Result<_>>()?;
-            for (k, v) in pending_deletes {
-                let op = u64::from_be_bytes(k[4..12].try_into()?);
-                live -= &mass::Listed::decode(op, &v)?.ids;
-            }
+            live -= &pending_deleted;
             for id in &live {
                 let k = id.to_be_bytes();
                 if t.metarecords.get(&w, &k)?.is_none() {
@@ -2308,37 +2308,6 @@ fn copy_reencoded(
     }
 }
 
-/// Writes again, in the compact encoding (doc "Value encoding in the
-/// store"), the values of `table` that layout 10 and before wrote — a
-/// record's, or a pending write's — read by `convert`, a batch at a time.
-fn reencode(
-    table: Db,
-    w: &mut table::Wtxn<'_>,
-    convert: impl Fn(&[u8], &[u8]) -> Result<Vec<u8>>,
-) -> Result<()> {
-    const BATCH: usize = 10_000;
-    let mut after: Option<Vec<u8>> = None;
-    loop {
-        let batch: Vec<(Vec<u8>, Vec<u8>)> = {
-            let lo = match &after {
-                Some(k) => std::ops::Bound::Excluded(k.as_slice()),
-                None => std::ops::Bound::Unbounded,
-            };
-            table
-                .range(w, &(lo, std::ops::Bound::Unbounded))?
-                .take(BATCH)
-                .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())))
-                .collect::<heed::Result<_>>()?
-        };
-        let Some((last, _)) = batch.last() else { return Ok(()) };
-        after = Some(last.clone());
-        for (k, v) in &batch {
-            let new = convert(k, v)?;
-            table.put(w, k, &new)?;
-        }
-    }
-}
-
 impl<'e> KvTxn<'e> {
     fn new(store: &'e mut KvStore) -> Result<KvTxn<'e>> {
         if let Some(lost) = store.memory.as_ref().and_then(|m| m.lost()) {
@@ -2357,7 +2326,6 @@ impl<'e> KvTxn<'e> {
             reads: &store.reads,
             mass_lists: TxnFlag::of(&store.mass),
             deletes: TxnFlag::of(&store.deletes),
-            thawed: TxnFlag::of(&store.thawed),
             written: &store.written,
             generation: &store.generation,
             universe: RefCell::new(HashMap::new()),
@@ -2392,7 +2360,7 @@ impl<'e> KvTxn<'e> {
         // held to its own threshold in the slow-operation log.
         metafolder_core::slowlog::mark_write();
         *self.written.lock().unwrap_or_else(|e| e.into_inner()) = written;
-        for flag in [&self.mass_lists, &self.deletes, &self.thawed] {
+        for flag in [&self.mass_lists, &self.deletes] {
             flag.publish();
         }
         self.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
