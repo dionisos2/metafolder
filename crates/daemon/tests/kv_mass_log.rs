@@ -219,8 +219,10 @@ fn the_log_is_read_whole_through_its_other_doors() {
     assert!(store.last_op_at_or_before(ts).unwrap().unwrap() >= inside);
 }
 
+/// A prune whose target is inside an entry keeps the entry whole (doc
+/// "Pruning the log"): only the entries all of whose operations are older go.
 #[test]
-fn pruning_cuts_an_entry_and_retention_takes_it_whole() {
+fn pruning_keeps_an_entry_that_holds_its_target_whole() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 30);
     let (label, _) = labelled(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
@@ -228,15 +230,12 @@ fn pruning_cuts_an_entry_and_retention_takes_it_whole() {
     let target = ops[10].id;
     let before = store.counts().unwrap().0;
     let (pruned, _) = metafolder_daemon::log::prune(&mut store, target).unwrap();
-    assert!(pruned >= 10);
-    // Counted by entry: the cut entry stays one.
-    assert!(store.counts().unwrap().0 <= before);
-    assert_eq!(store.first_op().unwrap(), Some(target));
+    assert_eq!(pruned, 30, "the creations, and nothing of the entry");
+    assert_eq!(store.counts().unwrap().0, before - 30, "an entry per creation");
+    assert_eq!(store.first_op().unwrap(), Some(ops[0].id));
     let rest = store.label_ops(label).unwrap();
-    assert_eq!(rest.len(), 20);
-    assert_eq!(rest[0].id, target);
+    assert_eq!(rest.len(), 30);
     assert_eq!(store.op(target).unwrap().unwrap().entity_uuid, ops[10].entity_uuid);
-    assert!(store.op(target - 1).unwrap().is_none());
     // The kept ones read as before.
     assert_eq!(store.added(target).unwrap().len(), 1);
 }
@@ -263,9 +262,10 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     assert!(all.iter().all(|o| o.label_id != label));
 }
 
-/// What a write by id reads is the same whatever the number of records.
+/// What a write by id reads is the same whatever the number of records, but
+/// for the uuid of each, which the log names its targets by.
 #[test]
-fn a_mass_write_by_id_reads_nothing_per_record() {
+fn a_mass_write_by_id_reads_one_uuid_per_record() {
     fn reads_of(n: usize, remove: bool) -> u64 {
         let (mut store, _dir) = open();
         let uuids = records(&mut store, n);
@@ -283,7 +283,9 @@ fn a_mass_write_by_id_reads_nothing_per_record() {
     }
     for remove in [false, true] {
         let (small, big) = (reads_of(100, remove), reads_of(3000, remove));
-        assert!(big <= small + 4, "remove {remove}: {small} reads for 100 records, {big} for 3000");
+        // One read per record: its uuid, which the log names it by.
+        let one_each = 2900 + 4;
+        assert!(big <= small + one_each, "remove {remove}: {small} reads for 100, {big} for 3000");
     }
 }
 
@@ -407,7 +409,7 @@ fn what_a_replacement_replaced_survives_the_writes_that_came_after() {
 }
 
 #[test]
-fn a_mass_replace_by_id_reads_nothing_per_record() {
+fn a_mass_replace_by_id_reads_one_uuid_per_record() {
     fn reads_of(n: usize, unset: bool) -> u64 {
         let (mut store, _dir) = open();
         let uuids = records(&mut store, n);
@@ -424,7 +426,9 @@ fn a_mass_replace_by_id_reads_nothing_per_record() {
     }
     for unset in [false, true] {
         let (small, big) = (reads_of(100, unset), reads_of(3000, unset));
-        assert!(big <= small + 4, "unset {unset}: {small} reads for 100 records, {big} for 3000");
+        // One read per record: its uuid, which the log names it by.
+        let one_each = 2900 + 4;
+        assert!(big <= small + one_each, "unset {unset}: {small} reads for 100, {big} for 3000");
     }
 }
 
@@ -469,8 +473,8 @@ fn a_replacement_knows_what_the_same_write_put_before_it() {
     assert!(diff.is_empty(), "{diff:?}");
 }
 
-/// A prune in the middle of a replacement, or of a stub a reindex turned into
-/// uuids, leaves each operation kept with its own record and what it replaced.
+/// A prune in the middle of a replacement, reindexed or not, keeps the entry
+/// whole, each operation with its own record and what it replaced.
 #[test]
 fn pruning_into_a_replacement_keeps_each_operation_what_it_replaced() {
     for reindex in [false, true] {
@@ -487,8 +491,8 @@ fn pruning_into_a_replacement_keeps_each_operation_what_it_replaced() {
             ops.iter().map(|o| (o.entity_uuid, store.snapshots(o.id).unwrap())).collect();
         metafolder_daemon::log::prune(&mut store, ops[13].id).unwrap();
         let left = store.ops_after(head).unwrap();
-        assert_eq!(left.len(), 27, "reindex: {reindex}");
-        for (op, (uuid, rows)) in left.iter().zip(&before[13..]) {
+        assert_eq!(left.len(), 40, "reindex: {reindex}");
+        for (op, (uuid, rows)) in left.iter().zip(&before) {
             assert_eq!(op.entity_uuid, *uuid, "reindex: {reindex}");
             assert_eq!(&store.snapshots(op.id).unwrap(), rows, "reindex: {reindex}, {op:?}");
             assert_eq!(store.added(op.id).unwrap().len(), 0);

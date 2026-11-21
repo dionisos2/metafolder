@@ -324,9 +324,10 @@ pub fn prune(conn: &mut dyn Database, target: i64) -> Result<(usize, usize)> {
     // target, never the ones kept.
     let doomed: Vec<i64> = conn.ops_back(target - 1, None)?.into_iter().map(|o| o.id).collect();
     let tx = conn.begin_write()?;
-    let labels = tx.delete_ops(&doomed)?;
+    // An entry that holds the target is kept whole.
+    let (pruned, labels) = tx.delete_ops(&doomed)?;
     tx.commit()?;
-    Ok((doomed.len(), labels))
+    Ok((pruned, labels))
 }
 
 /// Buffered operations are flushed to the database once this many accumulate,

@@ -89,9 +89,11 @@ fn a_mass_delete_is_one_entry_and_the_records_stay_until_the_fold() {
     sound(&store);
 }
 
-/// What the deletion reads is the same whatever the number of records.
+/// What the deletion reads is the same whatever the number of records, but
+/// for the uuid of each, which the log names its targets by (doc "Log
+/// storage").
 #[test]
-fn a_mass_delete_reads_nothing_per_record() {
+fn a_mass_delete_reads_one_uuid_per_record() {
     fn reads_of(n: usize) -> u64 {
         let (mut store, _dir) = open();
         let uuids = records(&mut store, n);
@@ -102,7 +104,7 @@ fn a_mass_delete_reads_nothing_per_record() {
         store.reads() - before
     }
     let (small, big) = (reads_of(100), reads_of(3000));
-    assert!(big <= small + 4, "{small} reads for 100 records, {big} for 3000");
+    assert!(big <= small + 2900 + 4, "{small} reads for 100 records, {big} for 3000");
 }
 
 #[test]
@@ -482,8 +484,8 @@ fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pend
 /// deletion took, and the log says it does not know them rather than read the
 /// rows of today.
 /// The rows a deletion took are still the log's after its records were given
-/// back and one was written to: the write keeps them first — in the snapshots
-/// of the deletion's operation — and only for the record it writes, the rest
+/// back and one was written to: the write keeps them first — in the chunk of
+/// the deletion's operation — and only for the record it writes, the rest
 /// staying where they are.
 #[test]
 fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
@@ -500,14 +502,21 @@ fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
     let mut w = Writer::begin(&mut store, None).unwrap();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
-    assert_eq!(store.last_write_keys().get("log_snaps"), None, "giving back copies nothing");
+    // One chunk per creation it logs; the deletion's are not written.
+    assert_eq!(store.last_write_keys().get("log_targets"), Some(&40), "giving back copies nothing");
 
     let touched = uuids[7];
     write(&mut store, |w| {
         w.set_field(touched, "tag", s("purple")).unwrap();
     });
-    // The write's own snapshot, and the two rows of that one record: no more.
-    assert_eq!(store.last_write_keys().get("log_snaps"), Some(&3), "{:?}", store.last_write_keys());
+    // The write's own chunk, and the deletion's that takes that one record's
+    // rows: no more.
+    assert_eq!(
+        store.last_write_keys().get("log_targets"),
+        Some(&2),
+        "{:?}",
+        store.last_write_keys()
+    );
     let rows_of = |store: &KvStore, op_id: i64| {
         let mut rows: Vec<_> = store
             .snapshots(op_id)
@@ -564,9 +573,10 @@ fn a_write_to_many_records_keeps_the_rows_a_deletion_took() {
 
     let some = store.dense_ids(&uuids[..10]).unwrap();
     write(&mut store, |w| w.mass_add_ids("tag", s("jazz"), &some).unwrap());
+    // The write's chunk, and the deletion's, which takes the ten records' rows.
     assert_eq!(
-        store.last_write_keys().get("log_snaps"),
-        Some(&20),
+        store.last_write_keys().get("log_targets"),
+        Some(&2),
         "{:?}",
         store.last_write_keys()
     );
@@ -745,17 +755,18 @@ fn a_reindex_folds_a_pending_deletion_and_keeps_what_the_log_says() {
 }
 
 #[test]
-fn a_prune_in_the_middle_of_a_pending_deletion_leaves_the_rest_its_rows() {
+fn a_prune_in_the_middle_of_a_pending_deletion_keeps_it_whole_with_its_rows() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 30);
     let head = store.head().unwrap().unwrap();
     delete(&mut store, &uuids);
     let ops = store.ops_after(head).unwrap();
     let target = ops[10].id;
+    // An entry goes whole or not at all (doc "Pruning the log").
     metafolder_daemon::log::prune(&mut store, target).unwrap();
     while store.fold_step().unwrap() {}
     let left = store.ops_after(head).unwrap();
-    assert_eq!(left.len(), 20);
+    assert_eq!(left.len(), 30);
     for op in &left {
         assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
     }
@@ -1129,9 +1140,8 @@ fn a_deletion_given_back_then_deleted_again_keeps_its_rows() {
     }
 }
 
-/// A prune takes the oldest operations of a deletion with whatever the log kept
-/// of them: the rows the fold froze, and those copied when a record given back
-/// was written to.
+/// A prune takes a deletion with whatever the log kept of it: the rows the
+/// fold froze, and those copied when a record given back was written to.
 #[test]
 fn a_prune_takes_the_rows_kept_of_the_deletions_it_removes() {
     use metafolder_daemon::revert;
@@ -1160,18 +1170,22 @@ fn a_prune_takes_the_rows_kept_of_the_deletions_it_removes() {
         for op in &ops {
             assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "given back: {given_back}");
         }
-        let target = ops[10].id;
+        // Inside the deletion, it is kept whole; past it, it goes whole.
+        metafolder_daemon::log::prune(&mut store, ops[10].id).unwrap();
+        for op in &ops {
+            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "given back: {given_back}");
+        }
+        let after = records(&mut store, 1);
+        let target = store.head().unwrap().unwrap();
         metafolder_daemon::log::prune(&mut store, target).unwrap();
-        for op in &ops[..10] {
+        for op in &ops {
             assert!(
                 store.snapshots(op.id).unwrap().is_empty(),
                 "given back: {given_back}, operation {} pruned",
                 op.id
             );
         }
-        for op in &ops[10..] {
-            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "given back: {given_back}");
-        }
+        assert_eq!(store.op(target).unwrap().unwrap().entity_uuid, after[0]);
         sound(&store);
     }
 }

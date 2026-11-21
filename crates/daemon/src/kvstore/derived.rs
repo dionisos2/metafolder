@@ -175,10 +175,6 @@ pub(super) const GRAM_PENDING: u8 = 9;
 /// its parent. The metarecord takes that id when it comes.
 pub(super) const RESERVED: u8 = 10;
 
-/// The `meta` counter of the numberings of the dense ids: a reindex, which
-/// numbers the metarecords again, moves it, and a cursor of an earlier
-/// numbering is refused (doc "Pagination and sorting").
-
 /// The dense id standing for "no parent": what a forest's roots are filed
 /// under. No metarecord gets it — ids start at 1.
 pub(super) const NO_TARGET: u32 = 0;
@@ -502,12 +498,8 @@ impl<'a> SetTables<'a> {
     }
 
     /// Every entry of every kind, in key order.
-    pub(super) fn iter<'t>(
-        self,
-        r: &'t RoTxn<'_>,
-    ) -> heed::Result<Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't>> {
-        let mut all: Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't> =
-            Box::new(std::iter::empty());
+    pub(super) fn iter<'t>(self, r: &'t RoTxn<'_>) -> heed::Result<super::table::Entries<'t>> {
+        let mut all: super::table::Entries<'t> = Box::new(std::iter::empty());
         for kind in KINDS {
             all = Box::new(all.chain(self.db(kind).iter(r)?));
         }
@@ -1995,8 +1987,6 @@ impl KvStore {
         // The records a deletion gave back are named by id: copy what the log
         // reads in them before the ids change.
         txn.freeze_all_given_back()?;
-        // Before the ids are numbered again.
-        txn.stubs_to_uuids()?;
         txn.drop_left_behind()?;
         // Whose each live id is, off the primary numbering (`ids`), not off
         // its index.
@@ -2474,7 +2464,7 @@ impl KvStore {
                 space: RAW,
                 tag: 0,
                 field: std::str::from_utf8(&name).context("a field name")?,
-                key: &rest,
+                key: rest,
                 id: dense(v),
                 count: 1,
             };

@@ -1,32 +1,19 @@
-//! The operations of a write to many records, one entry in the log (doc
-//! "Mass operations in the log").
+//! The writes to many records in the log (doc "Mass operations in the log"):
+//! one entry, of the one form every entry has (doc "Log storage").
 //!
-//! A write of one value to, or off, a field of N records is logged as one
-//! *stub*: the field, the value, and the records that changed — their dense ids
-//! as the write named them, their uuids once a reindex numbers the ids again. It holds the N operation ids that follow its key — `first`, which
-//! is its key in `ops`, to `first + N - 1` — and what reads the log is given
-//! the operations a write to each record alone would have logged: the
-//! record `k` places from the start holds operation `first + k`, an
-//! `append_field` with the row after it, or a `delete_field` with the row
-//! before it. Nothing of them is stored.
-//!
-//! | table         | key                | value                       |
-//! |---------------|--------------------|-----------------------------|
-//! | ops           | first id           | an operation's header, then the row and the uuids |
-//! | ops_by_label  | label · first id   | the last id (an operation's is empty) |
-//! | ops_by_entity | nil uuid · first id| —                           |
-//! | user_ops, watcher_ops | first id   | — (one entry in the retention count) |
-//!
-//! The stub is told from an operation by its type, `mass_add` or
-//! `mass_remove`; the header is an operation's own, so what reads an
-//! operation's timestamp reads a stub's. The nil uuid, which no metarecord
-//! has, lists the stubs in `ops_by_entity`: a record's operations after an id
-//! are its own and those of the stubs that name it. The `mass_extra` counter
-//! of `meta` is the operations the stubs hold beyond one each.
+//! A write of one value to, or off, a field of N records — or of the rows
+//! that replace the field's, or a deletion of N records — is logged as one
+//! entry of N targets: the field, the value or values, and the records that
+//! changed, by uuid, in the order of their dense ids. It holds the N operation
+//! ids `first` to `first + N - 1`, and what reads the log is given the
+//! operations a write to each record alone would have logged. It is listed
+//! under the nil uuid in `log_entries_by_metarecord`, which no metarecord
+//! has: a record's operations after an id are its own and those of the
+//! entries listed there that name it.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
 use uuid::Uuid;
@@ -35,531 +22,24 @@ use super::derived::{
     count_prefix, decode_set, dense, referrers_prefix, set_prefix, COUNT_BITS, NO_TARGET, PARENTS,
     REFERRERS, SETS,
 };
+use super::entry::{self, Effect, Entry, FileAction, Header, Params, CHUNK};
 use super::mass::{entry_key, read_part, Listed, DELETES_PART, THAWED_PART};
-use super::{
-    be, dec_op, dec_row, enc_row, from_be, key, name_key, uuid_of, In, KvTxn, Out, Read, ROOT,
-};
-use crate::log::OpRow;
+use super::{be, key, name_key, KvTxn, Read, ROOT};
 use crate::rows::FieldRow;
 use crate::store::{MassApplied, MassKind as Kind};
-
-const ADD: &str = "mass_add";
-const REMOVE: &str = "mass_remove";
-const SET: &str = "mass_set";
-const UNSET: &str = "mass_unset";
-const DELETE: &str = "mass_delete";
-
-/// The records of a stub.
-#[derive(Clone)]
-pub(super) enum Who {
-    /// Their dense ids, as a write names them: nothing was read to write
-    /// them. A reindex, which numbers the ids again, turns them into uuids.
-    Ids(RoaringBitmap),
-    /// Their uuids, in the order their ids had.
-    Uuids(Vec<Uuid>),
-}
-
-/// How many records the stubs a memo keeps may name in all: past it, the
-/// history of a record reads the stubs from the log (a uuid costs a few dozen
-/// bytes in the memo, an id far less).
-const STUB_MEMO_RECORDS: usize = 4_000_000;
-
-/// The decoded stubs of the committed store, for the generation they were read
-/// at (doc "Mass operations in the log").
-#[derive(Default)]
-pub(super) struct StubMemo {
-    generation: Option<u64>,
-    stubs: Option<std::sync::Arc<Vec<Memoed>>>,
-}
-
-/// A stub of the memo, with the places of its uuids when it holds them.
-pub(super) struct Memoed {
-    stub: Stub,
-    index: Option<HashMap<Uuid, usize>>,
-}
 
 /// A record of a folded deletion as it is put back: its dense id, its uuid, and
 /// the rows the log froze.
 type Folded = (u32, Uuid, Vec<FieldRow>);
 
-impl Who {
-    fn len(&self) -> usize {
-        match self {
-            Who::Ids(ids) => ids.len() as usize,
-            Who::Uuids(uuids) => uuids.len(),
-        }
-    }
-}
-
-/// A stub, decoded.
-#[derive(Clone)]
-pub(super) struct Stub {
-    pub(super) first: i64,
-    pub(super) label: i64,
-    pub(super) timestamp: i64,
-    pub(super) origin: Option<String>,
-    pub(super) kind: Kind,
-    pub(super) field: String,
-    /// What was added or removed (one value); what replaced the rows (none
-    /// for a field taken off).
-    pub(super) values: Vec<Value>,
-    /// For a replacement: what it took off, each value with the places —
-    /// among the stub's records — of those that held it. A replacement
-    /// forgets what it replaces, so the log is told.
-    pub(super) before: Vec<(Value, RoaringBitmap)>,
-    /// The record of operation `first + k` is the `k`-th of them, in the
-    /// order of their ids or their uuids.
-    pub(super) who: Who,
-    /// A deletion: the operations are `delete_metarecord`s, which have no field
-    /// and no value, and the rows each had before are the record's own while
-    /// it is still stored, then the snapshots of its operation.
-    pub(super) delete: bool,
-    /// A deletion whose records the fold wrote into the snapshots.
-    pub(super) in_snaps: bool,
-    /// A stub that reverts operations of another: operation `first + k`
-    /// reverts operation `reverts + k` (kept where an ordinary operation keeps
-    /// the operation it reverts; an older stub has none).
-    pub(super) reverts: Option<i64>,
-}
-
-impl Stub {
-    pub(super) fn last(&self) -> i64 {
-        self.first + self.who.len() as i64 - 1
-    }
-
-    pub(super) fn covers(&self, id: i64) -> bool {
-        (self.first..=self.last()).contains(&id)
-    }
-
-    fn encode(&self) -> Vec<u8> {
-        let mut out = Out::default();
-        out.int(self.label).int(self.timestamp);
-        out.0.push(super::codec::origin_byte(self.origin.as_deref()).expect("a known origin"));
-        out.0.extend_from_slice(
-            &super::codec::op_type_bytes(self.type_name()).expect("a stub's type"),
-        );
-        out.bytes(ROOT.as_slice())
-            .opt_bytes(Some(self.field.as_bytes()))
-            .opt_int(self.reverts)
-            .int(self.values.len() as i64);
-        for row in self.rows() {
-            out.bytes(&enc_row(&row));
-        }
-        out.int(self.before.len() as i64);
-        for (value, places) in &self.before {
-            out.bytes(&enc_row(&FieldRow { name: self.field.clone(), value: value.clone() }));
-            let mut bytes = Vec::new();
-            places.serialize_into(&mut bytes).expect("a bitmap into a vector");
-            out.bytes(&bytes);
-        }
-        let folded = if self.in_snaps { 2 } else { 0 };
-        match &self.who {
-            Who::Uuids(uuids) => {
-                out.0.push(folded);
-                for u in uuids {
-                    out.0.extend_from_slice(u.as_bytes());
-                }
-            }
-            Who::Ids(ids) => {
-                out.0.push(1 + folded);
-                ids.serialize_into(&mut out.0).expect("a bitmap into a vector");
-            }
-        }
-        out.0
-    }
-
-    fn type_name(&self) -> &'static str {
-        if self.delete {
-            return DELETE;
-        }
-        match (self.kind, self.values.is_empty()) {
-            (Kind::Add, _) => ADD,
-            (Kind::Remove, _) => REMOVE,
-            (Kind::Replace, false) => SET,
-            (Kind::Replace, true) => UNSET,
-        }
-    }
-
-    /// The values as rows of the field.
-    fn rows(&self) -> Vec<FieldRow> {
-        self.values
-            .iter()
-            .map(|v| FieldRow { name: self.field.clone(), value: v.clone() })
-            .collect()
-    }
-
-    /// The stub a value holds, `None` when it is an ordinary operation's.
-    pub(super) fn decode(first: i64, b: &[u8]) -> Result<Option<Self>> {
-        let head = dec_op(first, b)?;
-        let kind = match head.op_type.as_str() {
-            ADD => Kind::Add,
-            REMOVE => Kind::Remove,
-            SET | UNSET => Kind::Replace,
-            DELETE => Kind::Remove,
-            _ => return Ok(None),
-        };
-        let delete = head.op_type == DELETE;
-        // Past the header: what `dec_op` read.
-        let mut r = In(b);
-        r.int()?;
-        r.int()?;
-        r.take(1)?;
-        r.take(2)?;
-        r.bytes()?;
-        r.opt_bytes()?;
-        r.opt_int()?;
-        let mut values = Vec::new();
-        for _ in 0..r.int()? {
-            values.push(dec_row(r.bytes()?)?.value);
-        }
-        let mut before = Vec::new();
-        for _ in 0..r.int()? {
-            let value = dec_row(r.bytes()?)?.value;
-            before.push((value, RoaringBitmap::deserialize_from(r.bytes()?)?));
-        }
-        let (tag, rest) = r.0.split_first().context("a stub with no records")?;
-        let who = match tag & 1 {
-            0 => Who::Uuids(rest.chunks_exact(16).map(uuid_of).collect()),
-            _ => Who::Ids(RoaringBitmap::deserialize_from(rest)?),
-        };
-        Ok(Some(Stub {
-            first,
-            label: head.label_id,
-            timestamp: head.timestamp,
-            origin: head.origin,
-            kind,
-            field: head.field_name.context("a stub with no field")?,
-            values,
-            before,
-            who,
-            delete,
-            in_snaps: tag & 2 != 0,
-            reverts: head.reverts_op_id,
-        }))
-    }
-
-    /// The record of the stub's `k`-th operation.
-    pub(super) fn entity(&self, read: &Read, k: usize) -> Result<Uuid> {
-        match &self.who {
-            Who::Uuids(uuids) => Ok(uuids[k]),
-            Who::Ids(ids) => {
-                let id = ids.select(k as u32).context("a stub shorter than its ids")?;
-                read.uuid_of_id(id)
-            }
-        }
-    }
-
-    /// The operation `id` is, one of the stub's.
-    pub(super) fn op(&self, read: &Read, id: i64) -> Result<OpRow> {
-        let entity = self.entity(read, (id - self.first) as usize)?;
-        Ok(self.op_of(id, entity))
-    }
-
-    /// [`Self::op`] when its record is known: nothing is read.
-    fn op_of(&self, id: i64, entity: Uuid) -> OpRow {
-        OpRow {
-            id,
-            label_id: self.label,
-            timestamp: self.timestamp,
-            op_type: match (self.kind, self.values.is_empty()) {
-                _ if self.delete => "delete_metarecord",
-                (Kind::Add, _) => "append_field",
-                (Kind::Replace, false) => "set_field",
-                _ => "delete_field",
-            }
-            .into(),
-            entity_uuid: entity,
-            field_name: (!self.delete).then(|| self.field.clone()),
-            reverts_op_id: self.reverts.map(|r| r + (id - self.first)),
-            origin: self.origin.clone(),
-        }
-    }
-
-    /// The rows operation `id` of the stub has after it, or before.
-    pub(super) fn snapshot(&self, id: i64, after: bool) -> Vec<FieldRow> {
-        let row = |value: &Value| FieldRow { name: self.field.clone(), value: value.clone() };
-        if self.delete {
-            // Read from the record, or the snapshots: not a stub's to say.
-            return Vec::new();
-        }
-        match self.kind {
-            Kind::Add | Kind::Remove if after == (self.kind == Kind::Add) => self.rows(),
-            Kind::Add | Kind::Remove => Vec::new(),
-            Kind::Replace if after => self.rows(),
-            Kind::Replace => {
-                let k = (id - self.first) as u32;
-                self.before.iter().filter(|(_, at)| at.contains(k)).map(|(v, _)| row(v)).collect()
-            }
-        }
-    }
-}
-
-impl Read<'_> {
-    /// The stub holding operation `id`, when it is one of a stub's.
-    pub(super) fn stub_at(&self, id: i64) -> Result<Option<Stub>> {
-        self.count(1)?;
-        if let Some(v) = self.t.log_entries.get(self.r, &be(id))? {
-            return Stub::decode(id, v);
-        }
-        let end = be(id);
-        let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&end[..]));
-        self.count(1)?;
-        match self.t.log_entries.rev_range(self.r, &range)?.next() {
-            Some(e) => {
-                let (k, v) = e?;
-                Ok(Stub::decode(from_be(k), v)?.filter(|s| s.covers(id)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// The operations of `ids` (ids of the log), in the order given; the
-    /// stub read last serves the ids that follow it.
-    pub(super) fn ops_resolved(&self, ids: impl Iterator<Item = i64>) -> Result<Vec<OpRow>> {
-        self.ops_resolved_of(ids, None)
-    }
-
-    /// [`Self::ops_resolved`] for operations all of one record, when it is
-    /// known (`entity`): a stub's then reads no uuid, and a stub of the memo
-    /// is not read again.
-    pub(super) fn ops_resolved_of(
-        &self,
-        ids: impl Iterator<Item = i64>,
-        entity: Option<Uuid>,
-    ) -> Result<Vec<OpRow>> {
-        let mut out = Vec::new();
-        let mut stub: Option<Stub> = None;
-        let memo = if entity.is_some() { self.memoed_stubs()? } else { None };
-        for id in ids {
-            if let Some(s) = stub.as_ref().filter(|s| s.covers(id)) {
-                out.push(match entity {
-                    Some(e) => s.op_of(id, e),
-                    None => s.op(self, id)?,
-                });
-                continue;
-            }
-            if let (Some(memo), Some(e)) = (&memo, entity) {
-                // Newest first: the first stub that begins at or before `id`.
-                let at = memo.partition_point(|m| m.stub.first > id);
-                if let Some(m) = memo.get(at).filter(|m| m.stub.covers(id)) {
-                    out.push(m.stub.op_of(id, e));
-                    continue;
-                }
-            }
-            self.count(1)?;
-            let b = self.t.log_entries.get(self.r, &be(id))?.map(<[u8]>::to_vec);
-            match b {
-                Some(b) => match Stub::decode(id, &b)? {
-                    Some(s) => {
-                        out.push(s.op(self, id)?);
-                        stub = Some(s);
-                    }
-                    None => out.push(dec_op(id, &b)?),
-                },
-                None => {
-                    let s =
-                        self.stub_at(id)?.with_context(|| format!("operation {id} vanished"))?;
-                    out.push(s.op(self, id)?);
-                    stub = Some(s);
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// The ids of the operations from `from` on, at most `cap` of them.
-    pub(super) fn ids_from(&self, from: i64, cap: usize) -> Result<Vec<i64>> {
-        let mut out = Vec::new();
-        let mut start = from;
-        // A stub that began before `from` still holds ids from it on.
-        if let Some(s) = self.stub_at(from)? {
-            out.extend((from..=s.last()).take(cap));
-            start = s.last() + 1;
-        }
-        let from_key = be(start);
-        let range = (std::ops::Bound::Included(&from_key[..]), std::ops::Bound::Unbounded);
-        let mut read = 0;
-        for e in self.t.log_entries.range(self.r, &range)? {
-            if out.len() >= cap {
-                break;
-            }
-            let (k, v) = e?;
-            read += 1;
-            let id = from_be(k);
-            match Stub::decode(id, v)? {
-                Some(s) => out.extend((id..=s.last()).take(cap - out.len())),
-                None => out.push(id),
-            }
-        }
-        self.count(read)?;
-        Ok(out)
-    }
-
-    /// An entity's operations after `after` that are a stub's, ids ascending.
-    /// The stubs are read newest first, down to the first older than `after`;
-    /// a read of the committed store takes them from its memo, decoded once
-    /// for every record asked about until the next write.
-    pub(super) fn stub_ops_of(&self, entity: Uuid, after: i64) -> Result<Vec<i64>> {
-        // The record's dense id, which a stub that holds ids names it by: read
-        // once, and only if one does.
-        let mut dense: Option<Option<u32>> = None;
-        let mut out = Vec::new();
-        let mut place = |stub: &Stub, index: Option<&HashMap<Uuid, usize>>| -> Result<()> {
-            let k = match (&stub.who, index) {
-                (Who::Uuids(_), Some(index)) => index.get(&entity).copied(),
-                (Who::Uuids(uuids), None) => uuids.iter().position(|u| *u == entity),
-                (Who::Ids(ids), _) => {
-                    if dense.is_none() {
-                        self.count(1)?;
-                        dense = Some(super::derived::id_of(self.t, self.r, entity.as_bytes())?);
-                    }
-                    dense
-                        .flatten()
-                        .filter(|id| ids.contains(*id))
-                        .map(|id| ids.rank(id) as usize - 1)
-                }
-            };
-            if let Some(id) = k.map(|k| stub.first + k as i64).filter(|id| *id > after) {
-                out.push(id);
-            }
-            Ok(())
-        };
-        if let Some(memo) = self.memoed_stubs()? {
-            for m in memo.iter() {
-                if m.stub.last() <= after {
-                    break;
-                }
-                place(&m.stub, m.index.as_ref())?;
-            }
-        } else {
-            let (lo, hi) =
-                (key(&[ROOT.as_slice(), &be(0)]), key(&[ROOT.as_slice(), &be(i64::MAX)]));
-            let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
-            for e in self.t.log_entries_by_metarecord.rev_range(self.r, &range)? {
-                let stub = self.listed_stub(e?.0)?;
-                if stub.last() <= after {
-                    break;
-                }
-                place(&stub, None)?;
-            }
-        }
-        out.reverse();
-        Ok(out)
-    }
-
-    /// The stub a key of `ops_by_entity` under the nil uuid lists.
-    fn listed_stub(&self, k: &[u8]) -> Result<Stub> {
-        let first = from_be(&k[16..]);
-        self.count(2)?;
-        self.t
-            .log_entries
-            .get(self.r, &be(first))?
-            .map(|v| Stub::decode(first, v))
-            .transpose()?
-            .flatten()
-            .context("a stub listed and not there")
-    }
-
-    /// Every stub of the log, newest first, from the store's memo: decoded at
-    /// the first read after a write, and kept until the next. `None` in a write
-    /// transaction, or when the stubs name more records than the memo keeps.
-    fn memoed_stubs(&self) -> Result<Option<std::sync::Arc<Vec<Memoed>>>> {
-        let Some((memo, generation)) = self.stubs else { return Ok(None) };
-        let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
-        if memo.generation == Some(generation) {
-            return Ok(memo.stubs.clone());
-        }
-        let mut stubs = Vec::new();
-        let mut named = 0usize;
-        let mut kept = true;
-        let (lo, hi) = (key(&[ROOT.as_slice(), &be(0)]), key(&[ROOT.as_slice(), &be(i64::MAX)]));
-        let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
-        for e in self.t.log_entries_by_metarecord.rev_range(self.r, &range)? {
-            let stub = self.listed_stub(e?.0)?;
-            named += stub.who.len();
-            if named > STUB_MEMO_RECORDS {
-                kept = false;
-                break;
-            }
-            let index = match &stub.who {
-                Who::Uuids(uuids) => Some(uuids.iter().enumerate().map(|(k, u)| (*u, k)).collect()),
-                Who::Ids(_) => None,
-            };
-            stubs.push(Memoed { stub, index });
-        }
-        memo.generation = Some(generation);
-        memo.stubs = kept.then(|| std::sync::Arc::new(stubs));
-        Ok(memo.stubs.clone())
-    }
-
-    /// The rows `append_field` operation `op_id` added, a stub's included:
-    /// none for any other operation.
-    pub(super) fn added_rows(&self, op_id: i64) -> Result<Vec<FieldRow>> {
-        if let Some(stub) = self.stub_at(op_id)? {
-            // An `append_field`'s, as an ordinary operation's: a replacement
-            // keeps its "before" only.
-            let append = !stub.delete && stub.kind == Kind::Add;
-            return Ok(if append { stub.snapshot(op_id, true) } else { Vec::new() });
-        }
-        let mut out = Vec::new();
-        let prefix = key(&[&be(op_id), &[1u8]]);
-        for e in self.t.log_snaps.prefix_iter(self.r, &prefix)? {
-            out.push(super::dec_row(e?.1)?);
-        }
-        self.count(out.len() as u64 + 1)?;
-        Ok(out)
-    }
-
-    /// The rows operation `op_id` took off its record, a stub's included.
-    pub(super) fn snapshot_rows(&self, op_id: i64) -> Result<Vec<FieldRow>> {
-        let stub = self.stub_at(op_id)?;
-        if let Some(stub) = &stub {
-            if !stub.delete {
-                return Ok(stub.snapshot(op_id, false));
-            }
-        }
-        let mut out = Vec::new();
-        let prefix = key(&[&be(op_id), &[0u8]]);
-        for e in self.t.log_snaps.prefix_iter(self.r, &prefix)? {
-            out.push(super::dec_row(e?.1)?);
-        }
-        self.count(out.len() as u64 + 1)?;
-        // A deletion's rows are the snapshots the fold wrote, and for a record
-        // it has not folded — still pending, or given back — the record's own.
-        if out.is_empty() {
-            if let Some(stub) = stub.filter(|s| s.delete) {
-                return self.deleted_rows(&stub, op_id);
-            }
-        }
-        Ok(out)
-    }
-
-    /// The rows the record of operation `op_id` of a deletion held, which are
-    /// still in its key: the deletion wrote nothing of them, and whatever
-    /// would change them copies them into the snapshots first (the fold, a
-    /// write to a record it gave back, a reindex).
-    fn deleted_rows(&self, stub: &Stub, op_id: i64) -> Result<Vec<FieldRow>> {
-        let Who::Ids(ids) = &stub.who else { return Ok(Vec::new()) };
-        let id =
-            ids.select((op_id - stub.first) as u32).context("a deletion shorter than its ids")?;
-        self.record_raw(id)
-    }
-
-    /// A record's operations after `after`, ascending: its own, and those of
-    /// the stubs that name it.
-    pub(super) fn entity_op_ids_after(&self, entity: Uuid, after: i64) -> Result<Vec<i64>> {
-        let mut ids = Vec::new();
-        for e in self.t.log_entries_by_metarecord.prefix_iter(self.r, entity.as_bytes())? {
-            self.count(1)?;
-            let id = from_be(&e?.0[16..]);
-            if id > after {
-                ids.push(id);
-            }
-        }
-        ids.extend(self.stub_ops_of(entity, after)?);
-        ids.sort_unstable();
-        Ok(ids)
-    }
+/// An operation of an entry, as a write to many records reads it back: its
+/// target, the target's dense id (none when the store has none for
+/// it), whether its before is still in the record, and its before otherwise.
+struct Target {
+    uuid: Uuid,
+    id: Option<u32>,
+    pending: bool,
+    before: Vec<FieldRow>,
 }
 
 impl KvTxn<'_> {
@@ -591,7 +71,7 @@ impl KvTxn<'_> {
         self.read_in(&txn, &mut |read: &Read| ids.iter().map(|id| read.uuid_of_id(id)).collect())
     }
 
-    /// Logs a write to `field` of the records `ids` (live ones) as one stub,
+    /// Logs a write to `field` of the records `ids` (live ones) as one entry,
     /// and derives what it changes (doc "Mass operations in the log"): one
     /// value added to those that lack it or removed from those that hold it,
     /// or the rows replaced by `values` (none: the field taken off). No record
@@ -657,22 +137,41 @@ impl KvTxn<'_> {
             return Ok(Some(MassApplied { changed, last_op: 0, touches_watch: false }));
         }
         self.mass_end_ids(field, kind, values.to_vec(), changed.clone())?;
-        let stub = Stub {
-            first: self.next_op_id()?,
-            label,
+        let (effect, params) = match kind {
+            Kind::Add => (Effect::Add, Params::Value(field.to_string(), values[0].clone())),
+            Kind::Remove => (Effect::Remove, Params::Value(field.to_string(), values[0].clone())),
+            Kind::Replace if values.is_empty() => (Effect::Unset, Params::Field(field.to_string())),
+            Kind::Replace => (Effect::Set, Params::Values(field.to_string(), values.to_vec())),
+        };
+        let h = Header {
+            context: label,
             timestamp,
             origin: origin.map(str::to_string),
-            kind,
-            field: field.to_string(),
-            values: values.to_vec(),
-            before,
-            who: Who::Ids(changed.clone()),
-            delete: false,
-            in_snaps: false,
+            effect,
+            file: FileAction::None,
             reverts,
+            params,
+            targets: changed.len(),
         };
-        let last = stub.last();
-        self.put_stub(&stub)?;
+        // What a replacement took off, each value with the ranks of the
+        // targets that held it: a replacement forgets what it replaces, so
+        // the log is told.
+        let mut held: Vec<Vec<FieldRow>> = Vec::new();
+        if !before.is_empty() {
+            held = vec![Vec::new(); changed.len() as usize];
+            for (value, ranks) in before {
+                for k in ranks {
+                    held[k as usize]
+                        .push(FieldRow { name: field.to_string(), value: value.clone() });
+                }
+            }
+        }
+        let targets = self.uuids_of_ids(&changed)?;
+        let chunks = entry::chunks(&targets, false, |k| {
+            held.get_mut(k).map(std::mem::take).unwrap_or_default()
+        });
+        let first = self.put_entry(&h, &chunks, true)?;
+        let last = first + changed.len() as i64 - 1;
         Ok(Some(MassApplied { changed, last_op: last, touches_watch: false }))
     }
 
@@ -729,7 +228,7 @@ impl KvTxn<'_> {
         for e in self.t.field_types.iter(&txn)? {
             let (name, ty) = super::derived::unesc(e?.0)?;
             let name = String::from_utf8(name).context("a field name")?;
-            if super::codec::is_position_type(&ty) {
+            if super::codec::is_position_type(ty) {
                 positional.push(name.clone());
             }
             if all.last() != Some(&name) {
@@ -740,7 +239,7 @@ impl KvTxn<'_> {
         Ok((all, positional))
     }
 
-    /// Deletes the records `ids` as one stub (doc "Mass operations in the
+    /// Deletes the records `ids` as one entry (doc "Mass operations in the
     /// log"): their ids leave the universe, which is all any answer needs,
     /// and the records stay stored until the fold. Kept exact now, by set
     /// operations and without reading a record: the type counts, which sum
@@ -795,24 +294,23 @@ impl KvTxn<'_> {
             touches_watch |= !(&self.holder_ids_now(field)? & &changed).is_empty();
         }
         self.chunk_apply(super::derived::LIVE, &[], &changed, false)?;
-        let stub = Stub {
-            first: self.next_op_id()?,
-            label,
+        let h = Header {
+            context: label,
             timestamp,
             origin: origin.map(str::to_string),
-            kind: Kind::Remove,
-            field: String::new(),
-            values: Vec::new(),
-            before: Vec::new(),
-            who: Who::Ids(changed.clone()),
-            delete: true,
-            in_snaps: false,
+            effect: Effect::Delete,
+            file: FileAction::None,
             reverts: None,
+            params: Params::None,
+            targets: changed.len(),
         };
-        let last = stub.last();
-        self.put_stub(&stub)?;
+        // The before of every target is in its record, which the deletion
+        // keeps as it was until the fold copies it into the chunks.
+        let targets = self.uuids_of_ids(&changed)?;
+        let first = self.put_entry(&h, &entry::chunks(&targets, true, |_| Vec::new()), true)?;
+        let last = first + changed.len() as i64 - 1;
         let entry = Listed {
-            op: stub.first as u64,
+            op: first as u64,
             kind: Kind::Remove,
             field: String::new(),
             values: Vec::new(),
@@ -845,11 +343,12 @@ impl KvTxn<'_> {
     }
 
     /// Reverts a run of operations of one mass add or remove at once: the
-    /// operations `first_op..=last_op`, which are the stub's, are taken back
-    /// by a stub of the opposite kind over the same records, each of whose
-    /// operations names the one it reverts. `None` — nothing written — when
-    /// they are not so (not a stub's, a replacement, several values) or when a
-    /// record no longer holds what the revert would change.
+    /// operations `first_op..=last_op`, which are a write to many records',
+    /// are taken back by an entry of the opposite effect over the same
+    /// records, each of whose operations names the one it reverts. `None` —
+    /// nothing written — when they are not so (not one write to many records,
+    /// a replacement, a record the store no longer numbers as it did) or when
+    /// a record no longer holds what the revert would change.
     pub(super) fn mass_revert_log(
         &self,
         first_op: i64,
@@ -858,39 +357,82 @@ impl KvTxn<'_> {
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
-        let stub = {
-            let txn = self.txn.borrow();
-            self.read_in(&txn, &mut |read: &Read| read.stub_at(first_op))?
-        };
-        let Some(stub) = stub.filter(|s| {
-            !s.delete && s.kind != Kind::Replace && s.values.len() == 1 && s.covers(last_op)
-        }) else {
+        let Some(entry) = self.listed_entry(first_op, last_op)? else { return Ok(None) };
+        let (Effect::Add | Effect::Remove, Params::Value(field, value)) =
+            (entry.h.effect, &entry.h.params)
+        else {
             return Ok(None);
         };
-        let Who::Ids(all) = &stub.who else { return Ok(None) };
-        let (a, n) = ((first_op - stub.first) as usize, (last_op - first_op + 1) as usize);
-        let ids: RoaringBitmap = all.iter().skip(a).take(n).collect();
-        if ids.len() != n as u64 {
+        let Some(ids) = self.ids_in_order(&self.targets_of_ops(&entry, first_op, last_op)?) else {
             return Ok(None);
-        }
-        // A record deleted since, then given back, is alive under another id
-        // (the id it had stays in the holders, which only the universe
-        // sifts): the revert by ids would miss it, and say it did it.
+        };
+        // A record deleted since is out of the universe: the revert by ids
+        // would miss it, and say it did it.
         let universe = self.read_chunked(super::derived::LIVE, &[])?;
         if !ids.is_subset(&universe) {
             return Ok(None);
         }
-        let opposite = if stub.kind == Kind::Add { Kind::Remove } else { Kind::Add };
+        let opposite = if entry.h.effect == Effect::Add { Kind::Remove } else { Kind::Add };
         self.mass_log(
             opposite,
-            &stub.field,
-            &stub.values,
+            field,
+            std::slice::from_ref(value),
             &ids,
             label,
             timestamp,
             origin,
             Some(first_op),
         )
+    }
+
+    /// The write to many records that holds the operations
+    /// `first_op..=last_op`, when one does.
+    fn listed_entry(&self, first_op: i64, last_op: i64) -> Result<Option<Entry>> {
+        let Some(entry) = self.read_log(|r| r.entry_at(first_op))? else { return Ok(None) };
+        if !entry.covers(last_op) {
+            return Ok(None);
+        }
+        let listed = {
+            let txn = self.txn.borrow();
+            let k = key(&[ROOT.as_slice(), &be(entry.first)]);
+            self.t.log_entries_by_metarecord.get(&txn, &k)?.is_some()
+        };
+        Ok(listed.then_some(entry))
+    }
+
+    /// The operations `first_op..=last_op` of `entry`, as they are stored.
+    fn targets_of_ops(&self, entry: &Entry, first_op: i64, last_op: i64) -> Result<Vec<Target>> {
+        let mut out = Vec::with_capacity((last_op - first_op + 1) as usize);
+        let mut loaded = entry::Loaded::default();
+        for op in first_op..=last_op {
+            let (uuid, pending, before) = self.read_log(|r| {
+                let (chunk, rank) = r.chunk_of(entry, op, &mut loaded)?;
+                Ok((
+                    chunk.targets[rank],
+                    chunk.pending.contains(rank as u32),
+                    chunk.before[rank].clone(),
+                ))
+            })?;
+            let id = self.dense_id(uuid.as_bytes())?;
+            out.push(Target { uuid, id, pending, before });
+        }
+        Ok(out)
+    }
+
+    /// The dense ids of `targets`, when the store numbers each of them, in
+    /// their order: a write to many records names its targets in the order of
+    /// their ids, and an operation of a revert or an undeletion in the place of
+    /// the one it takes back.
+    fn ids_in_order(&self, targets: &[Target]) -> Option<RoaringBitmap> {
+        let mut ids = RoaringBitmap::new();
+        for t in targets {
+            let id = t.id?;
+            if ids.max().is_some_and(|m| m >= id) {
+                return None;
+            }
+            ids.insert(id);
+        }
+        Some(ids)
     }
 
     /// Gives back a deletion still pending (doc "Mass operations in the log"):
@@ -907,17 +449,16 @@ impl KvTxn<'_> {
         first_op: i64,
         last_op: i64,
     ) -> Result<Option<MassApplied>> {
-        let stub = {
-            let txn = self.txn.borrow();
-            self.read_in(&txn, &mut |read: &Read| read.stub_at(first_op))?
-        };
-        let Some(stub) = stub.filter(|s| s.delete && s.covers(last_op)) else {
+        let Some(entry) = self.listed_entry(first_op, last_op)?.filter(|e| e.deletes()) else {
             return Ok(None);
         };
-        let Who::Ids(all) = &stub.who else { return Ok(None) };
-        // The fold wrote the records out of the store when the stub holds
-        // their rows (`in_snaps`): they are put back from there.
-        let folded = stub.in_snaps;
+        let targets = self.targets_of_ops(&entry, first_op, last_op)?;
+        // The fold wrote the records out of the store when the chunks hold
+        // their rows: they are put back from there. Some only: not as a whole.
+        let folded = !targets.iter().any(|t| t.pending);
+        if !folded && !targets.iter().all(|t| t.pending) {
+            return Ok(None);
+        }
         // The mark that names every one of these operations, which a fold
         // took away.
         let mark = if folded {
@@ -936,8 +477,8 @@ impl KvTxn<'_> {
             }
             found
         };
-        let (a, n) = ((first_op - stub.first) as usize, (last_op - first_op + 1) as usize);
-        let ids: RoaringBitmap = all.iter().skip(a).take(n).collect();
+        let n = (last_op - first_op + 1) as usize;
+        let Some(ids) = self.ids_in_order(&targets) else { return Ok(None) };
         let universe = self.read_chunked(super::derived::LIVE, &[])?;
         if ids.len() != n as u64 || !(&ids & &universe).is_empty() {
             return Ok(None);
@@ -945,8 +486,7 @@ impl KvTxn<'_> {
         // What the fold took out of the store: the records, from the rows the
         // log froze. Each must still be the one it was — its id its uuid's, no
         // record under either — and a position it held not taken since.
-        let revived =
-            if folded { self.folded_records(&stub, all, first_op, last_op)? } else { None };
+        let revived = if folded { self.folded_records(&targets)? } else { None };
         if folded && revived.is_none() {
             return Ok(None);
         }
@@ -1091,36 +631,20 @@ impl KvTxn<'_> {
     }
 
     /// The records the fold of a deletion wrote out of the store, for the
-    /// operations `first_op..=last_op` of `stub` (whose ids are `all`): each
-    /// `(id, uuid, rows)`, the rows being those the log froze. `None` when one
-    /// is not as the fold left it: a record stored under its id or its uuid
-    /// (given back, or not folded yet), an id that is no longer its uuid's, or
-    /// a position a live record took since.
-    fn folded_records(
-        &self,
-        stub: &Stub,
-        all: &RoaringBitmap,
-        first_op: i64,
-        last_op: i64,
-    ) -> Result<Option<Vec<Folded>>> {
-        let at = (first_op - stub.first) as usize;
-        let n = (last_op - first_op + 1) as usize;
-        let mut out = Vec::with_capacity(n);
+    /// operations `targets` of it: each `(id, uuid, rows)`, the rows being
+    /// those the log froze. `None` when one is not as the fold left it: a
+    /// record stored under its id (given back), an id that is no longer its
+    /// uuid's, or a position a live record took since.
+    fn folded_records(&self, targets: &[Target]) -> Result<Option<Vec<Folded>>> {
+        let mut out = Vec::with_capacity(targets.len());
         let txn = self.txn.borrow();
-        for (rank, id) in all.iter().skip(at).take(n).enumerate() {
-            let op = first_op + rank as i64;
-            let Some(uuid) = self.t.uuids.get(&txn, &id.to_be_bytes())? else { return Ok(None) };
-            let Ok(uuid) = Uuid::from_slice(uuid) else { return Ok(None) };
-            let named = self.t.ids.get(&txn, uuid.as_bytes())?;
-            if named != Some(&id.to_be_bytes()[..]) || self.live_in(&txn, id)? {
+        for t in targets {
+            let Some(id) = t.id else { return Ok(None) };
+            let named = self.t.uuids.get(&txn, &id.to_be_bytes())?;
+            if named != Some(t.uuid.as_bytes().as_slice()) || self.live_in(&txn, id)? {
                 return Ok(None);
             }
-            let prefix = key(&[&be(op), &[0u8]]);
-            let mut rows = Vec::new();
-            for e in self.t.log_snaps.prefix_iter(&txn, &prefix)? {
-                rows.push(dec_row(e?.1)?);
-            }
-            for row in &rows {
+            for row in &t.before {
                 let Some(k) = super::derived::raw_key_of(&self.t, &txn, &row.name, &row.value)?
                 else {
                     continue;
@@ -1132,7 +656,7 @@ impl KvTxn<'_> {
                     }
                 }
             }
-            out.push((id, uuid, rows));
+            out.push((id, t.uuid, t.before.clone()));
         }
         Ok(Some(out))
     }
@@ -1185,7 +709,7 @@ impl KvTxn<'_> {
     }
 
     /// Folds the oldest deletion pending: the records it deleted are written
-    /// out of the store, after their rows went to the snapshots of its
+    /// out of the store, after their rows went to the chunks of its
     /// operations (which read them from the records until then) and to the
     /// histograms. Returns whether there was one.
     pub(super) fn fold_one_delete(&self) -> Result<bool> {
@@ -1207,44 +731,28 @@ impl KvTxn<'_> {
             return Ok(false);
         };
         // A record about to leave the store may be one an earlier deletion
-        // gave back: that deletion's rows go to the snapshots first.
+        // gave back: that deletion's rows go to the chunks first.
         self.freeze_given_back(&listed.ids)?;
         let first = listed.op as i64;
-        // The stubs holding its operations: the one it wrote, or what a prune
-        // left of it (the first operations of a stub go first).
-        let mut covering: Option<Stub> = None;
-        let mut marked: BTreeMap<i64, Stub> = BTreeMap::new();
+        let mut befores = Vec::new();
         for (rank, id) in listed.ids.iter().enumerate() {
-            let op_id = first + rank as i64;
             let rows = self.load_record(id)?.plain_rows();
             for row in &rows {
                 self.drop_hist(&row.name, &row.value)?;
             }
-            if !covering.as_ref().is_some_and(|s| s.covers(op_id)) {
-                let txn = self.txn.borrow();
-                covering = self
-                    .read_in(&txn, &mut |read: &Read| read.stub_at(op_id))?
-                    .filter(|s| s.delete);
-            }
-            let mut w = self.txn.borrow_mut();
-            if let Some(stub) = &covering {
-                for (n, row) in rows.iter().enumerate() {
-                    let k = key(&[&be(op_id), &[0u8], &(n as u32).to_be_bytes()]);
-                    self.t.log_snaps.put(&mut w, &k, &enc_row(row))?;
-                }
-                marked.entry(stub.first).or_insert_with(|| stub.clone());
+            // An operation a prune took has nothing to keep.
+            befores.push((first + rank as i64, rows));
+            if befores.len() as u64 == CHUNK {
+                self.write_befores(std::mem::take(&mut befores))?;
             }
         }
-        for (at, mut stub) in marked {
-            stub.in_snaps = true;
-            self.t.log_entries.put(&mut self.txn.borrow_mut(), &be(at), &stub.encode())?;
-        }
+        self.write_befores(befores)?;
         self.t.mass.delete(&mut self.txn.borrow_mut(), &entry_key_bytes)?;
         Ok(true)
     }
 
-    /// Copies into the snapshots the rows the records of `ids` held that a
-    /// deletion took and gave back, which the log reads in the records until
+    /// Copies into the chunks of the log the rows the records of `ids` held
+    /// that a deletion took and gave back, which the log reads in the records until
     /// now: the entry, the write, the deletion about to change them. Nothing
     /// is read when no record is waiting.
     pub(super) fn freeze_given_back(&self, ids: &RoaringBitmap) -> Result<()> {
@@ -1262,24 +770,13 @@ impl KvTxn<'_> {
                 waiting = true;
                 continue;
             }
+            let mut befores = Vec::new();
             for id in hit.iter() {
                 let op = mark.op as i64 + (mark.ids.rank(id) - 1) as i64;
-                // An operation a prune took has nothing to keep.
-                let kept = {
-                    let txn = self.txn.borrow();
-                    self.read_in(&txn, &mut |read: &Read| read.stub_at(op))?
-                        .is_some_and(|s| s.delete)
-                };
-                if !kept {
-                    continue;
-                }
-                let rows = self.load_record(id)?.plain_rows();
-                let mut w = self.txn.borrow_mut();
-                for (n, row) in rows.iter().enumerate() {
-                    let k = key(&[&be(op), &[0u8], &(n as u32).to_be_bytes()]);
-                    self.t.log_snaps.put(&mut w, &k, &enc_row(row))?;
-                }
+                befores.push((op, self.load_record(id)?.plain_rows()));
             }
+            // An operation a prune took has nothing to keep.
+            self.write_befores(befores)?;
             // The mark keeps the operations still waiting, each at its number.
             let mut w = self.txn.borrow_mut();
             self.t.mass.delete(&mut w, &entry_key(THAWED_PART, mark.op))?;
@@ -1328,172 +825,5 @@ impl KvTxn<'_> {
             all |= &mark.ids;
         }
         self.freeze_given_back(&all)
-    }
-
-    /// The stubs that hold ids become stubs that hold uuids: a reindex is
-    /// about to number the ids again. Dead records included, which the ids
-    /// still name until then.
-    pub(super) fn stubs_to_uuids(&self) -> Result<()> {
-        let mut found: Vec<(i64, Stub)> = Vec::new();
-        {
-            let txn = self.txn.borrow();
-            let r: &heed::RoTxn<'_> = &txn;
-            for e in self.t.log_entries_by_metarecord.prefix_iter(r, ROOT.as_slice())? {
-                let first = from_be(&e?.0[16..]);
-                if let Some(v) = self.t.log_entries.get(r, &be(first))? {
-                    if let Some(stub) = Stub::decode(first, v)? {
-                        if matches!(stub.who, Who::Ids(_)) {
-                            found.push((first, stub));
-                        }
-                    }
-                }
-            }
-        }
-        for (first, mut stub) in found {
-            let Who::Ids(ids) = &stub.who else { continue };
-            // In the order of the ids: an operation keeps its record.
-            stub.who = Who::Uuids(self.uuids_of_ids(ids)?);
-            let mut w = self.txn.borrow_mut();
-            self.t.log_entries.put(&mut w, &be(first), &stub.encode())?;
-        }
-        Ok(())
-    }
-
-    /// The last id of the stub that `id` is the first of, `id` itself when it
-    /// is an ordinary operation's.
-    pub(super) fn entry_end(&self, id: i64) -> Result<i64> {
-        let w = self.txn.borrow();
-        let Some(v) = self.t.log_entries.get(&w, &be(id))? else { return Ok(id) };
-        Ok(Stub::decode(id, v)?.map_or(id, |s| s.last()))
-    }
-
-    fn next_op_id(&self) -> Result<i64> {
-        let w = self.txn.borrow();
-        Ok(super::State::NextLogOp.get(&self.t, &w)?.unwrap_or(1))
-    }
-
-    fn put_stub(&self, stub: &Stub) -> Result<()> {
-        let mut w = self.txn.borrow_mut();
-        let t = self.t;
-        let first = be(stub.first);
-        t.log_entries.put(&mut w, &first, &stub.encode())?;
-        t.log_entries_by_context.put(&mut w, &key(&[&be(stub.label), &first]), &be(stub.last()))?;
-        t.log_entries_by_metarecord.put(&mut w, &key(&[ROOT.as_slice(), &first]), &[])?;
-        self.class(stub.origin.as_deref()).put(&mut w, &first, &[])?;
-        super::State::NextLogOp.put(&t, &mut w, stub.last() + 1)?;
-        if let Some(target) = stub.reverts {
-            for k in 0..stub.who.len() as i64 {
-                t.log_reverted_by.put(
-                    &mut w,
-                    &key(&[&be(target + k), &be(stub.first + k)]),
-                    &[],
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Takes the first `k` operations out of a stub, all of them when it
-    /// holds no more: pruning and retention take the oldest operations.
-    fn cut_stub(&self, stub: &Stub, k: usize) -> Result<()> {
-        let mut w = self.txn.borrow_mut();
-        let t = self.t;
-        // A deletion's rows are in the snapshots once the fold froze them, or
-        // once a record it gave back was written to (`in_snaps` says only the
-        // first): one pass over the keys of the operations cut, which follow
-        // each other.
-        if stub.delete {
-            let (lo, hi) = (be(stub.first), be(stub.first + k as i64));
-            let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Excluded(&hi[..]));
-            let doomed: Vec<Vec<u8>> = t
-                .log_snaps
-                .range(&w, &range)?
-                .map(|e| e.map(|(key, _)| key.to_vec()))
-                .collect::<std::result::Result<_, _>>()?;
-            for key in doomed {
-                t.log_snaps.delete(&mut w, &key)?;
-            }
-        }
-        if let Some(target) = stub.reverts {
-            for j in 0..k as i64 {
-                t.log_reverted_by.delete(&mut w, &key(&[&be(target + j), &be(stub.first + j)]))?;
-            }
-        }
-        let first = be(stub.first);
-        t.log_entries.delete(&mut w, &first)?;
-        t.log_entries_by_context.delete(&mut w, &key(&[&be(stub.label), &first]))?;
-        t.log_entries_by_metarecord.delete(&mut w, &key(&[ROOT.as_slice(), &first]))?;
-        t.log_watcher_entries.delete(&mut w, &first)?;
-        t.log_user_entries.delete(&mut w, &first)?;
-        if stub.who.len() == k {
-            return Ok(());
-        }
-        drop(w);
-        let rest = Stub {
-            first: stub.first + k as i64,
-            label: stub.label,
-            timestamp: stub.timestamp,
-            origin: stub.origin.clone(),
-            kind: stub.kind,
-            field: stub.field.clone(),
-            values: stub.values.clone(),
-            before: stub
-                .before
-                .iter()
-                .map(|(v, at)| {
-                    (
-                        v.clone(),
-                        at.iter().filter(|p| *p as usize >= k).map(|p| p - k as u32).collect(),
-                    )
-                })
-                .collect(),
-            who: match &stub.who {
-                Who::Uuids(uuids) => Who::Uuids(uuids[k..].to_vec()),
-                Who::Ids(ids) => Who::Ids(ids.iter().skip(k).collect()),
-            },
-            delete: stub.delete,
-            in_snaps: stub.in_snaps,
-            reverts: stub.reverts.map(|r| r + k as i64),
-        };
-        let mut w = self.txn.borrow_mut();
-        let first = be(rest.first);
-        t.log_entries.put(&mut w, &first, &rest.encode())?;
-        t.log_entries_by_context.put(&mut w, &key(&[&be(rest.label), &first]), &be(rest.last()))?;
-        t.log_entries_by_metarecord.put(&mut w, &key(&[ROOT.as_slice(), &first]), &[])?;
-        self.class(rest.origin.as_deref()).put(&mut w, &first, &[])?;
-        Ok(())
-    }
-
-    /// Removes the operations of `ids` that are a stub's: the oldest of a
-    /// stub (an id that is not among its first is left, as the rest of the
-    /// log keeps what a prune does not name). Every id of `ids` that is a
-    /// stub's, and the labels of the stubs it touched.
-    pub(super) fn delete_stub_ops(&self, ids: &[i64]) -> Result<(HashSet<i64>, HashSet<i64>)> {
-        let mut handled = HashSet::new();
-        let mut labels = HashSet::new();
-        let mut per: BTreeMap<i64, (Stub, Vec<i64>)> = BTreeMap::new();
-        {
-            let txn = self.txn.borrow();
-            self.read_in(&txn, &mut |read: &Read| {
-                for &id in ids {
-                    if let Some(s) = read.stub_at(id)? {
-                        per.entry(s.first).or_insert_with(|| (s, Vec::new())).1.push(id);
-                    }
-                }
-                Ok(())
-            })?;
-        }
-        for (stub, mut named) in per.into_values() {
-            named.sort_unstable();
-            let k = named.len();
-            let prefix = named.iter().enumerate().all(|(i, id)| *id == stub.first + i as i64);
-            ensure!(k <= stub.who.len(), "more operations than a stub holds");
-            labels.insert(stub.label);
-            if prefix {
-                self.cut_stub(&stub, k)?;
-            }
-            handled.extend(named);
-        }
-        Ok((handled, labels))
     }
 }

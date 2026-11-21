@@ -24,7 +24,7 @@ entry'', one key each, which is what it costs.
 ```
 log_entries  first op id → log context · timestamp · origin · effect · file action
                            · [first reverted op] · parameters · target count
-log_targets  first op id · chunk number → { uuid } · before of the chunk
+log_targets  first op id · chunk number → { uuid } · pending ranks · before of the chunk
 ```
 
 A chunk holds a fixed number of targets (4096): an operation on one metarecord is two
@@ -63,9 +63,17 @@ chunk, of the targets that held it }`.
 |unset |field |the field's previous values |
 
 The before of a ''deletion of many records'' is not written when the deletion is: it
-is in the records, which its pending `delete` keeps as they were, and the fold copies
-it into the chunks, chunk by chunk, without rewriting the header or another chunk
-([[Mass writes in the store]]).
+is in the records, which its pending `delete` keeps as they were. The ranks of those
+targets are the chunk's ''pending ranks'' (a roaring bitmap, a few bytes for a whole
+chunk), and the log reads their before in the record. The fold copies it into the
+chunks, chunk by chunk, without rewriting the header or another chunk; so does a write
+to a record an undo of the deletion gave back, for that record alone
+([[Mass writes in the store]]). Any other entry has no pending rank.
+
+A write to one metarecord gives its effect from what it did: an append is an `add`; a
+removal of one value a `remove`; a removal of every row of a field (`field remove`
+without a value) an `unset`, which keeps the rows as its before; a set that writes no
+value an `unset` too.
 
 A directory's `file_deleted` gives each descendant its own operation in the same write.
 

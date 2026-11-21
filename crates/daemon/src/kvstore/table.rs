@@ -8,6 +8,9 @@
 use heed::types::Bytes;
 use heed::{Database, RoTxn, RwTxn};
 
+/// Entries of a table, key and value, in key order.
+pub(super) type Entries<'t> = Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't>;
+
 type Raw = Database<'static, Bytes, Bytes>;
 
 /// One table of the store: an LMDB database, and its place among the store's
@@ -115,11 +118,7 @@ impl Db {
 
     /// The entries under `prefix`, the whole table for an empty one (which
     /// LMDB refuses as a key).
-    pub(super) fn scan<'t>(
-        &self,
-        r: &'t RoTxn<'_>,
-        prefix: &[u8],
-    ) -> heed::Result<Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't>> {
+    pub(super) fn scan<'t>(&self, r: &'t RoTxn<'_>, prefix: &[u8]) -> heed::Result<Entries<'t>> {
         Ok(if prefix.is_empty() {
             Box::new(self.raw.iter(r)?)
         } else {

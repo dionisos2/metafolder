@@ -8,42 +8,16 @@
 //! composite key is escaped (`00` → `00 FF`) and ended by `00 00`, so no name
 //! is a prefix of another.
 //!
-//! | table         | key                              | value                     |
-//! |---------------|----------------------------------|---------------------------|
-//! | meta          | name                             | counter / HEAD / version / flag |
-//! | metarecords   | uuid                             | (empty: it exists)        |
-//! | records       | dense id                         | the rows: field name · value |
-//! | mass          | part · number                    | a write to many records ([`mass`]) |
-//! | field_types   | name · value type                | rows of that type         |
-//! | forest        | field · parent · name bytes      | uuid · dense id           |
-//! | ops           | op id                            | the operation             |
-//! | snaps         | op id · added? · index           | a snapshot row            |
-//! | ops_by_label  | label · op id                    | —                         |
-//! | ops_by_entity | uuid · op id                     | —                         |
-//! | labels        | label id                         | name · description · parent · created |
-//! | label_kids    | parent label · child label       | —                         |
-//! | label_reverts | 0 · reverter · reverted, 1 · reverted · reverter | 1 if the whole label |
-//! | label_keys    | command key                      | label id                  |
-//! | reverted_by   | op id · op id of a revert of it  | —                         |
-//! | watcher_ops   | op id                            | —                         |
-//! | user_ops      | op id                            | —                         |
+//! The tables, their keys and their values are described in doc "Store
+//! tables" (`NAMES` lists them); the log's in doc "Log storage": an entry is
+//! one operation on a list of metarecords, its header in `log_entries`, its
+//! targets and their before in `log_targets` ([`entry`]). The log is a
+//! sequence (doc "The operation log"): "the log up to here" is a range of
+//! `log_entries`. `log_watcher_entries` and `log_user_entries` split it by
+//! origin, for the retention each one has (doc "Automatic retention").
 //!
-//! A record's rows are one key of `records`, its dense id (doc "Store tables"):
-//! reading a record is one read, and nothing names a row but its record, its
-//! name and its value. Older layouts kept them in `cells`, then `field_cells`,
-//! one key per row; [`KvStore::open`] converts them ([`LAYOUT`]).
-//!
-//! The log is a sequence (doc "The operation log"): an operation names no
-//! parent, and "the log up to here" is a range of `ops`. `watcher_ops` and
-//! `user_ops` split it by origin, for the retention each one has (doc
-//! "Automatic retention"): their sizes are B-tree statistics and their first
-//! keys the oldest operations of each.
-//!
-//! Operations are grouped by nested labels (doc "Log contexts"): each
-//! carries its innermost one, and `label_kids` holds the nesting. The label
-//! the watcher's flushes hang under is `watcher_label` in `meta`.
-//!
-//! Operation ids and label ids are allocated from counters in `meta` and
+//! Operation ids and log context ids are allocated from counters in
+//! `global_primary_state` and
 //! never reused.
 
 use std::borrow::Cow;
@@ -65,6 +39,7 @@ use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Rows, WriteTxn};
 
 mod codec;
 mod derived;
+mod entry;
 mod mass;
 mod massops;
 pub mod memory;
@@ -92,7 +67,7 @@ struct Tables {
     mass: Db,
     field_types: Db,
     log_entries: Db,
-    log_snaps: Db,
+    log_targets: Db,
     log_entries_by_context: Db,
     log_entries_by_metarecord: Db,
     log_contexts: Db,
@@ -131,7 +106,7 @@ const NAMES: [&str; table::TABLES] = [
     "mass",
     "field_types",
     "log_entries",
-    "log_snaps",
+    "log_targets",
     "log_entries_by_context",
     "log_entries_by_metarecord",
     "log_contexts",
@@ -177,7 +152,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, log_entries, log_snaps, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_label_keys, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, mass, field_types, log_entries, log_targets, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_label_keys, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
             dbs;
         Ok(Tables {
             version,
@@ -187,7 +162,7 @@ impl Tables {
             mass,
             field_types,
             log_entries,
-            log_snaps,
+            log_targets,
             log_entries_by_context,
             log_entries_by_metarecord,
             log_contexts,
@@ -227,7 +202,7 @@ impl Tables {
             self.mass,
             self.field_types,
             self.log_entries,
-            self.log_snaps,
+            self.log_targets,
             self.log_entries_by_context,
             self.log_entries_by_metarecord,
             self.log_contexts,
@@ -294,9 +269,10 @@ pub struct KvStore {
     /// How many write transactions committed: what a memo of the committed
     /// store is valid for.
     generation: std::sync::atomic::AtomicU64,
-    /// The stubs of the log, decoded once for every read of a record's history
-    /// until the next write (doc "Mass operations in the log").
-    stub_memo: std::sync::Mutex<massops::StubMemo>,
+    /// The targets of the writes to many records of the log, read once for
+    /// every read of a record's history until the next write (doc "Log
+    /// storage").
+    targets_memo: std::sync::Mutex<entry::TargetsMemo>,
     /// Where the copy is, shared with whoever reports it, so that reading it
     /// never waits on the store.
     resident: memory::ResidencyHandle,
@@ -485,28 +461,8 @@ impl Out {
         self.0.extend_from_slice(b);
         self
     }
-    fn opt_bytes(&mut self, b: Option<&[u8]>) -> &mut Self {
-        match b {
-            None => self.0.push(0),
-            Some(b) => {
-                self.0.push(1);
-                self.bytes(b);
-            }
-        }
-        self
-    }
     fn int(&mut self, n: i64) -> &mut Self {
         self.0.extend_from_slice(&n.to_be_bytes());
-        self
-    }
-    fn opt_int(&mut self, n: Option<i64>) -> &mut Self {
-        match n {
-            None => self.0.push(0),
-            Some(n) => {
-                self.0.push(1);
-                self.int(n);
-            }
-        }
         self
     }
 }
@@ -564,63 +520,21 @@ fn get_value(r: &mut In) -> Result<Value> {
     Ok(v)
 }
 
-/// A row as stored. `id` is the store's own handle on a cell, until the cells
-/// give way to one key per record (doc "Store tables"); a snapshot writes `0`.
-/// A snapshot's row: the column an older store wrote a row id in holds `0`.
-fn enc_row(row: &FieldRow) -> Vec<u8> {
-    let mut out = Out::default();
-    out.int(0).bytes(row.name.as_bytes());
-    put_value(&mut out, &row.value);
-    out.0
-}
-
-/// A snapshot's row, whatever id an older store wrote with it.
-fn dec_row(b: &[u8]) -> Result<FieldRow> {
-    let mut r = In(b);
-    r.int()?;
-    Ok(FieldRow { name: r.string()?, value: get_value(&mut r)? })
-}
-
 /// A record of rows no pending write names, the value of its key in
 /// `records` ([`mass::Record`]).
 fn enc_rows(rows: &[FieldRow]) -> Vec<u8> {
     mass::Record::plain(rows.to_vec()).encode()
 }
 
-fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Result<Vec<u8>> {
-    let mut out = Out::default();
-    out.int(label).int(timestamp);
-    out.0.push(codec::origin_byte(op.origin.as_deref())?);
-    out.0.extend_from_slice(&codec::op_type_bytes(op.op_type.as_str())?);
-    out.bytes(op.entity.as_bytes())
-        .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
-        .opt_int(op.reverts_op_id);
-    Ok(out.0)
+/// How many targets an entry of `log_entries_by_context` says it has.
+fn targets_of(v: &[u8]) -> Result<i64> {
+    let mut r = codec::Dec(v);
+    Ok(r.varint()? as i64)
 }
 
-fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
-    let mut r = In(b);
-    let (label_id, timestamp) = (r.int()?, r.int()?);
-    let origin = codec::origin_of(r.take(1)?[0])?;
-    let op_type = codec::op_type_name(r.take(2)?)?.to_string();
-    let entity_uuid = uuid_of(r.bytes()?);
-    Ok(OpRow {
-        id,
-        label_id,
-        timestamp,
-        origin,
-        op_type,
-        entity_uuid,
-        field_name: r.opt_string()?,
-        reverts_op_id: r.opt_int()?,
-    })
-}
-
-/// An operation's timestamp, from its stored form (the second field).
+/// An entry's timestamp, from its header.
 fn op_timestamp(v: &[u8]) -> Result<i64> {
-    let mut r = In(v);
-    r.int()?;
-    r.int()
+    Ok(entry::Header::decode(v)?.timestamp)
 }
 
 /// A label, and the key of the command that opened it, if one did, in the
@@ -752,7 +666,7 @@ impl KvStore {
             thawed: Default::default(),
             written: std::sync::Mutex::new([0; table::TABLES]),
             generation: Default::default(),
-            stub_memo: Default::default(),
+            targets_memo: Default::default(),
             memory: None,
             resident: Default::default(),
             durable,
@@ -853,9 +767,10 @@ struct Read<'a> {
     mass: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
-    /// The store's memo of decoded stubs, and the generation the read sees;
-    /// `None` in a write transaction, whose writes the memo does not know.
-    stubs: Option<(&'a std::sync::Mutex<massops::StubMemo>, u64)>,
+    /// The store's memo of the targets of writes to many records, and the
+    /// generation the read sees; `None` in a write transaction, whose writes
+    /// the memo does not know.
+    targets_memo: Option<(&'a std::sync::Mutex<entry::TargetsMemo>, u64)>,
 }
 
 impl Read<'_> {
@@ -1093,43 +1008,14 @@ impl Read<'_> {
     }
 
     fn op(&self, id: i64) -> Result<Option<OpRow>> {
-        self.count(1)?;
-        match self.t.log_entries.get(self.r, &be(id))? {
-            Some(b) => Ok(Some(match massops::Stub::decode(id, b)? {
-                Some(stub) => stub.op(self, id)?,
-                None => dec_op(id, b)?,
-            })),
-            None => self.stub_at(id)?.map(|stub| stub.op(self, id)).transpose(),
+        match self.entry_at(id)? {
+            Some(e) => Ok(Some(self.op_in(&e, id, &mut entry::Loaded::default())?)),
+            None => Ok(None),
         }
     }
 
     fn ops_of(&self, ids: impl Iterator<Item = i64>) -> Result<Vec<OpRow>> {
-        self.ops_resolved(ids)
-    }
-
-    /// The operations at or before `from`, at most `max`, newest first: a
-    /// backward range of `ops`.
-    fn back(&self, from: i64, max: usize) -> Result<Vec<OpRow>> {
-        let mut out = Vec::new();
-        let end = be(from);
-        let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&end[..]));
-        for e in self.t.log_entries.rev_range(self.r, &range)? {
-            if out.len() >= max {
-                break;
-            }
-            self.count(1)?;
-            let (k, v) = e?;
-            let id = from_be(k);
-            match massops::Stub::decode(id, v)? {
-                Some(stub) => {
-                    for at in (id..=stub.last().min(from)).rev().take(max - out.len()) {
-                        out.push(stub.op(self, at)?);
-                    }
-                }
-                None => out.push(dec_op(id, v)?),
-            }
-        }
-        Ok(out)
+        self.ops_resolved_of(ids, None)
     }
 
     fn all_op_ids(&self) -> Result<Vec<i64>> {
@@ -1141,9 +1027,7 @@ impl Read<'_> {
         for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(label))? {
             let (k, v) = e?;
             let first = from_be(&k[8..]);
-            // A stub's entry says where its operations end.
-            let last = if v.is_empty() { first } else { from_be(v) };
-            out.extend(first..=last);
+            out.extend(first..first + targets_of(v)?);
         }
         self.count(out.len() as u64 + 1)?;
         Ok(out)
@@ -1173,14 +1057,13 @@ impl Read<'_> {
     }
 
     /// How many operations a label holds of its own, off the keys of
-    /// `ops_by_label` — one per operation, one per stub, which says its last
-    /// id — so that no operation is read, nor any record a stub names.
+    /// `log_entries_by_context` — one per entry, which says how many targets it
+    /// has — so that no entry is read.
     fn label_op_count(&self, label: i64) -> Result<i64> {
         let (mut n, mut seen) = (0i64, 0u64);
         for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(label))? {
-            let (k, v) = e?;
             seen += 1;
-            n += if v.len() == 8 { from_be(v) - from_be(&k[8..]) + 1 } else { 1 };
+            n += targets_of(e?.1)?;
         }
         self.count(seen + 1)?;
         Ok(n)
@@ -1194,7 +1077,7 @@ impl Read<'_> {
         Ok(match self.t.log_entries_by_context.rev_range(self.r, &range)?.next() {
             Some(e) => {
                 let (k, v) = e?;
-                Some(if v.len() == 8 { from_be(v) } else { from_be(&k[8..]) })
+                Some(from_be(&k[8..]) + targets_of(v)? - 1)
             }
             None => None,
         })
@@ -1232,10 +1115,8 @@ impl Read<'_> {
         if op_timestamp(v)? > timestamp_ms {
             return Ok(None);
         }
-        // A write to many records is one entry holding many ids, all of its time.
-        let end_of = |id: i64, v: &[u8]| -> Result<i64> {
-            Ok(massops::Stub::decode(id, v)?.map_or(id, |s| s.last()))
-        };
+        // An entry holds many ids, all of its time.
+        let end_of = |id: i64, v: &[u8]| self.entry_last(id, v);
         let mut lo = end_of(from_be(first), v)?;
         let Some((last, v)) = self.t.log_entries.last(self.r)? else { return Ok(None) };
         let mut hi = end_of(from_be(last), v)?;
@@ -1524,7 +1405,7 @@ macro_rules! kv_reads {
             }
             fn snapshots(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.snapshot_rows(op_id))
+                $with(&mut |$read: &Read| $read.before_rows(op_id))
             }
             fn added(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
@@ -1566,7 +1447,7 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     // Two B-tree statistics, not a walk.
                     $read.count(2)?;
-                    // The log is counted by entry, a stub one (doc "Log storage").
+                    // The log is counted by entry (doc "Log storage").
                     let ops = $read.t.log_entries.len($read.r)? as i64;
                     Ok((ops, $read.t.log_contexts.len($read.r)? as i64))
                 })
@@ -1678,7 +1559,10 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         values: None,
         mass: me.mass_pending(),
         universe: Default::default(),
-        stubs: Some((&me.stub_memo, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
+        targets_memo: Some((
+            &me.targets_memo,
+            me.generation.load(std::sync::atomic::Ordering::Relaxed),
+        )),
     })
 });
 
@@ -1778,7 +1662,7 @@ impl KvTxn<'_> {
             values: Some(&values),
             mass: self.mass_pending(),
             universe: Default::default(),
-            stubs: None,
+            targets_memo: None,
         })
     }
 }
@@ -2327,7 +2211,7 @@ impl KvStore {
                 }
                 for db in [
                     t.log_entries,
-                    t.log_snaps,
+                    t.log_targets,
                     t.log_entries_by_context,
                     t.log_entries_by_metarecord,
                     t.log_contexts,
@@ -2600,7 +2484,7 @@ impl KvTxn<'_> {
                     values: None,
                     mass: false,
                     universe: Default::default(),
-                    stubs: None,
+                    targets_memo: None,
                 };
                 let Some(meta) = self.t.log_contexts.get(&txn, &be(label))? else { break };
                 let meta = dec_label(meta)?;
@@ -2618,30 +2502,6 @@ impl KvTxn<'_> {
         }
         Ok(dropped)
     }
-    fn remove_op(&self, id: i64) -> Result<()> {
-        let Some(op) = Log::op(self, id)? else { return Ok(()) };
-        let mut w = self.txn.borrow_mut();
-        let t = self.t;
-        t.log_entries.delete(&mut w, &be(id))?;
-        let prefix = be(id);
-        let snaps: Vec<Vec<u8>> = t
-            .log_snaps
-            .prefix_iter(&w, &prefix)?
-            .map(|e| e.map(|(k, _)| k.to_vec()))
-            .collect::<std::result::Result<_, _>>()?;
-        for k in snaps {
-            t.log_snaps.delete(&mut w, &k)?;
-        }
-        t.log_entries_by_context.delete(&mut w, &key(&[&be(op.label_id), &be(id)]))?;
-        if let Some(target) = op.reverts_op_id {
-            t.log_reverted_by.delete(&mut w, &key(&[&be(target), &be(id)]))?;
-        }
-        t.log_entries_by_metarecord.delete(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]))?;
-        t.log_watcher_entries.delete(&mut w, &be(id))?;
-        t.log_user_entries.delete(&mut w, &be(id))?;
-        Ok(())
-    }
-
     /// The table of the operations of `origin`'s retention class.
     fn class(&self, origin: Option<&str>) -> Db {
         if origin == Some(crate::log::ORIGIN_WATCHER) {
@@ -2906,34 +2766,19 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn append_ops(&self, label: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64> {
-        let base = {
+        let mut last = {
             let w = self.txn.borrow();
-            State::NextLogOp.get(&self.t, &w)?.unwrap_or(1)
+            State::NextLogOp.get(&self.t, &w)?.unwrap_or(1) - 1
         };
-        let mut w = self.txn.borrow_mut();
-        let t = self.t;
-        for (i, op) in ops.iter().enumerate() {
-            let id = base + i as i64;
-            t.log_entries.put(&mut w, &be(id), &enc_op(op, label, timestamp)?)?;
-            // What the write took off, and — of an append alone — the value
-            // it added, which a revert takes off in its turn.
-            let added: &[FieldRow] =
-                if op.op_type == crate::log::OpType::AppendField { &op.after } else { &[] };
-            for (after, rows) in [(0u8, &op.before[..]), (1u8, added)] {
-                for (n, row) in rows.iter().enumerate() {
-                    let k = key(&[&be(id), &[after], &(n as u32).to_be_bytes()]);
-                    t.log_snaps.put(&mut w, &k, &enc_row(row))?;
-                }
-            }
-            t.log_entries_by_context.put(&mut w, &key(&[&be(label), &be(id)]), &[])?;
-            if let Some(target) = op.reverts_op_id {
-                t.log_reverted_by.put(&mut w, &key(&[&be(target), &be(id)]), &[])?;
-            }
-            t.log_entries_by_metarecord.put(&mut w, &key(&[op.entity.as_bytes(), &be(id)]), &[])?;
-            self.class(op.origin.as_deref()).put(&mut w, &be(id), &[])?;
+        for op in ops {
+            let (h, before) = entry::of_op(op, label, timestamp)?;
+            let chunk = entry::Chunk {
+                targets: vec![op.entity],
+                before: vec![before],
+                pending: Default::default(),
+            };
+            last = self.put_entry(&h, &[chunk], false)?;
         }
-        let last = base + ops.len() as i64 - 1;
-        State::NextLogOp.put(&t, &mut w, last + 1)?;
         Ok(last)
     }
 
@@ -3008,22 +2853,31 @@ impl WriteTxn for KvTxn<'_> {
         self.clear_derived()
     }
 
-    fn delete_ops(&self, ids: &[i64]) -> Result<usize> {
-        let (stubs, mut hit) = self.delete_stub_ops(ids)?;
-        for &id in ids {
-            if stubs.contains(&id) {
-                continue;
+    fn delete_ops(&self, ids: &[i64]) -> Result<(usize, usize)> {
+        // An entry goes whole, when every operation of it is named.
+        let mut named: std::collections::BTreeMap<i64, (entry::Entry, u64)> = Default::default();
+        let mut current: Option<entry::Entry> = None;
+        let ids: std::collections::BTreeSet<i64> = ids.iter().copied().collect();
+        for &id in &ids {
+            if !current.as_ref().is_some_and(|e| e.covers(id)) {
+                current = self.read_log(|r| r.entry_at(id))?;
             }
-            if let Some(op) = Log::op(self, id)? {
-                hit.insert(op.label_id);
-                self.remove_op(id)?;
+            let Some(e) = &current else { continue };
+            named.entry(e.first).or_insert_with(|| (e.clone(), 0)).1 += 1;
+        }
+        let (mut removed, mut hit) = (0usize, std::collections::BTreeSet::new());
+        for (e, n) in named.into_values() {
+            if n == e.h.targets {
+                self.remove_entry(&e)?;
+                removed += n as usize;
+                hit.insert(e.h.context);
             }
         }
         let mut dropped = 0;
         for label in hit {
             dropped += self.drop_if_empty(label)?;
         }
-        Ok(dropped)
+        Ok((removed, dropped))
     }
 
     fn commit(self: Box<Self>) -> Result<()> {

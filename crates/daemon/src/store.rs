@@ -445,10 +445,10 @@ pub trait Log {
     /// A label's children, oldest first.
     fn label_children(&self, label: i64) -> Result<Vec<i64>>;
     /// How many operations a label holds of its own, counted without reading
-    /// them (a stub of a write to many records counts for all of its own).
+    /// them (an entry of many targets counts for all of its own).
     fn label_op_count(&self, label: i64) -> Result<i64>;
     /// The ids of a label's own operations, oldest first, without reading
-    /// them (a stub's are the ids between its first and its last).
+    /// them (an entry's are the ids between its first and its last).
     fn label_op_ids(&self, label: i64) -> Result<Vec<i64>>;
     /// The ids of the labels older than `before` (all when none), newest
     /// first, at most `max`.
@@ -712,9 +712,11 @@ pub trait WriteTxn: Store {
     fn trim(&self, retention: Retention, keep_from: i64) -> Result<usize>;
     /// Removes every metarecord.
     fn clear_metarecords(&self) -> Result<()>;
-    /// Deletes operations and their snapshots, and the labels they leave
-    /// empty — no operation, no child — but the watcher's; how many labels.
-    fn delete_ops(&self, ids: &[i64]) -> Result<usize>;
+    /// Deletes the entries of the log all of whose operations are among
+    /// `ids` (an entry goes whole, doc "Log storage"), and the labels they
+    /// leave empty — no operation, no child — but the watcher's: how many
+    /// operations, and how many labels.
+    fn delete_ops(&self, ids: &[i64]) -> Result<(usize, usize)>;
 
     fn commit(self: Box<Self>) -> Result<()>;
 }

@@ -147,7 +147,7 @@ impl KvSource<'_> {
             for entry in self.t.field_types.iter(&self.r)? {
                 let (k, _) = entry?;
                 let (name, ty) = derived::unesc(k)?;
-                let ty = super::codec::field_type(&ty)?.to_string();
+                let ty = super::codec::field_type(ty)?.to_string();
                 if type_filter.is_none_or(|want| want == ty) {
                     out.push((String::from_utf8(name)?, ty));
                 }

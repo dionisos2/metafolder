@@ -236,7 +236,7 @@ pub(super) async fn get_label_detail(
 
         let mut label = label_json(&*conn, id)?;
         // The ids, not the operations: a count and a window need no more, and
-        // a stub's operations are made up only for the ones shown.
+        // an entry's operations are made up only for the ones shown.
         let all = crate::store::Log::label_op_ids(&*conn, id)?;
         // HEAD and the count are the whole label's, whatever the window.
         label["is_head"] = json!(all.iter().any(|op| Some(*op) == head));

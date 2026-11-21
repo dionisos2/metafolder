@@ -990,7 +990,7 @@ fn test_a_field_write_does_not_write_the_metarecord_itself() {
     assert_eq!(conn.last_write_keys().get("live_metarecords"), Some(&1));
     set_field(&mut conn, m.uuid, "a", Value::Int(2));
     let written = conn.last_write_keys();
-    assert!(written.get("metarecords").is_some(), "its record: {written:?}");
+    assert!(written.contains_key("metarecords"), "its record: {written:?}");
     for table in ["live_metarecords", "ids", "uuids"] {
         assert_eq!(written.get(table), None, "{table}: {written:?}");
     }

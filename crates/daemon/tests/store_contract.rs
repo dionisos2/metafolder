@@ -405,7 +405,7 @@ fn pruning_removes_operations_and_their_empty_labels() {
     let (mut conn, _dir, _, _) = fixture();
     let all = (&conn as &dyn Store).all_ops().unwrap();
     let tx = conn.begin_write().unwrap();
-    assert_eq!(tx.delete_ops(&[all[1].id, all[0].id]).unwrap(), 1, "one label left empty");
+    assert_eq!(tx.delete_ops(&[all[1].id, all[0].id]).unwrap().1, 1, "one label left empty");
     tx.commit().unwrap();
     let store: &dyn Store = &conn;
     assert_eq!(store.counts().unwrap(), (1, 1));
