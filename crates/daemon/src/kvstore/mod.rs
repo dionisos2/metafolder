@@ -622,36 +622,19 @@ fn op_timestamp(v: &[u8]) -> Result<i64> {
     r.int()
 }
 
-/// A label, and the key of the command that opened it, if one did (a
-/// command's later writes find it by that key).
+/// A label, and the key of the command that opened it, if one did, in the
+/// compact form ([`codec::enc_context`]).
 fn enc_label(m: &LabelMeta, key: Option<Uuid>) -> Vec<u8> {
-    let mut out = Out::default();
-    out.bytes(m.name.as_bytes())
-        .opt_bytes(m.description.as_deref().map(str::as_bytes))
-        .opt_int(m.parent)
-        .int(m.created)
-        .opt_bytes(key.as_ref().map(|k| &k.as_bytes()[..]));
-    out.0
+    codec::enc_context(m, key)
 }
 
 /// The command key [`enc_label`] stored after the label.
 fn dec_label_key(b: &[u8]) -> Result<Option<Uuid>> {
-    let mut r = In(b);
-    r.string()?;
-    r.opt_bytes()?;
-    r.opt_int()?;
-    r.int()?;
-    Ok(r.opt_bytes()?.map(uuid_of))
+    Ok(codec::dec_context(b)?.1)
 }
 
 fn dec_label(b: &[u8]) -> Result<LabelMeta> {
-    let mut r = In(b);
-    Ok(LabelMeta {
-        name: r.string()?,
-        description: r.opt_string()?,
-        parent: r.opt_int()?,
-        created: r.int()?,
-    })
+    Ok(codec::dec_context(b)?.0)
 }
 
 /// The map a store opens on at the least: an address-space reservation, not
