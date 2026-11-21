@@ -36,11 +36,11 @@ names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
   "Persisted format changes").
 
 ** Operation and entry: two words, two things
-Since the log has one form of entry, an entry is one operation on a list of
-targets and takes an operation id per target (doc "Log storage"): a *log
-operation* and a *log entry* are no longer the same. Every "op" / "operation" of
-the log (about 870 =ops= in the code, 11 notes) is to be read again and named one
-or the other.
+A *log entry* is a key of the log (=log_entries=): an individual operation, or a
+mass operation. A *log operation* is an individual operation, the thing that has
+an operation id; an entry holds one or several (doc "Log storage"). Every "op" /
+"operation" of the log (about 870 =ops= in the code, 11 notes) is to be read
+again and named one or the other.
 
 ** Tables and keys renamed, still in the code
 | Old | Now | Where it stays |
@@ -60,11 +60,12 @@ When =sets= and =grams= were split into a table per kind, each key kept the byte
 that told the kinds apart (=UNIVERSE=, =ABSENT=, =PARENTS=, =REFERRERS=,
 =POSTINGS=, =SETS=, =GRAMS=, =GRAM_VALUES=…), and =index_histogram_keys= its =FF=
 (commit =6d3c00d1=, doc "Store tables"): the code reached a kind's table by that
-byte, so the split did not rewrite it. Nothing needs the byte any more — a byte per
-key — and the vocabulary that goes with it (the "part" =VALUE= / =NAME= of
-=source.rs=, "absent", "referrers", "postings"…) is to be gone through case by
-case. Dropping the byte changes the keys: a derived format, =DERIVED_VERSION= to
-bump (a reindex, no conversion).
+byte, so the split did not rewrite it. Nothing needs the byte any more, a byte per
+key: it is to be removed (user decision, 21 November 2026), and doc "Store
+tables" no longer to present it as a design. The vocabulary that goes with it (the
+"part" =VALUE= / =NAME= of =source.rs=, "absent", "referrers", "postings"…) is to
+be gone through case by case. Dropping the byte changes the keys: a derived
+format, =DERIVED_VERSION= to bump (a reindex, no conversion).
 
 ** Concepts gone or changed
 - "snapshot" / =snaps= for the log: now a target and its before (=log_targets=).
