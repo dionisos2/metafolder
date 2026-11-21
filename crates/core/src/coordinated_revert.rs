@@ -360,7 +360,7 @@ pub fn trash_recovery_hint(entries: &[TrashEntry], metarecord: &str) -> Option<S
 
 // ── Revert ───────────────────────────────────────────────────────────────────
 
-/// The query-parameter form of a revert target (`{"label_id": N|"head"}`,
+/// The query-parameter form of a revert target (`{"log_context_id": N|"head"}`,
 /// `{"op_ids": [...]}` or `{"since": ms}`), for `GET /revert/plan`.
 pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
     let mut q = Vec::new();
@@ -375,11 +375,11 @@ pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
             q.push(("target_op_ids", ids.join(",")));
         }
         None => {
-            let label = match &target["label_id"] {
+            let label = match &target["log_context_id"] {
                 Json::Number(n) => n.to_string(),
                 _ => "head".into(),
             };
-            q.push(("target_label_id", label));
+            q.push(("target_log_context_id", label));
             if let Some(only) = target["only"].as_str() {
                 q.push(("only", only.to_string()));
             }
@@ -396,7 +396,7 @@ pub fn revert_plan(repo: &Repo<'_>, target: &Json) -> Result<Json, RevertError> 
 
 /// A revert to write.
 pub struct RevertRequest<'r> {
-    /// `{"label_id": N|"head"}`, `{"op_ids": [...]}` or `{"since": ms}`.
+    /// `{"log_context_id": N|"head"}`, `{"op_ids": [...]}` or `{"since": ms}`.
     pub target: &'r Json,
     /// Leave out the operations needing a file action instead of performing it.
     pub metadata_only: bool,
@@ -563,16 +563,16 @@ mod tests {
             vec![("target_op_ids", "3,5".to_string())]
         );
         assert_eq!(
-            revert_query(&json!({"label_id": "head"})),
-            vec![("target_label_id", "head".to_string())]
+            revert_query(&json!({"log_context_id": "head"})),
+            vec![("target_log_context_id", "head".to_string())]
         );
         assert_eq!(
-            revert_query(&json!({"label_id": 7})),
-            vec![("target_label_id", "7".to_string())]
+            revert_query(&json!({"log_context_id": 7})),
+            vec![("target_log_context_id", "7".to_string())]
         );
         assert_eq!(
-            revert_query(&json!({"label_id": 7, "only": "changes"})),
-            vec![("target_label_id", "7".to_string()), ("only", "changes".to_string())]
+            revert_query(&json!({"log_context_id": 7, "only": "changes"})),
+            vec![("target_log_context_id", "7".to_string()), ("only", "changes".to_string())]
         );
         assert_eq!(
             revert_query(&json!({"since": 1700000000000_i64})),
@@ -838,7 +838,7 @@ mod tests {
         let root = scratch("unplanned");
         let daemon = scripted(vec![(
             "POST /repos/r/revert",
-            Ok(json!({"label": 4, "reverted_operations": [1, 2]})),
+            Ok(json!({"log_context": 4, "reverted_operations": [1, 2]})),
         )]);
         let repo = Repo {
             client: &daemon,
@@ -846,7 +846,7 @@ mod tests {
             root: root.clone(),
             trash: TrashDir::new(root.join(".trash")),
         };
-        let target = json!({"label_id": 3, "only": "changes"});
+        let target = json!({"log_context_id": 3, "only": "changes"});
         let request = RevertRequest { target: &target, metadata_only: false };
         let response = revert_unplanned(
             &repo,
@@ -855,7 +855,7 @@ mod tests {
             &Quiet::default(),
         )
         .unwrap();
-        assert_eq!(response["label"], json!(4));
+        assert_eq!(response["log_context"], json!(4));
         assert_eq!(*daemon.calls.borrow(), vec!["POST /repos/r/revert".to_string()]);
         std::fs::remove_dir_all(&root).ok();
     }
@@ -867,7 +867,10 @@ mod tests {
         let root = scratch("unplanned_fs");
         let daemon = scripted(vec![
             ("POST /repos/r/revert/start", Ok(json!({"operations": []}))),
-            ("POST /repos/r/revert/commit", Ok(json!({"label": 5, "reverted_operations": []}))),
+            (
+                "POST /repos/r/revert/commit",
+                Ok(json!({"log_context": 5, "reverted_operations": []})),
+            ),
             ("POST /repos/r/revert", Err(409)),
             ("GET /repos/r/revert/plan", Ok(json!({"requires_lock": true, "operations": []}))),
         ]);
@@ -877,7 +880,7 @@ mod tests {
             root: root.clone(),
             trash: TrashDir::new(root.join(".trash")),
         };
-        let target = json!({"label_id": 3});
+        let target = json!({"log_context_id": 3});
         let request = RevertRequest { target: &target, metadata_only: false };
         let response = revert_unplanned(
             &repo,
@@ -886,7 +889,7 @@ mod tests {
             &Quiet::default(),
         )
         .unwrap();
-        assert_eq!(response["label"], json!(5));
+        assert_eq!(response["log_context"], json!(5));
         let calls = daemon.calls.borrow();
         assert_eq!(calls[0], "POST /repos/r/revert");
         assert!(calls[1].starts_with("GET /repos/r/revert/plan"), "{calls:?}");
@@ -906,7 +909,7 @@ mod tests {
             root: root.clone(),
             trash: TrashDir::new(root.join(".trash")),
         };
-        let target = json!({"label_id": 3});
+        let target = json!({"log_context_id": 3});
         let request = RevertRequest { target: &target, metadata_only: false };
         assert!(revert_unplanned(
             &repo,

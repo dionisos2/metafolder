@@ -22,17 +22,17 @@ const WATCHER_OP_TYPES = ['file_deleted', 'file_moved', 'file_modified'];
 
 /**
  * One operation, as the daemon lists it.
- * @typedef {{id: number, label_id: number, op_type: string, origin?: string|null,
+ * @typedef {{id: number, log_context_id: number, op_type: string, origin?: string|null,
  *            reverts_op_id?: number|null, timestamp?: number,
  *            field_name?: string|null, entity_uuid?: string|null}} Op
  *
- * One label, as `GET /log/labels` summarises it.
+ * One label, as `GET /log/contexts` summarises it.
  * @typedef {{id: number, name: string, description?: string|null,
  *            parent: number|null, created: number, updated?: number|null,
  *            operations: number, first_op?: number|null, last_op?: number|null,
  *            watcher?: boolean, children?: number, is_head?: boolean,
- *            reverts?: {label: number, whole: boolean}[],
- *            reverted_by?: {label: number, whole: boolean}[],
+ *            reverts?: {log_context: number, whole: boolean}[],
+ *            reverted_by?: {log_context: number, whole: boolean}[],
  *            undone?: 'fully'|'partly'|null}} Label
  *
  * A node of the tree. A label: its summary and, once it has been gone into,
@@ -207,9 +207,9 @@ export function marksOf(node) {
   const l = node.label;
   return {
     watcher: l.watcher === true,
-    undoOf: (l.reverts ?? []).map((r) => r.label),
+    undoOf: (l.reverts ?? []).map((r) => r.log_context),
     undone: l.undone ?? null,
-    undoneBy: (l.reverted_by ?? []).map((r) => r.label),
+    undoneBy: (l.reverted_by ?? []).map((r) => r.log_context),
   };
 }
 
@@ -238,13 +238,13 @@ export function timeOf(node) {
  * The `POST /revert` target of a selected row: a label whole (its children
  * included), one operation alone; nothing for a fold of the watcher's flushes.
  * @param {string|null} key
- * @returns {{label_id: number}|{op_ids: number[]}|null}
+ * @returns {{log_context_id: number}|{op_ids: number[]}|null}
  */
 export function revertTarget(key) {
   if (!key) return null;
   const [kind, raw] = key.split(':');
   const id = Number(raw);
-  if (kind === 'label') return { label_id: id };
+  if (kind === 'label') return { log_context_id: id };
   if (kind === 'op') return { op_ids: [id] };
   return null;
 }

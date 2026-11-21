@@ -57,7 +57,7 @@ A context disappears only at a reindex, when it holds no operation and no child
 ([[Log contexts]]), and the daemon refuses a write naming one that does not exist,
 writing nothing ([[Log endpoints]]). So:
 
-* a remembered context is checked (`GET /repos/:repo/labels/:id`) before it is offered; a gone one is forgotten, and the user told;
+* a remembered context is checked (`GET /repos/:repo/contexts/:id`) before it is offered; a gone one is forgotten, and the user told;
 * a context removed while in force — by a reindex from a terminal — is closed at the first write the daemon refuses for it, and that write is sent again, outside it. The GUI says so on its standard error only: the write itself succeeds.
 
 Code: `crates/gui/src/work_context.rs` (the contexts in force, the file, the Tauri

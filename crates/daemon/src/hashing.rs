@@ -223,7 +223,7 @@ fn flush(
             }
         }
         if writer.op_count() > 0 {
-            *context = WriteContext::In(writer.label_id());
+            *context = WriteContext::In(writer.log_context_id());
         }
         metafolder_core::slowlog::timed("commit", || writer.commit())?;
         drop(conn);
@@ -493,7 +493,7 @@ fn write_fresh(
         }
     }
     if writer.op_count() > 0 {
-        *context = WriteContext::In(writer.label_id());
+        *context = WriteContext::In(writer.log_context_id());
     }
     writer.commit()?;
     Ok(written)

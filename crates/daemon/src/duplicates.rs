@@ -471,7 +471,7 @@ impl Writes<'_> {
     /// Commits one take of a write; the next ones write inside its label.
     fn commit(&mut self, writer: Writer) -> Result<(), ApiError> {
         if writer.op_count() > 0 {
-            self.context = crate::log::WriteContext::In(writer.label_id());
+            self.context = crate::log::WriteContext::In(writer.log_context_id());
         }
         commit(writer)
     }

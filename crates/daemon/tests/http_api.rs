@@ -526,7 +526,7 @@ async fn test_a_replace_is_undone_as_one_write() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|o| o["label_id"].as_i64().unwrap())
+            .map(|o| o["log_context_id"].as_i64().unwrap())
             .collect();
         ids.sort_unstable();
         ids.dedup();
@@ -1693,7 +1693,7 @@ async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
 async fn revision_count(app: &Router, repo: &str) -> usize {
     let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
-    body["labels"].as_array().unwrap().len()
+    body["log_contexts"].as_array().unwrap().len()
 }
 
 fn bulk_uri(repo: &str) -> String {

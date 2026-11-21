@@ -48,7 +48,7 @@ async fn spawn_stub(repo: &str, metafolder: PathBuf) -> (String, Shared) {
     let router = Router::new()
         .route("/repos", get(move || async move { Json(listing) }))
         .route(
-            "/repos/{repo}/labels",
+            "/repos/{repo}/contexts",
             post(move |headers: HeaderMap, Json(body): Json<Value>| async move {
                 let mut stub = create.lock().unwrap();
                 stub.created_in.push(label_of(&headers));
@@ -59,7 +59,7 @@ async fn spawn_stub(repo: &str, metafolder: PathBuf) -> (String, Shared) {
             }),
         )
         .route(
-            "/repos/{repo}/labels/{id}",
+            "/repos/{repo}/contexts/{id}",
             get(move |Path((_, id)): Path<(String, i64)>| async move {
                 if read.lock().unwrap().labels.contains(&id) {
                     (StatusCode::OK, Json(json!({"id": id})))

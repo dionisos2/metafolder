@@ -122,7 +122,7 @@ fn a_mass_remove_reads_as_a_deletion_per_record() {
 /// Writes under a label of its own; the label.
 fn labelled<T>(store: &mut KvStore, f: impl FnOnce(&mut Writer) -> T) -> (i64, T) {
     let mut w = Writer::begin(store, Some("mass".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let out = f(&mut w);
     w.commit().unwrap();
     (label, out)
@@ -202,7 +202,7 @@ fn the_log_is_read_whole_through_its_other_doors() {
         back.iter().map(|o| o.id).collect::<Vec<_>>(),
         (head - 4..=head).rev().collect::<Vec<_>>()
     );
-    let inside = all.iter().find(|o| o.label_id == label).unwrap().id + 5;
+    let inside = all.iter().find(|o| o.log_context_id == label).unwrap().id + 5;
     let back = store.ops_back(inside, Some(3)).unwrap();
     assert_eq!(back.iter().map(|o| o.id).collect::<Vec<_>>(), [inside, inside - 1, inside - 2]);
     // After an id inside it.
@@ -213,7 +213,7 @@ fn the_log_is_read_whole_through_its_other_doors() {
     assert_eq!(store.label_ops(label).unwrap().len(), 20);
     assert_eq!(
         store.label_first_op(label).unwrap(),
-        Some(all.iter().find(|o| o.label_id == label).unwrap().id)
+        Some(all.iter().find(|o| o.log_context_id == label).unwrap().id)
     );
     // The time travel lands on the entry's last id.
     let ts = store.op(inside).unwrap().unwrap().timestamp;
@@ -248,7 +248,7 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     let uuids = records(&mut store, 30);
     let keep = Retention { watcher_ops: 0, user_ops: 5 };
     let mut w = Writer::begin_with_retention(&mut store, Some("mass".into()), keep).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     w.mass_add("tag", s("jazz"), &uuids).unwrap();
     w.commit().unwrap();
     assert_eq!(store.label_ops(label).unwrap().len(), 30);
@@ -260,7 +260,7 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     assert!(store.label_ops(label).unwrap().is_empty(), "the entry went whole");
     let all = store.all_ops().unwrap();
     assert_eq!(all.len() as i64, store.counts().unwrap().0, "one operation per entry left");
-    assert!(all.iter().all(|o| o.label_id != label));
+    assert!(all.iter().all(|o| o.log_context_id != label));
 }
 
 /// What a write by id reads is the same whatever the number of records, but

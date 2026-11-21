@@ -5,14 +5,14 @@ audience: dev
 summary: GET /revert/plan, the single-shot POST /revert, and the coordinated start/commit/abort — and the target they share.
 
 |!Route |!Does |
-|<<cmd "GET /repos/:repo/revert/plan">> `?target_label_id=…`, `target_op_ids=…` or `target_since=…` |what a revert would do; writes nothing, takes no lock |
+|<<cmd "GET /repos/:repo/revert/plan">> `?target_log_context_id=…`, `target_op_ids=…` or `target_since=…` |what a revert would do; writes nothing, takes no lock |
 |<<cmd "POST /repos/:repo/revert">> |writes and commits in one transaction |
 |<<cmd "POST /repos/:repo/revert/start">> |the coordinated form: takes the lock, fixes the target, answers the plan |
 |<<cmd "POST /repos/:repo/revert/commit">> |`{"apply": [ids]}` — writes what the client managed, releases the lock |
 |<<cmd "POST /repos/:repo/revert/abort">> |releases the lock, writes nothing → `{"head"}` |
 
-''The target'', the same everywhere: `{"label_id": N}` — the label's operations and
-those of every label nested in it ([[Log contexts]]) — `{"label_id": "head"}` —
+''The target'', the same everywhere: `{"log_context_id": N}` — the label's operations and
+those of every label nested in it ([[Log contexts]]) — `{"log_context_id": "head"}` —
 the label of the newest operation —, `{"op_ids": [22, 23]}`, or `{"since": T}` (Unix ms) —
 what going back to the state at T takes: the user's operations written after T and still
 standing, changes and reverts of older operations ([[Reverting everything since a time]]);
@@ -34,7 +34,7 @@ The revert writes in the request's context like any write: the label named in
  "operations": [{"id": 23, "op_type": "file_moved", "entity_uuid": "…", "field_name": "mfr_path",
                  "writes": "file_moved", "restores": [{"field_name": "mfr_path", "value_type": "tree_ref", …}],
                  "filesystem": {"action": "move", "from": "/repo/music/new.mp3", "to": "/repo/music/old.mp3"},
-                 "changed_since": {"op_id": 91, "label_id": 40, "timestamp": …, "op_type": "file_moved", …}}]}
+                 "changed_since": {"op_id": 91, "log_context_id": 40, "timestamp": …, "op_type": "file_moved", …}}]}
 ```
 
 * `writes` — the type the revert would record ([[What a revert writes]]); `restores` — the state it would write, in snapshot form (empty: the cell is removed).

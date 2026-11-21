@@ -44,7 +44,7 @@ impl BlockingClient {
             LogContext::Create { key, repo, body, .. } => {
                 // Through `request`: a work context gone meanwhile is
                 // forgotten there, and the context is created outside it.
-                let labels = format!("/repos/{}/labels", repo.as_simple());
+                let labels = format!("/repos/{}/contexts", repo.as_simple());
                 let created = match self.request("POST", &labels, Some(&body)) {
                     Ok(created) => created,
                     Err(_) if crate::work_context::label_for(path).is_none() => {

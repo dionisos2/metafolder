@@ -679,7 +679,7 @@ declare namespace Metafolder {
    *  the repository is locked. Shared with `mf log` through
    *  `core::coordinated_revert`. Confirm *before* calling. */
   interface Log {
-    /** Writes the inverse of `target` (`{label_id}` or `{op_ids}`) onto the
+    /** Writes the inverse of `target` (`{log_context_id}` or `{op_ids}`) onto the
      *  current state (doc "Reverting onto the current state"). */
     revert(repo: string, target: Record<string, unknown>): Promise<Reverted>;
   }

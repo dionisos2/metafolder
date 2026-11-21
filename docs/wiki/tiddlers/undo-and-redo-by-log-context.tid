@@ -15,7 +15,7 @@ to outermost — are the candidates:
 
 Undoing a label reverts every change under it still standing — not its undos and redos,
 not the watcher's — onto the current state ([[Reverting onto the current state]]): the
-revert target `{"label_id", "only": "changes"}`, narrowed by the daemon, which sees the
+revert target `{"log_context_id", "only": "changes"}`, narrowed by the daemon, which sees the
 whole label ([[Revert endpoints]]). On the command line the label is named:
 `mf log undo <label-id>`; without one, the candidates are listed. Slower than a single key
 for the common case, but it never takes back more or less than meant; shortcuts can be

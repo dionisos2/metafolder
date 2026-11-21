@@ -12,7 +12,7 @@ Usage: mf log [COMMAND]
 
 Commands:
   list      Display the history, by label
-  labels    List the labels with their counts and what undid them, newest first, reading no operation
+  contexts  List the log contexts with their counts and what undid them, newest first, reading no operation
   head      Print the id of the newest operation
   show      Show full details of one label (a label id, or HEAD for the newest operation's)
   undo      Undo a label of your newest change still standing (none named: list them)

@@ -325,7 +325,7 @@ impl Entry {
     pub(super) fn op_of(&self, id: i64, entity: Uuid) -> OpRow {
         OpRow {
             id,
-            label_id: self.h.context,
+            log_context_id: self.h.context,
             timestamp: self.h.timestamp,
             op_type: self.h.wire_type().to_string(),
             entity_uuid: entity,

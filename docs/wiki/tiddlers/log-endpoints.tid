@@ -7,9 +7,9 @@ summary: GET /log (bounded two ways), the change feed GET /log/since, one label 
 |!Route |!Does |
 |<<cmd "GET /repos/:repo/log">> |the history, as operations and the labels they are in (below) |
 |<<cmd "GET /repos/:repo/log/since">> `?op=<id>` |the change feed: the newest operation, and every operation created after `op` |
-|<<cmd "GET /repos/:repo/log/labels/:id">> |one label with its own operations and their snapshots; `head` for the newest operation's |
-|<<cmd "POST /repos/:repo/labels">> |opens a label (below) |
-|<<cmd "GET /repos/:repo/labels/:id">> |one label, its ancestors and its children |
+|<<cmd "GET /repos/:repo/log/contexts/:id">> |one label with its own operations and their snapshots; `head` for the newest operation's |
+|<<cmd "POST /repos/:repo/contexts">> |opens a label (below) |
+|<<cmd "GET /repos/:repo/contexts/:id">> |one label, its ancestors and its children |
 
 Every write request may name the label it writes in with the header
 `X-Metafolder-Log-Context: <id>` ([[Log contexts]]); without one, or with `0`, the
@@ -35,12 +35,12 @@ may write — a `GET`, a query or a path to resolve writes nothing (`may_write`,
 
 ```
 {"head": 3, "first": 1,
- "operations": [{"id": 1, "label_id": 1, "timestamp": 1700000000000, "origin": null,
+ "operations": [{"id": 1, "log_context_id": 1, "timestamp": 1700000000000, "origin": null,
                  "op_type": "create_metarecord", "entity_uuid": "…", "field_name": null,
                  "reverts_op_id": null}, …],
  "labels": [{"id": 1, "name": "POST /repos/init", "description": null, "parent": null,
              "created": 1700000000000}, …],
- "total_entries": 3, "total_labels": 2}
+ "total_entries": 3, "total_log_contexts": 2}
 ```
 
 Operations run oldest first — the log is a sequence ([[The operation log]]). `head` is the
@@ -61,9 +61,9 @@ empty, and a client falls back to a full refresh. The GUI's change feed is built
 
 !! One label
 
-`GET /log/labels/:id` always includes snapshots (it is for the detail view):
+`GET /log/contexts/:id` always includes snapshots (it is for the detail view):
 `{"label": {"id", "name", "description", "parent", "created", "ancestors", "children",
-"is_head", "operation_count"}, "operations": [{"id", "label_id", "timestamp", "origin",
+"is_head", "operation_count"}, "operations": [{"id", "log_context_id", "timestamp", "origin",
 "op_type", "entity_uuid", "field_name", "snapshots_before"}, …]}`, a
 snapshot being a row in column form
 (`{"field_name": "rating", "value_type": "int", "value_int": 3}`). Only
@@ -74,12 +74,12 @@ may hold a whole reconcile, so `offset`/`limit` window its operations and `op` p
 
 !! Opening a label
 
-`POST /repos/:repo/labels` with `{"name": "tag run", "description": "…", "parent": 12}`
+`POST /repos/:repo/contexts` with `{"name": "tag run", "description": "…", "parent": 12}`
 (description and parent optional) answers the label as `GET /labels/:id` does. Without
 `parent`, the label is a child of the one the request names in `X-Metafolder-Log-Context`,
 or a root. An empty name, or a parent that does not exist or is the watcher's, is a `400`.
 A label opened this way and never written in stays, empty, until a reindex; one a write
 opened is dropped with it when the write records nothing.
 
-`GET /repos/:repo/labels/:id` answers `{"id", "name", "description", "parent", "created",
+`GET /repos/:repo/contexts/:id` answers `{"id", "name", "description", "parent", "created",
 "ancestors": [innermost first], "children": [ids]}`, `404` for an unknown label.

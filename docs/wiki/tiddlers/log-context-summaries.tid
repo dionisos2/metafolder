@@ -7,12 +7,12 @@ summary: What the log says of a label without reading one of its operations — 
 A write to many records is one entry in the log, read back as an operation per record
 ([[Mass operations in the log]]): making up those operations costs a read of each
 record's uuid. A client that shows the log as a list of labels — the log panel's top
-level, `mf log labels` — does not need them, so a summary of a label is made of what
+level, `mf log contexts` — does not need them, so a summary of a label is made of what
 the keys of the log say alone.
 
 !! What a summary holds
 
-`GET /repos/:repo/log/labels` ([[GET /repos/:repo/log/labels]]) lists labels, newest
+`GET /repos/:repo/log/contexts` ([[GET /repos/:repo/log/contexts]]) lists labels, newest
 first, each with:
 
 * its own `operations`, counted off `log_entries_by_context` — one key per entry, which holds its number of targets — and its `first_op` and `last_op`;
@@ -42,12 +42,12 @@ stand where `fully` would be exact, never the other way round.
 
 `parent=none` (the default) lists the units of work, the labels nested in none;
 `parent=<id>` the labels nested directly in one. The operations of a label are read by
-`GET /repos/:repo/log/labels/:id`, which counts its operations off the keys as well and
+`GET /repos/:repo/log/contexts/:id`, which counts its operations off the keys as well and
 makes up only those of the window asked for (`offset`, `limit`).
 
 Labels are ordered by their id: the order they were opened in, which is the order they
 were written in but for a label that kept receiving writes (a long script's) after
 others began.
 
-`mf log labels` ([[mf log labels]]) prints them; `tests/kv_label_marks.rs` and
+`mf log contexts` ([[mf log contexts]]) prints them; `tests/kv_label_marks.rs` and
 `tests/label_summaries_http.rs` hold the counts, the marks and the paging.

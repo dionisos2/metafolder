@@ -431,14 +431,14 @@ BACK_STACK=()
 # The run is one label, each answer one inside it (doc "Log contexts"):
 # the log shows the run whole, and an answer is what going back reverts.
 RUN_LABEL=$(mf_label_begin "gui-tag-folder $TAG" "${SCOPE:-every metarecord}")
-[ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
+[ -z "$RUN_LABEL" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LABEL"
 
 mf_gui_read_root # each preview is the root + the path tree_path resolved
 
 while :; do
     [ -z "$STOP" ] || break
     # Back in the run's context: an answer's label holds that answer only.
-    [ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
+    [ -z "$RUN_LABEL" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LABEL"
 
     kind="dir"
     uuid=$(first_child dir)
@@ -528,7 +528,7 @@ while :; do
     fi
 
     answer_label=$(mf_label_begin "$disp: $answer")
-    [ -z "$answer_label" ] || export METAFOLDER_LABEL="$answer_label"
+    [ -z "$answer_label" ] || export METAFOLDER_LOG_CONTEXT="$answer_label"
     # The label and the folder are prefixed so no field is ever empty: a tab is
     # IFS *whitespace*, so `read` collapses two consecutive ones, and the walk
     # root's path — the empty string — would shift every field after it.

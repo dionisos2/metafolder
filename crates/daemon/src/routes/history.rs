@@ -19,7 +19,7 @@ pub(super) fn snapshots_json(
     Ok(crate::log_view::snapshots_json(conn, op_id)?)
 }
 
-/// A label with its ancestors, innermost first (`GET /labels/:id`).
+/// A label with its ancestors, innermost first (`GET /contexts/:id`).
 fn label_json(log: &dyn crate::store::Log, id: i64) -> Result<serde_json::Value, ApiError> {
     let mut labels = log.labels(&[id])?;
     let meta = labels.remove(&id).ok_or_else(|| ApiError::not_found(format!("no label {id}")))?;
@@ -48,7 +48,7 @@ pub(super) struct NewLabelBody {
     parent: Option<i64>,
 }
 
-/// `POST /repos/:repo/labels`: opens a label — a context the client's writes
+/// `POST /repos/:repo/contexts`: opens a label — a context the client's writes
 /// will name (doc "Log contexts"). Its parent defaults to the label the
 /// request is made in; one that does not exist, or the watcher's, is a `400`.
 pub(super) async fn create_label(
@@ -84,7 +84,7 @@ pub(super) async fn create_label(
     .await
 }
 
-/// `GET /repos/:repo/labels/:id`: a label, its ancestors and its children.
+/// `GET /repos/:repo/contexts/:id`: a label, its ancestors and its children.
 pub(super) async fn get_label(
     State(state): State<Arc<AppState>>,
     Path((repo, id)): Path<(String, i64)>,
@@ -101,7 +101,7 @@ pub(super) async fn get_label(
 pub(super) struct LogParams {
     /// Cap on the number of *labels* returned (whole ones), for a client
     /// that displays a history by label rather than by operation.
-    #[serde(default)]
+    #[serde(default, rename = "log_contexts")]
     labels: Option<usize>,
     #[serde(default)]
     metarecord_uuid: Option<String>,
@@ -192,7 +192,7 @@ pub(super) async fn get_log_since(
     .await
 }
 
-/// Which operations of a label `GET /log/labels/:id` details: a window
+/// Which operations of a label `GET /log/contexts/:id` details: a window
 /// (`offset`/`limit`) or one operation by id (`op`). A label can hold every
 /// operation of a reconcile, and each carries its snapshots.
 #[derive(Deserialize)]
@@ -213,7 +213,7 @@ pub(super) struct LabelParams {
     snapshots: Option<u8>,
 }
 
-/// `GET /log/labels/:id` (or `head`, the label of the newest operation): a
+/// `GET /log/contexts/:id` (or `head`, the label of the newest operation): a
 /// label and its own operations, with their snapshots.
 pub(super) async fn get_label_detail(
     State(state): State<Arc<AppState>>,
@@ -228,7 +228,7 @@ pub(super) async fn get_label_detail(
             let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
             crate::store::Log::op(&*conn, head)?
                 .ok_or_else(|| ApiError::internal("HEAD operation vanished"))?
-                .label_id
+                .log_context_id
         } else {
             id.parse().map_err(|_| ApiError::bad_request(format!("invalid label id '{id}'")))?
         };
@@ -270,7 +270,7 @@ pub(super) async fn get_label_detail(
                 .ok_or_else(|| ApiError::internal(format!("operation {op_id} vanished")))?;
             ops.push(op_json(&conn, &op, snapshots)?);
         }
-        Ok(Json(json!({"label": label, "operations": ops})))
+        Ok(Json(json!({"log_context": label, "operations": ops})))
     })
     .await
 }
@@ -287,7 +287,7 @@ pub(super) struct LabelListParams {
     limit: Option<usize>,
 }
 
-/// `GET /repos/:repo/log/labels`: label summaries, newest first (doc "Label
+/// `GET /repos/:repo/log/contexts`: label summaries, newest first (doc "Label
 /// summaries") — what a client showing the log by label reads, the
 /// operations of a label being read only when it goes into one.
 pub(super) async fn list_labels(
@@ -321,7 +321,7 @@ pub(super) struct TargetBody {
     id: Option<i64>,
     #[serde(default)]
     timestamp: Option<i64>,
-    #[serde(default)]
+    #[serde(default, rename = "log_context")]
     label: Option<i64>,
 }
 
@@ -332,7 +332,7 @@ impl TargetBody {
             (None, Some(ts), None) => Ok(crate::log::Target::Timestamp(ts)),
             (None, None, Some(label)) => Ok(crate::log::Target::Label(label)),
             _ => Err(ApiError::bad_request(
-                "target must be exactly one of {id}, {timestamp}, {label}",
+                "target must be exactly one of {id}, {timestamp}, {log_context}",
             )),
         }
     }

@@ -95,7 +95,7 @@ mf_gui_session_open metarecord-detail
 # The run is one label (doc "Log contexts"): what it writes reads, and
 # reverts, as one piece of work.
 RUN_LABEL=$(mf_label_begin "gui-tag-classify")
-[ -z "$RUN_LABEL" ] || export METAFOLDER_LABEL="$RUN_LABEL"
+[ -z "$RUN_LABEL" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LABEL"
 
 TMP=$(mf_gui_tmpdir)
 

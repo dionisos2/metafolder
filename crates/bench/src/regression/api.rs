@@ -70,8 +70,8 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.query.resolve_tree", &[(P, "/repos/:repo/query/fields/resolve-tree")]),
     s("api.log.window", &[(G, "/repos/:repo/log")]),
     s("api.log.since", &[(G, "/repos/:repo/log/since")]),
-    s("api.log.label", &[(G, "/repos/:repo/log/labels/:id")]),
-    s("api.label.get", &[(G, "/repos/:repo/labels/:id")]),
+    s("api.log.label", &[(G, "/repos/:repo/log/contexts/:id")]),
+    s("api.label.get", &[(G, "/repos/:repo/contexts/:id")]),
     s("api.revert.plan", &[(G, "/repos/:repo/revert/plan")]),
     s("api.schema.get", &[(G, "/repos/:repo/schema")]),
     s("api.schema.check", &[(P, "/repos/:repo/schema/check")]),
@@ -86,7 +86,7 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.activity", &[(P, "/repos/:repo/activity")]),
     s("api.wear", &[(G, "/repos/:repo/wear")]),
     s("api.fold", &[(P, "/repos/:repo/fold")]),
-    s("api.log.labels", &[(G, "/repos/:repo/log/labels")]),
+    s("api.log.labels", &[(G, "/repos/:repo/log/contexts")]),
     s("api.eligibility", &[(P, "/repos/:repo/eligibility")]),
     s("api.ignore.effective", &[(G, "/repos/:repo/ignore/effective")]),
     s("api.sync.links", &[(G, "/sync/:a/:b/links")]),
@@ -110,7 +110,7 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.query.unset", &[(P, "/repos/:repo/query/fields/unset")]),
     s("api.query.batch", &[(P, "/repos/:repo/query/fields/batch")]),
     s("api.query.delete", &[(P, "/repos/:repo/query/delete")]),
-    s("api.label.create", &[(P, "/repos/:repo/labels")]),
+    s("api.label.create", &[(P, "/repos/:repo/contexts")]),
     s("api.revert", &[(P, "/repos/:repo/revert")]),
     s("api.revert.session", &[(P, "/repos/:repo/revert/start"), (P, "/repos/:repo/revert/commit")]),
     s("api.revert.abort", &[(P, "/repos/:repo/revert/abort")]),
@@ -191,7 +191,7 @@ pub struct Ctx {
     /// A label, and an operation twenty back from HEAD: what the plans
     /// look back to, and what the prune keeps from (after the warm-up, there
     /// is nothing left before it to prune).
-    pub label_id: i64,
+    pub log_context_id: i64,
     pub older_op: i64,
     /// A second repository, loaded, for the pair the sync routes take, and a
     /// link between the two kept for the commit.
@@ -340,9 +340,9 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             get(&format!("{base}/log/since?op={since}")).await?;
         }
         "api.log.label" => {
-            get(&format!("{base}/log/labels/{}?limit=50", c.label_id)).await?;
+            get(&format!("{base}/log/contexts/{}?limit=50", c.log_context_id)).await?;
         }
-        "api.label.get" => drop(get(&format!("{base}/labels/{}", c.label_id)).await?),
+        "api.label.get" => drop(get(&format!("{base}/contexts/{}", c.log_context_id)).await?),
         "api.revert.plan" => {
             get(&format!("{base}/revert/plan?target_op_ids={}", c.older_op)).await?;
         }
@@ -463,7 +463,7 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             post(&format!("{base}/query/delete"), json!({"query": uuid_in(&[&u])})).await?;
         }
         "api.label.create" => {
-            post(&format!("{base}/labels"), json!({"name": next_name("bench-label-")})).await?;
+            post(&format!("{base}/contexts"), json!({"name": next_name("bench-label-")})).await?;
         }
         "api.revert" => {
             set_touch(base, sample).await?;
@@ -508,7 +508,7 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             std::fs::write(&file, b"recorded")?;
             post(&format!("{base}/metarecords"), json!({"path": file, "fields": []})).await?;
         }
-        "api.log.labels" => drop(get(&format!("{base}/log/labels?limit=50")).await?),
+        "api.log.labels" => drop(get(&format!("{base}/log/contexts?limit=50")).await?),
         "api.fold" => drop(post(&format!("{base}/fold"), json!({})).await?),
         "api.wear" => drop(get(&format!("{base}/wear")).await?),
         "api.activity" => drop(post(&format!("{base}/activity"), json!({})).await?),
@@ -710,7 +710,8 @@ pub async fn prepare(url: &str, dir: &Path, peer_dir: &Path) -> Result<Ctx> {
     .await?;
     let log = get(&format!("{base}/log?limit=21")).await?;
     let ops = log["operations"].as_array().context("log operations")?;
-    let label_id = ops.first().and_then(|o| o["label_id"].as_i64()).context("a label")?;
+    let log_context_id =
+        ops.first().and_then(|o| o["log_context_id"].as_i64()).context("a label")?;
     let older_op = ops.last().and_then(|o| o["id"].as_i64()).context("an older operation")?;
 
     // The orphans: the files the generation did not write.
@@ -745,7 +746,7 @@ pub async fn prepare(url: &str, dir: &Path, peer_dir: &Path) -> Result<Ctx> {
         page,
         paths,
         dir0,
-        label_id,
+        log_context_id,
         older_op,
         peer,
         link,

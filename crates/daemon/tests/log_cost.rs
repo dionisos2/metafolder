@@ -86,15 +86,15 @@ fn a_revision_bound_returns_whole_revisions_newest_first() {
     let (kv, _dir) = repo_with_log(40);
     let q = LogQuery { labels: Some(5), ..LogQuery::default() };
     let body = listing(&kv, &q).unwrap();
-    let revisions = body["labels"].as_array().unwrap();
+    let revisions = body["log_contexts"].as_array().unwrap();
     assert_eq!(revisions.len(), 5, "asked for 5 revisions, got {}", revisions.len());
     // The newest ones, and every operation shown belongs to one of them.
     let ids: Vec<i64> = revisions.iter().map(|r| r["id"].as_i64().unwrap()).collect();
     assert_eq!(ids, vec![36, 37, 38, 39, 40], "the last five revisions of forty");
     for op in body["operations"].as_array().unwrap() {
-        assert!(ids.contains(&op["label_id"].as_i64().unwrap()));
+        assert!(ids.contains(&op["log_context_id"].as_i64().unwrap()));
     }
-    assert_eq!(body["total_labels"], 40, "the totals still cover the whole log");
+    assert_eq!(body["total_log_contexts"], 40, "the totals still cover the whole log");
 }
 
 /// A log whose first write is a reconcile of `big` operations, followed by
@@ -127,13 +127,13 @@ fn a_revision_window_is_bounded_by_operations_too() {
     let body = listing(&kv, &revisions_and_ops(20, 100)).unwrap();
     let ops = body["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 100, "at most the operations asked for");
-    let revisions = body["labels"].as_array().unwrap();
+    let revisions = body["log_contexts"].as_array().unwrap();
     assert_eq!(revisions.len(), 6, "the five edits, and the reconcile in part");
     // The reconcile is the oldest label shown, and the one cut: it says so
     // (counting what it holds in all would read it whole).
     let reconcile = &revisions[0];
     assert_eq!(reconcile["partial"], true, "{reconcile}");
-    assert_eq!(ops.iter().filter(|o| o["label_id"] == reconcile["id"]).count(), 95);
+    assert_eq!(ops.iter().filter(|o| o["log_context_id"] == reconcile["id"]).count(), 95);
     // The whole ones say nothing.
     for whole in &revisions[1..] {
         assert!(whole.get("partial").is_none(), "{whole}");
@@ -141,7 +141,7 @@ fn a_revision_window_is_bounded_by_operations_too() {
     // Twenty writes of one operation each are still all there.
     let (kv, _dir) = repo_with_log(40);
     let body = listing(&kv, &revisions_and_ops(20, 100)).unwrap();
-    assert_eq!(body["labels"].as_array().unwrap().len(), 20);
+    assert_eq!(body["log_contexts"].as_array().unwrap().len(), 20);
     assert_eq!(body["operations"].as_array().unwrap().len(), 20);
 }
 
@@ -245,11 +245,11 @@ fn undo_cost(n: usize) -> (u64, u64) {
         for &u in &uuids {
             w.append_field(u, "tag", Value::String("x".into())).unwrap();
         }
-        let label = w.label_id();
+        let label = w.log_context_id();
         w.commit().unwrap();
         label
     });
-    // What `POST /revert` with `{"label_id": label, "only": "changes"}` does.
+    // What `POST /revert` with `{"log_context_id": label, "only": "changes"}` does.
     let (_, undo) = reads_of(&mut kv, |kv| {
         let ops = revert::label_ops(kv, label).unwrap();
         let ops = revert::narrow(kv, ops, revert::Only::Changes).unwrap();

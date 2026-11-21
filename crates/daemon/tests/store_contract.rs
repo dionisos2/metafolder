@@ -258,7 +258,7 @@ fn appended_operations_chain_from_head() {
     let last = tx.append_ops(rev, 2_000, &[op("c")]).unwrap();
     tx.set_head(Some(last)).unwrap();
     let c = tx.op(last).unwrap().unwrap();
-    assert_eq!((c.id, c.label_id, c.field_name.as_deref()), (first + 1, rev, Some("c")));
+    assert_eq!((c.id, c.log_context_id, c.field_name.as_deref()), (first + 1, rev, Some("c")));
     assert_eq!(c.timestamp, 2_000);
     assert_eq!(tx.added(last).unwrap()[0].value, Value::Int(3));
     let b = tx.op(first).unwrap().unwrap();
@@ -304,7 +304,7 @@ fn the_log_lists_its_lines_and_labels() {
     );
 
     let labels: Vec<i64> = {
-        let mut r: Vec<i64> = all.iter().map(|o| o.label_id).collect();
+        let mut r: Vec<i64> = all.iter().map(|o| o.log_context_id).collect();
         r.dedup();
         r
     };
@@ -324,7 +324,7 @@ fn a_label_names_its_operations_and_its_children() {
     let (mut conn, _dir, _, child) = fixture();
     let store: &dyn Store = &conn;
     let all = store.all_ops().unwrap();
-    let (first, second) = (all[0].label_id, all[2].label_id);
+    let (first, second) = (all[0].log_context_id, all[2].log_context_id);
     let ids =
         |ops: Vec<metafolder_daemon::log::OpRow>| ops.iter().map(|o| o.id).collect::<Vec<_>>();
     assert_eq!(ids(store.label_ops(first).unwrap()), [all[0].id, all[1].id]);

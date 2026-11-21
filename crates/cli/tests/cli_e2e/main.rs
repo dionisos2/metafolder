@@ -103,7 +103,7 @@ fn mf_full(args: &[&str], stdin: Option<&str>, envs: &[(&str, &str)], daemon: bo
     cmd.env_remove("METAFOLDER_REPO")
         .env_remove("METAFOLDER_REPO_NAME")
         .env_remove("METAFOLDER_DAEMON_PORT")
-        .env_remove("METAFOLDER_LABEL")
+        .env_remove("METAFOLDER_LOG_CONTEXT")
         .env("XDG_CONFIG_HOME", config_xdg());
     for (k, v) in envs {
         cmd.env(k, v);

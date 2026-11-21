@@ -1,0 +1,9 @@
+title: mf context parent
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Print the context the current one is in, as new prints it; 0 at the root
+
+Prints the parent of the context `METAFOLDER_LOG_CONTEXT` passes on, as
+[[mf context new]] prints a context (`<repo uuid>:<id>`); `0` when the current context
+is a root, or when there is none. A script leaving a nested context goes back with
+`export METAFOLDER_LOG_CONTEXT=$(mf context parent)` ([[Log contexts]]).

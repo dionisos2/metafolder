@@ -1,0 +1,9 @@
+title: mf context new
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Create a log context inside the current one and print it, to export as METAFOLDER_LOG_CONTEXT
+
+Creates a log context named `NAME` (described by `DESCRIPTION`), inside the context
+`METAFOLDER_LOG_CONTEXT` passes on when there is one, and prints it as
+`<repo uuid>:<id>` — what to export so every `mf` started meanwhile creates its own
+context inside it ([[Log contexts]]).

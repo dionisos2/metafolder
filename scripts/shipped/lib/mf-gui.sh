@@ -331,11 +331,11 @@ mf_gui_scope_into() { # <outfile> <get args...>
 # writes in a label of its own, and going back reverts it.
 
 # Open a label inside the current context and print it — what to export as
-# METAFOLDER_LABEL so every `mf` started meanwhile writes in it (doc "Labels
+# METAFOLDER_LOG_CONTEXT so every `mf` started meanwhile writes in it (doc "Labels
 # and contexts"). Empty when it could not be opened: the writes then go where
 # they would have anyway.
 mf_label_begin() { # <name> [description]
-    mf label begin "$@" 2>/dev/null || true
+    mf context new "$@" 2>/dev/null || true
 }
 
 # Undo what was written in a context: every operation of its label and of the

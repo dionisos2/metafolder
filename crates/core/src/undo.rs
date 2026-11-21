@@ -51,7 +51,7 @@ pub const WIDE_WINDOW: usize = 20_000;
 pub struct LogOp {
     pub id: i64,
     /// Its innermost label (doc "Log contexts").
-    pub label_id: i64,
+    pub log_context_id: i64,
     pub op_type: String,
     /// The operation this one undid, when a revert wrote it.
     pub reverts_op_id: Option<i64>,
@@ -64,7 +64,7 @@ impl LogOp {
     fn from_json(value: &Json) -> Option<Self> {
         Some(Self {
             id: value["id"].as_i64()?,
-            label_id: value["label_id"].as_i64()?,
+            log_context_id: value["log_context_id"].as_i64()?,
             op_type: value["op_type"].as_str()?.to_string(),
             reverts_op_id: value["reverts_op_id"].as_i64(),
             origin: value["origin"].as_str().map(str::to_string),
@@ -84,7 +84,7 @@ impl LogOp {
 /// A label undo or redo offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
-    pub label_id: i64,
+    pub log_context_id: i64,
     pub name: String,
 }
 
@@ -100,18 +100,18 @@ pub struct Selection {
 impl Selection {
     /// One line per candidate, `12  tag run`, innermost first.
     pub fn describe(&self) -> Vec<String> {
-        self.candidates.iter().map(|c| format!("{}  {}", c.label_id, c.name)).collect()
+        self.candidates.iter().map(|c| format!("{}  {}", c.log_context_id, c.name)).collect()
     }
 }
 
 /// The revert an undo of `label` is: its changes still standing.
 pub fn undo_target(label: i64) -> Json {
-    json!({"label_id": label, "only": "changes"})
+    json!({"log_context_id": label, "only": "changes"})
 }
 
 /// The revert a redo of `label` is: its undos still standing.
 pub fn redo_target(label: i64) -> Json {
-    json!({"label_id": label, "only": "undos"})
+    json!({"log_context_id": label, "only": "undos"})
 }
 
 /// The labels of a `GET /log` body, by id: name and parent.
@@ -122,7 +122,7 @@ fn read_log(log: &Json) -> (Vec<LogOp>, Labels) {
         .as_array()
         .map(|a| a.iter().filter_map(LogOp::from_json).collect())
         .unwrap_or_default();
-    let labels = log["labels"]
+    let labels = log["log_contexts"]
         .as_array()
         .map(|a| {
             a.iter()
@@ -142,11 +142,11 @@ fn chain(label: i64, labels: &Labels) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
     let mut next = Some(label);
     while let Some(id) = next {
-        if out.iter().any(|c| c.label_id == id) {
+        if out.iter().any(|c| c.log_context_id == id) {
             break; // a cycle the daemon would never write
         }
         let (name, parent) = labels.get(&id).cloned().unwrap_or_default();
-        out.push(Candidate { label_id: id, name });
+        out.push(Candidate { log_context_id: id, name });
         next = parent;
     }
     out
@@ -207,7 +207,7 @@ fn undo(ops: &[LogOp], labels: &Labels, first: Option<i64>) -> Option<Selection>
         if op.is_daemons() || op.reverts_op_id.is_some() || undone.contains(&op.id) {
             continue;
         }
-        return Some(Selection { op: op.id, candidates: chain(op.label_id, labels) });
+        return Some(Selection { op: op.id, candidates: chain(op.log_context_id, labels) });
     }
     None
 }
@@ -241,7 +241,7 @@ fn redo(ops: &[LogOp], labels: &Labels) -> Option<Selection> {
             Some(target) if reverts.contains(&target) => continue,
             Some(_) if undone.contains(&op.id) => continue, // an undo already redone
             Some(_) => {
-                return Some(Selection { op: op.id, candidates: chain(op.label_id, labels) })
+                return Some(Selection { op: op.id, candidates: chain(op.log_context_id, labels) })
             }
             None if undone.contains(&op.id) => continue, // a change an undo holds back
             None => return None, // the newest thing the user wrote is a change
@@ -254,12 +254,12 @@ fn redo(ops: &[LogOp], labels: &Labels) -> Option<Selection> {
 mod tests {
     use super::*;
 
-    /// `(id, label_id, op_type)`.
+    /// `(id, log_context_id, op_type)`.
     fn ops(spec: &[(i64, i64, &str)]) -> Vec<LogOp> {
         spec.iter()
-            .map(|(id, label_id, op_type)| LogOp {
+            .map(|(id, log_context_id, op_type)| LogOp {
                 id: *id,
-                label_id: *label_id,
+                log_context_id: *log_context_id,
                 op_type: op_type.to_string(),
                 reverts_op_id: None,
                 origin: None,
@@ -283,11 +283,11 @@ mod tests {
 
     /// The label undo would offer first, innermost.
     fn undo_label(log: &[LogOp]) -> Option<i64> {
-        undo(log, &Labels::new(), BEFORE).map(|s| s.candidates[0].label_id)
+        undo(log, &Labels::new(), BEFORE).map(|s| s.candidates[0].log_context_id)
     }
 
     fn redo_label(log: &[LogOp]) -> Option<i64> {
-        redo(log, &Labels::new()).map(|s| s.candidates[0].label_id)
+        redo(log, &Labels::new()).map(|s| s.candidates[0].log_context_id)
     }
 
     /// The log's first operation lies before the fixture — what a bounded read
@@ -310,7 +310,7 @@ mod tests {
         ]);
         let selection = undo(&log, &labels, BEFORE).unwrap();
         assert_eq!(selection.op, 2);
-        let ids: Vec<i64> = selection.candidates.iter().map(|c| c.label_id).collect();
+        let ids: Vec<i64> = selection.candidates.iter().map(|c| c.log_context_id).collect();
         assert_eq!(ids, [12, 11, 10], "innermost first");
         assert_eq!(selection.describe()[1], "11  answer 1");
     }
@@ -342,21 +342,21 @@ mod tests {
             "head": 2,
             "first": 0,
             "operations": [
-                {"id": 1, "label_id": 1, "op_type": "set_field", "reverts_op_id": null},
-                {"id": 2, "label_id": 2, "op_type": "create_metarecord", "reverts_op_id": null,
+                {"id": 1, "log_context_id": 1, "op_type": "set_field", "reverts_op_id": null},
+                {"id": 2, "log_context_id": 2, "op_type": "create_metarecord", "reverts_op_id": null,
                  "origin": "watcher"},
             ],
-            "labels": [{"id": 1, "name": "mf metarecord add", "parent": null}],
+            "log_contexts": [{"id": 1, "name": "mf metarecord add", "parent": null}],
         });
         let selection = undo_from_log(&log).unwrap();
         assert_eq!(
             selection.candidates,
-            [Candidate { label_id: 1, name: "mf metarecord add".into() }]
+            [Candidate { log_context_id: 1, name: "mf metarecord add".into() }]
         );
         assert!(window_exhausted(&log, 2));
         assert!(!window_exhausted(&log, 3));
-        assert_eq!(undo_target(1), json!({"label_id": 1, "only": "changes"}));
-        assert_eq!(redo_target(1), json!({"label_id": 1, "only": "undos"}));
+        assert_eq!(undo_target(1), json!({"log_context_id": 1, "only": "changes"}));
+        assert_eq!(redo_target(1), json!({"log_context_id": 1, "only": "undos"}));
     }
 
     // ── Redo ─────────────────────────────────────────────────────────────

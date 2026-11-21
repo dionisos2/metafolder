@@ -1,0 +1,7 @@
+title: mf context
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Log contexts: name the work under way, so what is written in it is one context
+
+Creating a log context and reading one ([[Log contexts]]): `mf context new` creates one,
+`mf context parent` names the one the current context is in, `mf context show` reads one.

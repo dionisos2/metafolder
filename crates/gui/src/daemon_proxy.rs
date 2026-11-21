@@ -105,7 +105,7 @@ struct RunningCommand {
 pub(crate) enum LogContext {
     /// This one (`None`: none).
     Send(Option<i64>),
-    /// The command's own, to create first: `POST /repos/<repo>/labels` with
+    /// The command's own, to create first: `POST /repos/<repo>/contexts` with
     /// `body`, then [`context_created`].
     Create { key: String, repo: uuid::Uuid, body: Value, parent: Option<i64> },
 }
@@ -382,7 +382,7 @@ impl DaemonProxy {
                 LogContext::Send(context) => return Ok(Ok(context)),
                 LogContext::Create { key, repo, body, parent } => (key, repo, body, parent),
             };
-            let labels = format!("/repos/{}/labels", repo.as_simple());
+            let labels = format!("/repos/{}/contexts", repo.as_simple());
             let created = Box::pin(self.request_inner("POST", &labels, Some(body), None)).await?;
             if let Some(id) = created.body["id"].as_i64().filter(|_| created.status < 300) {
                 return Ok(Ok(Some(context_created(&key, repo, id))));

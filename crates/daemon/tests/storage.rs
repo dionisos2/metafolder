@@ -23,7 +23,7 @@ fn create(conn: &mut KvStore, fields: Vec<Field>) -> metafolder_core::metarecord
 /// Reverts the write the newest operation belongs to, as one new write.
 fn revert_last_revision(conn: &mut KvStore) {
     let head = conn.head().unwrap().unwrap();
-    let rev = conn.op(head).unwrap().unwrap().label_id;
+    let rev = conn.op(head).unwrap().unwrap().log_context_id;
     let ops = conn.label_ops(rev).unwrap();
     let mut w = Writer::begin(conn, None).unwrap();
     metafolder_daemon::revert::apply(&mut w, &ops).unwrap();
@@ -423,7 +423,7 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
     let op = ops_of_type(&conn, "set_field").pop().expect("a set_field operation");
     assert_eq!(conn.snapshots(op.id).unwrap().len(), 2);
     assert_eq!(
-        conn.version_before_label(op.label_id, m.uuid).unwrap(),
+        conn.version_before_label(op.log_context_id, m.uuid).unwrap(),
         Some(m.version),
         "the state the op moved away from"
     );
@@ -545,8 +545,8 @@ fn test_multiple_ops_in_one_revision_chain() {
     // The three operations share one label, with consecutive ids.
     let ops = ops_of_type(&conn, "set_field");
     assert_eq!(ops.len(), 3);
-    let rev = ops[0].label_id;
-    assert!(ops.iter().all(|o| o.label_id == rev));
+    let rev = ops[0].log_context_id;
+    assert!(ops.iter().all(|o| o.log_context_id == rev));
     assert_eq!(ops[1].id, ops[0].id + 1);
     assert_eq!(ops[2].id, ops[1].id + 1);
 
@@ -963,7 +963,8 @@ fn test_the_version_before_a_label_is_computed_back_from_the_log() {
     let before = conn.version(m.uuid).unwrap().unwrap();
 
     set_field(&mut conn, m.uuid, "a", Value::Int(2));
-    let label = ops_of_type(&conn, "set_field").pop().expect("a set_field operation").label_id;
+    let label =
+        ops_of_type(&conn, "set_field").pop().expect("a set_field operation").log_context_id;
     assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
 
     set_field(&mut conn, m.uuid, "a", Value::Int(3));
@@ -976,7 +977,8 @@ fn test_the_version_before_a_label_is_computed_back_from_the_log() {
     assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
 
     // A metarecord the label created had none; one it did not touch neither.
-    let created = ops_of_type(&conn, "create_metarecord").pop().expect("the creation").label_id;
+    let created =
+        ops_of_type(&conn, "create_metarecord").pop().expect("the creation").log_context_id;
     assert_eq!(conn.version_before_label(created, m.uuid).unwrap(), None);
     assert_eq!(conn.version_before_label(label, Uuid::new_v4()).unwrap(), None);
 }

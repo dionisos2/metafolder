@@ -19,7 +19,7 @@ import {
 
 type Op = {
   id: number;
-  label_id: number;
+  log_context_id: number;
   op_type: string;
   origin?: string | null;
   reverts_op_id?: number | null;
@@ -28,7 +28,7 @@ type Op = {
 
 const op = (id: number, label: number, extra: Partial<Op> = {}): Op => ({
   id,
-  label_id: label,
+  log_context_id: label,
   op_type: 'set_field',
   origin: null,
   reverts_op_id: null,
@@ -36,7 +36,7 @@ const op = (id: number, label: number, extra: Partial<Op> = {}): Op => ({
   ...extra,
 });
 
-/** A label as `GET /log/labels` summarises it. */
+/** A label as `GET /log/contexts` summarises it. */
 const summary = (id: number, name: string, extra: Record<string, unknown> = {}) => ({
   id,
   name,
@@ -136,8 +136,8 @@ describe('the path gone into', () => {
 describe('marksOf', () => {
   test('an undo names what it undid, and what it undid says it is undone', () => {
     const [undo, edit] = buildTree([
-      summary(2, 'mf log undo 1', { reverts: [{ label: 1, whole: true }] }),
-      summary(1, 'edit', { undone: 'fully', reverted_by: [{ label: 2, whole: true }] }),
+      summary(2, 'mf log undo 1', { reverts: [{ log_context: 1, whole: true }] }),
+      summary(1, 'edit', { undone: 'fully', reverted_by: [{ log_context: 2, whole: true }] }),
     ] as never);
     expect(marksOf(undo).undoOf).toEqual([1]);
     expect(marksOf(edit).undone).toBe('fully');
@@ -181,7 +181,7 @@ describe('what a row says', () => {
 
 describe('revertTarget', () => {
   test('a label is reverted whole, an operation alone, a fold not at all', () => {
-    expect(revertTarget('label:3')).toEqual({ label_id: 3 });
+    expect(revertTarget('label:3')).toEqual({ log_context_id: 3 });
     expect(revertTarget('op:7')).toEqual({ op_ids: [7] });
     expect(revertTarget('watcher:3')).toBe(null);
     expect(revertTarget(null)).toBe(null);

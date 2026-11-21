@@ -494,7 +494,7 @@ async fn write(id: &str, ctx: &Ctx, run: usize) -> Result<Duration> {
                 "delete" => post(&format!("{base}/query/delete"), &json!({"query": set})).await?,
                 other => anyhow::bail!("unknown undo '{other}'"),
             };
-            (format!("{base}/revert"), json!({"target": {"label_id": "head"}}))
+            (format!("{base}/revert"), json!({"target": {"log_context_id": "head"}}))
         }
         _ => anyhow::bail!("unknown write '{id}'"),
     };

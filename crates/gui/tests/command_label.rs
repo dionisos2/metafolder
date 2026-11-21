@@ -33,7 +33,7 @@ async fn spawn_stub() -> (String, Arc<Mutex<Seen>>) {
     let (on_create, on_write, on_query) = (seen.clone(), seen.clone(), seen.clone());
     let router = Router::new()
         .route(
-            &format!("/repos/{REPO}/labels"),
+            &format!("/repos/{REPO}/contexts"),
             post(move |Json(body): Json<Value>| {
                 let seen = on_create.clone();
                 async move {

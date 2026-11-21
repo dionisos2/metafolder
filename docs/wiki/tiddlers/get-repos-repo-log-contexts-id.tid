@@ -1,4 +1,4 @@
-title: GET /repos/:repo/log/labels/:id
+title: GET /repos/:repo/log/contexts/:id
 tags: [[HTTP endpoint]] [[Log endpoints]]
 kind: reference
 audience: dev

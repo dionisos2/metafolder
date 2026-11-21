@@ -105,7 +105,7 @@ async fn test_log_and_filters() {
     assert_eq!(limited["first"], ops[0]["id"], "whatever the window");
     assert_eq!(ops[2]["op_type"], "set_field");
     assert_eq!(ops[2]["field_name"], "a");
-    assert!(!log["labels"].as_array().unwrap().is_empty());
+    assert!(!log["log_contexts"].as_array().unwrap().is_empty());
     assert!(ops[0].get("snapshots_before").is_none(), "snapshots off by default");
 
     // Filter by entry.
@@ -144,16 +144,16 @@ async fn test_log_reports_repository_wide_totals() {
 
     let full = get_log(&app, &repo, "").await;
     let operations = full["operations"].as_array().unwrap().len() as i64;
-    let revisions = full["labels"].as_array().unwrap().len() as i64;
+    let revisions = full["log_contexts"].as_array().unwrap().len() as i64;
     // The log is counted by entry (doc "Log storage"): here one per write.
     assert_eq!(full["total_entries"], operations);
-    assert_eq!(full["total_labels"], revisions);
+    assert_eq!(full["total_log_contexts"], revisions);
 
     // A bounded window still reports the whole log's size.
     let limited = get_log(&app, &repo, "?limit=2").await;
     assert_eq!(limited["operations"].as_array().unwrap().len(), 2);
     assert_eq!(limited["total_entries"], operations);
-    assert_eq!(limited["total_labels"], revisions);
+    assert_eq!(limited["total_log_contexts"], revisions);
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -167,15 +167,16 @@ async fn test_label_detail() {
 
     // "head" targets the label of the newest operation.
     let (status, detail) =
-        request(&app, "GET", &format!("/repos/{repo}/log/labels/head"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/log/contexts/head"), None).await;
     assert_eq!(status, StatusCode::OK, "got: {detail}");
-    assert_eq!(detail["label"]["is_head"], true);
+    assert_eq!(detail["log_context"]["is_head"], true);
     let ops = detail["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
     assert!(ops[0]["snapshots_before"].is_array(), "snapshots always included here");
 
     // 404 on a missing label.
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/log/labels/99999"), None).await;
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/log/contexts/99999"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -204,26 +205,26 @@ async fn test_revision_detail_pages_its_operations() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, whole) = request(&app, "GET", &format!("/repos/{repo}/log/labels/head"), None).await;
+    let (_, whole) = request(&app, "GET", &format!("/repos/{repo}/log/contexts/head"), None).await;
     let all: Vec<i64> =
         whole["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(all.len(), 3);
-    assert_eq!(whole["label"]["operation_count"], 3);
+    assert_eq!(whole["log_context"]["operation_count"], 3);
 
     // A window: offset + limit, the count still the whole write's.
     let (status, page) =
-        request(&app, "GET", &format!("/repos/{repo}/log/labels/head?offset=1&limit=1"), None)
+        request(&app, "GET", &format!("/repos/{repo}/log/contexts/head?offset=1&limit=1"), None)
             .await;
     assert_eq!(status, StatusCode::OK, "got: {page}");
     let ids: Vec<i64> =
         page["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(ids, vec![all[1]]);
-    assert_eq!(page["label"]["operation_count"], 3);
-    assert_eq!(page["label"]["is_head"], true, "HEAD is judged on the whole revision");
+    assert_eq!(page["log_context"]["operation_count"], 3);
+    assert_eq!(page["log_context"]["is_head"], true, "HEAD is judged on the whole revision");
 
     // One operation by id, with its snapshots.
     let (status, one) =
-        request(&app, "GET", &format!("/repos/{repo}/log/labels/head?op={}", all[2]), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/log/contexts/head?op={}", all[2]), None).await;
     assert_eq!(status, StatusCode::OK, "got: {one}");
     let ops = one["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
@@ -232,7 +233,7 @@ async fn test_revision_detail_pages_its_operations() {
 
     // An operation of another write is not this write's.
     let (status, _) =
-        request(&app, "GET", &format!("/repos/{repo}/log/labels/head?op=1"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/log/contexts/head?op=1"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -253,7 +254,7 @@ async fn test_set_record_is_one_op_and_reverts_exactly() {
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     let version_before = entry["version"].as_u64().unwrap();
 
-    let revisions = |body: &Value| body["labels"].as_array().unwrap().len();
+    let revisions = |body: &Value| body["log_contexts"].as_array().unwrap().len();
     let (_, log_before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let revs_before = revisions(&log_before);
 
@@ -283,7 +284,7 @@ async fn test_set_record_is_one_op_and_reverts_exactly() {
         &app,
         "POST",
         &format!("/repos/{repo}/revert"),
-        Some(json!({"target": {"label_id": "head"}})),
+        Some(json!({"target": {"log_context_id": "head"}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");

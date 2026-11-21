@@ -1,6 +1,6 @@
-title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/log/labels/:id
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/log/contexts/:id
 catalog: HTTP endpoint
-target: GET /repos/:repo/log/labels/:id
+target: GET /repos/:repo/log/contexts/:id
 summary: Served by the daemon.
 
 !! Reference

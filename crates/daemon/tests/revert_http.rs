@@ -92,7 +92,7 @@ async fn last_revision(app: &Router, repo: &str) -> i64 {
     assert_eq!(status, StatusCode::OK, "log failed: {body}");
     let head = body["head"].as_i64().unwrap();
     body["operations"].as_array().unwrap().iter().find(|o| o["id"].as_i64() == Some(head)).unwrap()
-        ["label_id"]
+        ["log_context_id"]
         .as_i64()
         .unwrap()
 }
@@ -116,7 +116,7 @@ async fn test_revert_restores_the_previous_value_without_moving_head() {
     set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     let rev = last_revision(&app, &repo).await;
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
 
     assert_eq!(
@@ -124,12 +124,12 @@ async fn test_revert_restores_the_previous_value_without_moving_head() {
         Some(json!({"type": "int", "value": 3}))
     );
     // A revert is a new write at HEAD, not a rewind: the log keeps both.
-    assert!(body["label"].as_i64().unwrap() > rev);
+    assert!(body["log_context"].as_i64().unwrap() > rev);
     assert_eq!(body["reverted_operations"].as_array().unwrap().len(), 1);
 
     // And it is itself revertable, restoring the original change.
-    let rev2 = body["label"].as_i64().unwrap();
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev2}})).await;
+    let rev2 = body["log_context"].as_i64().unwrap();
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev2}})).await;
     assert_eq!(status, StatusCode::OK, "revert of the revert failed: {body}");
     assert_eq!(
         field_of(&app, &repo, &uuid, "rating").await,
@@ -144,7 +144,7 @@ async fn test_reverting_a_create_deletes_the_record() {
         create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
     let rev = last_revision(&app, &repo).await;
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
 
     let (status, _) =
@@ -177,7 +177,7 @@ async fn test_reverting_an_unset_of_several_rows_restores_them_all() {
     assert!(status.is_success(), "unset failed: {body}");
     let rev = last_revision(&app, &repo).await;
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
 
     let (_, record) =
@@ -199,7 +199,7 @@ async fn test_the_plan_names_what_a_revert_writes() {
     create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
     let rev = last_revision(&app, &repo).await;
 
-    let (status, body) = plan(&app, &repo, &format!("target_label_id={rev}")).await;
+    let (status, body) = plan(&app, &repo, &format!("target_log_context_id={rev}")).await;
     assert_eq!(status, StatusCode::OK, "plan failed: {body}");
     let writes: Vec<&str> = body["operations"]
         .as_array()
@@ -227,14 +227,14 @@ async fn test_a_later_write_on_the_same_cell_does_not_block_the_revert() {
     let later_rev = last_revision(&app, &repo).await;
 
     // The plan says the field changed since, and by what.
-    let (status, body) = plan(&app, &repo, &format!("target_label_id={rev}")).await;
+    let (status, body) = plan(&app, &repo, &format!("target_log_context_id={rev}")).await;
     assert_eq!(status, StatusCode::OK, "plan failed: {body}");
     let changed = &body["operations"][0]["changed_since"];
-    assert_eq!(changed["label_id"].as_i64(), Some(later_rev), "{body}");
+    assert_eq!(changed["log_context_id"].as_i64(), Some(later_rev), "{body}");
     assert!(body.get("blocked").is_none() && body.get("dependents").is_none(), "{body}");
 
     // And the revert goes back to what the operation replaced: 7 → 3.
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     assert_eq!(
         field_of(&app, &repo, &uuid, "rating").await,
@@ -253,7 +253,7 @@ async fn test_an_unchanged_cell_carries_no_warning() {
     // Another cell: no warning on `rating`.
     set_field(&app, &repo, &uuid, "genre", json!({"type": "string", "value": "jazz"})).await;
 
-    let (status, body) = plan(&app, &repo, &format!("target_label_id={rev}")).await;
+    let (status, body) = plan(&app, &repo, &format!("target_log_context_id={rev}")).await;
     assert_eq!(status, StatusCode::OK, "plan failed: {body}");
     assert_eq!(body["operations"][0]["changed_since"], Value::Null, "{body}");
 }
@@ -269,7 +269,7 @@ async fn test_a_write_on_another_cell_survives_the_revert() {
     // An unrelated cell, exactly like a watcher flush landing in between.
     set_field(&app, &repo, &uuid, "genre", json!({"type": "string", "value": "jazz"})).await;
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     assert_eq!(
         field_of(&app, &repo, &uuid, "rating").await,
@@ -298,7 +298,7 @@ async fn test_a_later_whole_record_write_does_not_block_either() {
     .await;
     assert_eq!(status, StatusCode::OK, "set record failed: {body}");
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     assert_eq!(
         field_of(&app, &repo, &uuid, "rating").await,
@@ -338,14 +338,14 @@ async fn test_an_append_is_undone_by_value_after_a_redo() {
     assert_eq!(status, StatusCode::OK, "append failed: {body}");
     let append = last_revision(&app, &repo).await;
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": append}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": append}})).await;
     assert_eq!(status, StatusCode::OK, "undo failed: {body}");
-    let undo = body["label"].as_i64().unwrap();
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": undo}})).await;
+    let undo = body["log_context"].as_i64().unwrap();
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": undo}})).await;
     assert_eq!(status, StatusCode::OK, "redo failed: {body}");
     assert_eq!(values_of(&app, &repo, &uuid, "tag").await.len(), 2);
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": append}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": append}})).await;
     assert_eq!(status, StatusCode::OK, "second undo failed: {body}");
     assert_eq!(
         values_of(&app, &repo, &uuid, "tag").await,
@@ -363,7 +363,7 @@ async fn test_reverting_a_create_of_a_record_already_gone_writes_nothing() {
         request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete failed: {body}");
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": created}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": created}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     let (status, _) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
@@ -382,11 +382,11 @@ async fn test_recreating_a_metarecord_whose_uuid_exists_is_a_conflict() {
     assert_eq!(status, StatusCode::NO_CONTENT, "delete failed: {body}");
     let deleted = last_revision(&app, &repo).await;
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": deleted}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": deleted}})).await;
     assert_eq!(status, StatusCode::OK, "first revert failed: {body}");
     assert_eq!(field_of(&app, &repo, &uuid, "a").await, Some(json!({"type": "int", "value": 1})));
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": deleted}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": deleted}})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body["error"].as_str().unwrap().contains(&uuid), "{body}");
 }
@@ -440,7 +440,7 @@ async fn test_reverting_a_single_operation_of_a_revision() {
 #[tokio::test]
 async fn test_unknown_revision_is_not_found() {
     let (app, repo, _root) = setup("missing").await;
-    let (status, _) = revert(&app, &repo, json!({"target": {"label_id": 9999}})).await;
+    let (status, _) = revert(&app, &repo, json!({"target": {"log_context_id": 9999}})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -459,7 +459,7 @@ async fn test_the_lock_suspends_writes_until_commit_or_abort() {
     set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     let rev = last_revision(&app, &repo).await;
 
-    let (status, plan) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, plan) = start(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "start failed: {plan}");
     assert_eq!(plan["operations"].as_array().unwrap().len(), 1);
 
@@ -474,7 +474,7 @@ async fn test_the_lock_suspends_writes_until_commit_or_abort() {
     assert_eq!(status, StatusCode::LOCKED, "writes are refused under the lock");
 
     // A second coordinated operation is refused too.
-    let (status, _) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, _) = start(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::CONFLICT);
 
     let op = plan["operations"][0]["id"].as_i64().unwrap();
@@ -504,7 +504,7 @@ async fn test_abort_releases_the_lock_and_writes_nothing() {
     set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     let rev = last_revision(&app, &repo).await;
 
-    let (status, _) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, _) = start(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/revert/abort"), Some(json!({}))).await;
@@ -540,7 +540,7 @@ async fn test_commit_may_narrow_the_set_but_not_widen_it() {
     assert_eq!(status, StatusCode::OK, "batch set failed: {body}");
     let rev = last_revision(&app, &repo).await;
 
-    let (status, plan) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, plan) = start(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "start failed: {plan}");
     let ops = plan["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 2);
@@ -709,28 +709,28 @@ async fn test_a_revert_names_the_operations_it_undid() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|o| o["label_id"].as_i64() == Some(rev))
+        .filter(|o| o["log_context_id"].as_i64() == Some(rev))
         .map(|o| o["id"].as_i64().unwrap())
         .collect();
     assert_eq!(undone.len(), 1, "the setup revision should hold one operation");
 
-    let (status, body) = revert(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, body) = revert(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
-    let revert_rev = body["label"].as_i64().unwrap();
+    let revert_rev = body["log_context"].as_i64().unwrap();
 
     let (_, body) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
     let written: Vec<&Value> = body["operations"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|o| o["label_id"].as_i64() == Some(revert_rev))
+        .filter(|o| o["log_context_id"].as_i64() == Some(revert_rev))
         .collect();
     assert_eq!(written.len(), 1, "the revert should write one operation");
     assert_eq!(written[0]["reverts_op_id"].as_i64(), Some(undone[0]));
 
     // An ordinary write names nothing.
     for op in body["operations"].as_array().unwrap() {
-        if op["label_id"].as_i64() != Some(revert_rev) {
+        if op["log_context_id"].as_i64() != Some(revert_rev) {
             assert_eq!(op["reverts_op_id"], Value::Null, "op {op} should name nothing");
         }
     }
@@ -753,7 +753,7 @@ async fn trash(app: &Router, repo: &str, uuid: &str) {
 /// Reverts write `rev_id` through the coordinated protocol, applying every
 /// operation (as a client would once it has done the file actions).
 async fn coordinated_revert(app: &Router, repo: &str, rev_id: i64) {
-    let (status, plan) = start(app, repo, json!({"target": {"label_id": rev_id}})).await;
+    let (status, plan) = start(app, repo, json!({"target": {"log_context_id": rev_id}})).await;
     assert_eq!(status, StatusCode::OK, "{plan}");
     let apply: Vec<i64> =
         plan["operations"].as_array().unwrap().iter().filter_map(|o| o["id"].as_i64()).collect();
@@ -780,7 +780,7 @@ async fn test_a_revert_of_a_trashing_revert_trashes_the_bytes_again() {
     trash(&app, &repo, &uuid).await;
     let trashing = last_revision(&app, &repo).await;
 
-    let (_, first) = plan(&app, &repo, &format!("target_label_id={trashing}")).await;
+    let (_, first) = plan(&app, &repo, &format!("target_log_context_id={trashing}")).await;
     assert_eq!(first["requires_lock"], true, "{first}");
     assert_eq!(first["operations"][0]["filesystem"]["action"], "restore_content", "{first}");
 
@@ -788,7 +788,7 @@ async fn test_a_revert_of_a_trashing_revert_trashes_the_bytes_again() {
     let undo = last_revision(&app, &repo).await;
     assert!(field_of(&app, &repo, &uuid, "mfr_path").await.is_none(), "no file field here");
 
-    let (_, second) = plan(&app, &repo, &format!("target_label_id={undo}")).await;
+    let (_, second) = plan(&app, &repo, &format!("target_log_context_id={undo}")).await;
     assert_eq!(second["requires_lock"], true, "{second}");
     assert_eq!(second["operations"][0]["filesystem"]["action"], "trash_content", "{second}");
 }
@@ -876,9 +876,9 @@ async fn test_two_concurrent_starts_enter_the_lock_once() {
     let starts: Vec<_> = (0..2)
         .map(|_| {
             let (app, repo) = (app.clone(), repo.clone());
-            tokio::spawn(
-                async move { start(&app, &repo, json!({"target": {"label_id": rev}})).await.0 },
-            )
+            tokio::spawn(async move {
+                start(&app, &repo, json!({"target": {"log_context_id": rev}})).await.0
+            })
         })
         .collect();
     // Time for both to reach the store; a slower machine only weakens the
@@ -911,7 +911,7 @@ async fn test_a_task_does_not_write_under_a_revert_lock() {
             .await;
     set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     let rev = last_revision(&app, &repo).await;
-    let (status, _) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+    let (status, _) = start(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
     assert_eq!(status, StatusCode::OK);
 
     let repo_state = state.repo(repo.parse().unwrap()).unwrap();
@@ -967,7 +967,7 @@ async fn test_two_concurrent_endings_end_the_revert_once() {
                 .await;
         set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
         let rev = last_revision(&app, &repo).await;
-        let (status, plan) = start(&app, &repo, json!({"target": {"label_id": rev}})).await;
+        let (status, plan) = start(&app, &repo, json!({"target": {"log_context_id": rev}})).await;
         assert_eq!(status, StatusCode::OK, "start failed: {plan}");
         let op = plan["operations"][0]["id"].as_i64().unwrap();
         let (_, log) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
@@ -1124,7 +1124,7 @@ async fn test_since_leaves_the_watchers_operations() {
     let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
     assert_eq!(body["reverted_operations"], json!([]), "{body}");
-    assert_eq!(body["label"], Value::Null, "nothing to revert writes nothing");
+    assert_eq!(body["log_context"], Value::Null, "nothing to revert writes nothing");
     assert!(root.join("new.txt").exists());
 }
 
@@ -1149,12 +1149,12 @@ async fn test_since_names_its_label_and_has_a_plan() {
         body["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(ids, vec![a_set]);
     let (status, _) = plan(&app, &repo, &format!("target_since={t}&only=changes")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "only narrows a label_id target");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "only narrows a log_context_id target");
 
     let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
-    let label = body["label"].as_i64().unwrap();
-    let (_, label) = request(&app, "GET", &format!("/repos/{repo}/labels/{label}"), None).await;
+    let label = body["log_context"].as_i64().unwrap();
+    let (_, label) = request(&app, "GET", &format!("/repos/{repo}/contexts/{label}"), None).await;
     let name = label["name"].as_str().unwrap();
     assert!(name.starts_with("rollback to "), "{name}");
 }

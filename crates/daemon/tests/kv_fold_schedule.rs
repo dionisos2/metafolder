@@ -202,7 +202,7 @@ impl Side {
     /// was.
     fn play(&mut self, step: &Step, abort: bool) -> Result<(), String> {
         let mut w = Writer::begin(&mut self.store, Some("step".into())).unwrap();
-        let label = w.label_id();
+        let label = w.log_context_id();
         let ids = |w: &Writer, uuids: &[Uuid]| w.dense_ids(uuids).unwrap();
         let one_by_one = self.one_by_one;
         let done: anyhow::Result<()> = (|| {

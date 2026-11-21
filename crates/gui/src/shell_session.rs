@@ -83,7 +83,7 @@ struct Current {
 impl ShellSessions {
     /// Runs `command_line`, typed by the user, in workspace `ws_id`'s shell —
     /// started first if it has none, loading `rc` — once the line before it
-    /// is over; returns when it is. `context` is its `METAFOLDER_LABEL`;
+    /// is over; returns when it is. `context` is its `METAFOLDER_LOG_CONTEXT`;
     /// `root` the repository root, where it runs with nothing selected.
     pub async fn run(
         &self,
@@ -169,10 +169,10 @@ impl ShellSessions {
         let label = match context {
             Some(context) => format!(
                 "export {}={}",
-                metafolder_core::context::LABEL_ENV,
+                metafolder_core::context::LOG_CONTEXT_ENV,
                 quote(&context.to_string())
             ),
-            None => format!("unset {}", metafolder_core::context::LABEL_ENV),
+            None => format!("unset {}", metafolder_core::context::LOG_CONTEXT_ENV),
         };
         // The line itself is `eval`ed, so that one that does not parse fails
         // at once rather than waiting for the rest of a construct. Its input
@@ -386,7 +386,7 @@ fn start(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .envs(gui.script_env().iter().map(|(name, value)| (name, value)))
-        .env_remove(metafolder_core::context::LABEL_ENV);
+        .env_remove(metafolder_core::context::LOG_CONTEXT_ENV);
     if let Some(dir) = &dir {
         // `PWD` too, or `pwd` names the GUI's directory's resolution of it.
         command.current_dir(dir).env("PWD", dir);
@@ -826,7 +826,7 @@ mod tests {
     async fn test_each_line_is_given_its_context() {
         let gui = gui();
         let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
-        let line = "echo \"in:${METAFOLDER_LABEL:-none}\"";
+        let line = "echo \"in:${METAFOLDER_LOG_CONTEXT:-none}\"";
         gui.shells().run(&gui, "ws-1", line, Some(context), None, None).await.unwrap();
         gui.shells().run(&gui, "ws-1", line, None, None, None).await.unwrap();
         assert_eq!(runs(&gui), [vec![out(&format!("in:{context}"))], vec![out("in:none")]]);

@@ -71,7 +71,9 @@ pub async fn navigate(
                 gui.post_status(&ws_id, &text, "info", Some(timeouts.message_ms))?;
                 return Ok(());
             }
-            Some(selection) if selection.candidates.len() == 1 => selection.candidates[0].label_id,
+            Some(selection) if selection.candidates.len() == 1 => {
+                selection.candidates[0].log_context_id
+            }
             Some(selection) => {
                 let text = format!(
                     "Several labels to {verb}: {} — name one (log:{verb} <label>).",
@@ -149,11 +151,12 @@ async fn revert(
     daemon: &Arc<DaemonProxy>,
     ws_id: &str,
     repo: &str,
-    label_id: i64,
+    log_context_id: i64,
     redo: bool,
     timeouts: &crate::commands::StatusTimeouts,
 ) -> Result<(), String> {
-    let target = if redo { undo::redo_target(label_id) } else { undo::undo_target(label_id) };
+    let target =
+        if redo { undo::redo_target(log_context_id) } else { undo::undo_target(log_context_id) };
     let result = blocking(daemon, repo, move |repo, ui| {
         let request = RevertRequest { target: &target, metadata_only: false };
         coordinated_revert::revert_unplanned(repo, &request, &GUI_POLICIES, ui)
@@ -164,10 +167,10 @@ async fn revert(
         Err(message) => return report(gui, ws_id, &message, timeouts),
     };
     let count = response["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
-    let summary = match response["label"].as_i64() {
+    let summary = match response["log_context"].as_i64() {
         None => "Nothing was reverted.".to_string(),
         Some(_) => format!(
-            "{} label {label_id} ({count} operations) — the daemon's own operations were \
+            "{} label {log_context_id} ({count} operations) — the daemon's own operations were \
              left in place.",
             if redo { "Redid" } else { "Undid" }
         ),
@@ -222,7 +225,7 @@ pub async fn log_candidates(
         .map(|s| s.candidates)
         .unwrap_or_default()
         .into_iter()
-        .map(|c| json!({"id": c.label_id, "name": c.name}))
+        .map(|c| json!({"id": c.log_context_id, "name": c.name}))
         .collect())
 }
 
@@ -311,7 +314,7 @@ pub async fn rollback(
         Err(message) => return report(&gui, &ws_id, &message, &timeouts),
     };
     let count = response["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
-    let summary = match response["label"].as_i64() {
+    let summary = match response["log_context"].as_i64() {
         None => "Nothing was reverted.".to_string(),
         Some(_) => format!(
             "Rolled back to {} ({count} operations) — the daemon's own operations were left \

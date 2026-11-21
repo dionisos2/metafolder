@@ -52,10 +52,10 @@ enum Command {
         #[command(subcommand)]
         command: Option<TaskCommand>,
     },
-    /// Contexts: name the work under way, so what is written in it is one label
-    Label {
+    /// Log contexts: name the work under way, so what is written in it is one context
+    Context {
         #[command(subcommand)]
-        command: LabelCommand,
+        command: ContextCommand,
     },
     /// The history of operations, by label (default: list)
     Log {
@@ -557,11 +557,13 @@ enum TaskCommand {
 }
 
 #[derive(Subcommand)]
-enum LabelCommand {
-    /// Open a label inside the current context and print it, to export as METAFOLDER_LABEL
-    Begin { name: String, description: Option<String> },
-    /// Show a label (default: the current context) and the labels it is nested in
-    Show { label: Option<String> },
+enum ContextCommand {
+    /// Create a log context inside the current one and print it, to export as METAFOLDER_LOG_CONTEXT
+    New { name: String, description: Option<String> },
+    /// Print the context the current one is in, as `new` prints it; 0 at the root
+    Parent,
+    /// Show a log context (default: the current one) and the contexts it is nested in
+    Show { context: Option<String> },
 }
 
 #[derive(Subcommand)]
@@ -587,8 +589,8 @@ enum LogCommand {
         #[arg(long)]
         all: bool,
     },
-    /// List the labels with their counts and what undid them, newest first, reading no operation
-    Labels {
+    /// List the log contexts with their counts and what undid them, newest first, reading no operation
+    Contexts {
         /// Only the labels nested in this one (default: the units of work)
         #[arg(long = "in")]
         parent: Option<i64>,
@@ -1493,18 +1495,18 @@ fn main() {
 }
 
 /// This command's log context (doc "Log contexts"): named after its command
-/// line and described by its query, inside the context `METAFOLDER_LABEL`
+/// line and described by its query, inside the context `METAFOLDER_LOG_CONTEXT`
 /// passes on — created at its first write.
 fn command_context() -> Result<metafolder_cli::client::Command, String> {
     use metafolder_core::context::{self, Context};
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let context = match std::env::var(context::LABEL_ENV) {
+    let context = match std::env::var(context::LOG_CONTEXT_ENV) {
         Ok(value) if !value.trim().is_empty() && value.trim() != "0" => {
             Some(Context::parse(&value).ok_or_else(|| {
                 format!(
-                    "{}='{value}' is not a context (<repo uuid>:<label id>, as `mf label begin` \
+                    "{}='{value}' is not a context (<repo uuid>:<label id>, as `mf context new` \
                      prints it)",
-                    context::LABEL_ENV
+                    context::LOG_CONTEXT_ENV
                 )
             })?)
         }
@@ -1584,11 +1586,14 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 TaskCommand::Show { id, stop, json } => commands::task(ctx, &id, stop, json),
             }
         }
-        Command::Label { command } => match command {
-            LabelCommand::Begin { name, description } => {
+        Command::Context { command } => match command {
+            ContextCommand::New { name, description } => {
                 metafolder_cli::label::begin(ctx, &name, description.as_deref())
             }
-            LabelCommand::Show { label } => metafolder_cli::label::show(ctx, label.as_deref()),
+            ContextCommand::Parent => metafolder_cli::label::parent(ctx),
+            ContextCommand::Show { context } => {
+                metafolder_cli::label::show(ctx, context.as_deref())
+            }
         },
         Command::Log { command } => dispatch_log(ctx, command),
         Command::Slow { list, command } => dispatch_slow(ctx, list, command),
@@ -1908,7 +1913,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         Some(LogCommand::List { ops, metarecord, limit, since, until, all }) => {
             log::log(ctx, &log::LogArgs { ops, metarecord, limit, since, until, all })
         }
-        Some(LogCommand::Labels { parent, limit, all }) => {
+        Some(LogCommand::Contexts { parent, limit, all }) => {
             log::log_labels(ctx, &log::LabelsArgs { parent, limit, all })
         }
         Some(LogCommand::Head) => log::log_head(ctx),
@@ -1953,7 +1958,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                 Some((first, _)) => (false, Some(first.clone())),
                 None => (false, None),
             };
-            let label_id = match label {
+            let log_context_id = match label {
                 Some(l) => Some(l.parse::<i64>().map_err(|_| {
                     metafolder_cli::client::CliError::Usage(format!(
                         "'{l}' is not a label id; targets are a label id, or --op <id>"
@@ -1961,12 +1966,12 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                 })?),
                 None => None,
             };
-            if label_id.is_some() && !op.is_empty() {
+            if log_context_id.is_some() && !op.is_empty() {
                 return Err(metafolder_cli::client::CliError::Usage(
                     "give a label id or --op, not both".into(),
                 ));
             }
-            let target = log::RevertTarget { label_id, op_ids: op, ..Default::default() };
+            let target = log::RevertTarget { log_context_id, op_ids: op, ..Default::default() };
             let policies = log::MovePolicies {
                 on_available: on_move_available
                     .as_deref()

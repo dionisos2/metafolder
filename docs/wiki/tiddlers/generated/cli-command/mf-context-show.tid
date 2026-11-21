@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf context show
+catalog: CLI command
+target: mf context show
+summary: Show a log context (default: the current one) and the contexts it is nested in
+
+!! Reference
+
+```
+Show a log context (default: the current one) and the contexts it is nested in
+
+Usage: mf context show [CONTEXT]
+
+Arguments:
+  [CONTEXT]
+          
+
+Options:
+  -h, --help
+          Print help
+```

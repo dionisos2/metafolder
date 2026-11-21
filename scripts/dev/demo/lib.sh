@@ -23,10 +23,10 @@ demo_mf() {
 demo_build_repo() {
     local source=$1 db=$2 label
     demo_mf repo init --name "$DEMO_NAME" --metafolder "$db" "$source" >/dev/null || return 1
-    label=$(demo_mf label begin "Track the home folder") || return 1
-    METAFOLDER_LABEL=$label demo_mf metarecord -q 'mfr_path = ""' field set mf_watch:bool=true \
+    label=$(demo_mf context new "Track the home folder") || return 1
+    METAFOLDER_LOG_CONTEXT=$label demo_mf metarecord -q 'mfr_path = ""' field set mf_watch:bool=true \
         >/dev/null || return 1
-    METAFOLDER_LABEL=$label demo_mf reconcile >/dev/null || return 1
+    METAFOLDER_LOG_CONTEXT=$label demo_mf reconcile >/dev/null || return 1
     MF=$_DF_MF METAFOLDER_DAEMON_PORT=$DF_PORT METAFOLDER_REPO_NAME=$DEMO_NAME \
         bash "$_DEMO_DIR/metadata.sh"
 }

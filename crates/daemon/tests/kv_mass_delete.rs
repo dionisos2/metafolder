@@ -241,7 +241,7 @@ fn undoing_a_mass_delete_gives_the_records_back() {
         };
         let start: Vec<_> = uuids.iter().map(|&u| rows(&store, u)).collect();
         let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-        let label = w.label_id();
+        let label = w.log_context_id();
         let ids = w.dense_ids(&uuids[..50]).unwrap();
         w.mass_delete_ids(&ids).unwrap();
         w.commit().unwrap();
@@ -277,7 +277,7 @@ fn undoing_a_pending_mass_delete_only_gives_the_universe_back() {
     let uuids = records(&mut store, 80);
     let ids_before = store.dense_ids(&uuids).unwrap();
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..50]).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -322,7 +322,7 @@ fn undoing_a_folded_mass_delete_keeps_the_dense_ids() {
     let uuids = records(&mut store, 80);
     let ids_before = store.dense_ids(&uuids).unwrap();
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..50]).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -365,7 +365,7 @@ fn undoing_a_folded_mass_delete_after_a_reindex_gives_the_records_back_one_by_on
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 60);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..40]).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -399,7 +399,7 @@ fn undoing_a_folded_mass_delete_whose_position_was_taken_is_not_done_in_bulk() {
         (root, kids)
     });
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&kids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -441,7 +441,7 @@ fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pend
     let mut all = kids.clone();
     all.push(folder);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&all).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -493,7 +493,7 @@ fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -562,7 +562,7 @@ fn a_write_to_many_records_keeps_the_rows_a_deletion_took() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -598,7 +598,7 @@ fn a_deletion_given_back_and_made_again_keeps_the_rows_of_the_first() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
     let mut w = Writer::begin(&mut store, Some("first".into())).unwrap();
-    let first = w.label_id();
+    let first = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -607,7 +607,7 @@ fn a_deletion_given_back_and_made_again_keeps_the_rows_of_the_first() {
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
     let mut w = Writer::begin(&mut store, Some("second".into())).unwrap();
-    let second = w.label_id();
+    let second = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -630,7 +630,7 @@ fn a_reindex_keeps_the_rows_of_the_records_a_deletion_gave_back() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -664,7 +664,7 @@ fn a_field_every_holder_of_which_was_deleted_comes_back_with_its_type() {
             .collect::<Vec<_>>()
     });
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -685,7 +685,7 @@ fn a_write_since_the_deletion_gives_the_records_back_one_by_one() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 60);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..40]).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -708,13 +708,13 @@ fn undoing_the_giving_back_deletes_the_records_again() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 60);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..40]).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
     let ops = revert::label_ops(&store, label).unwrap();
     let mut w = Writer::begin(&mut store, None).unwrap();
-    let back = w.label_id();
+    let back = w.log_context_id();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 60);
@@ -861,7 +861,7 @@ fn undoing_the_deletion_of_a_folder_with_its_children_puts_the_tree_back() {
             (vec![dir, sub, a, b], root)
         });
         let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-        let label = w.label_id();
+        let label = w.log_context_id();
         let ids = w.dense_ids(&all).unwrap();
         assert_eq!(w.mass_delete_ids(&ids).unwrap().len(), 4);
         w.commit().unwrap();
@@ -889,7 +889,7 @@ fn reverting_a_mass_add_is_one_entry_naming_what_it_reverts() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 60);
     let mut w = Writer::begin(&mut store, Some("tag".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..40]).unwrap();
     w.mass_add_ids("mark", s("m"), &ids).unwrap();
     w.commit().unwrap();
@@ -904,7 +904,7 @@ fn reverting_a_mass_add_is_one_entry_naming_what_it_reverts() {
     let ops = revert::label_ops(&store, label).unwrap();
     assert_eq!(ops.len(), 40);
     let mut w = Writer::begin(&mut store, None).unwrap();
-    let back = w.label_id();
+    let back = w.log_context_id();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
     let written = store.last_write_keys();
@@ -939,7 +939,7 @@ fn reverting_a_mass_add_a_record_lost_the_value_of_goes_one_by_one() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
     let mut w = Writer::begin(&mut store, Some("tag".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_add_ids("mark", s("m"), &ids).unwrap();
     w.commit().unwrap();
@@ -964,7 +964,7 @@ fn pruning_into_a_stub_that_reverts_another_keeps_the_log_consistent() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
     let mut w = Writer::begin(&mut store, Some("tag".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_add_ids("mark", s("m"), &ids).unwrap();
     w.commit().unwrap();
@@ -989,7 +989,7 @@ fn undoing_again_after_a_redo_brings_the_records_back_whole() {
     let uuids = records(&mut store, 60);
     let start: Vec<usize> = uuids.iter().map(|&u| Rows::rows(&store, u).unwrap().len()).collect();
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..40]).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -997,7 +997,7 @@ fn undoing_again_after_a_redo_brings_the_records_back_whole() {
     for _ in 0..3 {
         let ops = revert::label_ops(&store, *labels.last().unwrap()).unwrap();
         let mut w = Writer::begin(&mut store, None).unwrap();
-        labels.push(w.label_id());
+        labels.push(w.log_context_id());
         revert::apply(&mut w, &ops).unwrap();
         w.commit().unwrap();
         while store.fold_step().unwrap() {}
@@ -1028,14 +1028,14 @@ fn reverting_the_same_deletion_again_after_its_redo_brings_the_records_back() {
         })
         .collect();
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids[..40]).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
     let d_ops = revert::label_ops(&store, label).unwrap();
     // undo
     let mut w = Writer::begin(&mut store, None).unwrap();
-    let undo = w.label_id();
+    let undo = w.log_context_id();
     revert::apply(&mut w, &d_ops).unwrap();
     w.commit().unwrap();
     // redo: the undo's operations taken back
@@ -1089,7 +1089,7 @@ fn undoing_a_folded_deletion_keeps_a_later_write_over_a_pending_mass_write() {
     assert!(!start[0].iter().any(|r| r.contains("red")), "{:?}", start[0]);
 
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     w.mass_delete_ids(&all).unwrap();
     w.commit().unwrap();
     // One step of the idle fold: the deletion, which goes first, and the
@@ -1124,7 +1124,7 @@ fn a_deletion_given_back_then_deleted_again_keeps_its_rows() {
         let uuids = records(&mut store, 30);
         let all = store.dense_ids(&uuids).unwrap();
         let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-        let label = w.label_id();
+        let label = w.log_context_id();
         w.mass_delete_ids(&all).unwrap();
         w.commit().unwrap();
         let first = revert::label_ops(&store, label).unwrap();
@@ -1152,7 +1152,7 @@ fn a_prune_takes_the_rows_kept_of_the_deletions_it_removes() {
         let uuids = records(&mut store, 30);
         let all = store.dense_ids(&uuids).unwrap();
         let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-        let label = w.label_id();
+        let label = w.log_context_id();
         w.mass_delete_ids(&all).unwrap();
         w.commit().unwrap();
         let ops = revert::label_ops(&store, label).unwrap();
@@ -1214,7 +1214,7 @@ fn a_failed_revert_leaves_the_pending_deletions_deleted() {
             .collect()
     });
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&xs).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -1262,7 +1262,7 @@ fn giving_back_records_that_hold_a_reference_makes_no_parent_of_its_target() {
             write(&mut store, |w| w.delete_metarecord(target).unwrap());
         }
         let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-        let label = w.label_id();
+        let label = w.log_context_id();
         let ids = w.dense_ids(&xs).unwrap();
         w.mass_delete_ids(&ids).unwrap();
         w.commit().unwrap();
@@ -1303,7 +1303,7 @@ fn giving_back_every_holder_of_a_position_makes_the_folders_parents_again() {
         out
     });
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&all).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
@@ -1325,7 +1325,7 @@ fn a_deletion_is_a_pending_write_that_its_undo_leaves() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 40);
     let mut w = Writer::begin(&mut store, Some("delete".into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     let ids = w.dense_ids(&uuids).unwrap();
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();

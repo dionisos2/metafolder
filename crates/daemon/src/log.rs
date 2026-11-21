@@ -103,7 +103,7 @@ impl OpType {
 pub struct OpRow {
     pub id: i64,
     /// Its innermost label (doc "Log contexts").
-    pub label_id: i64,
+    pub log_context_id: i64,
     /// When it was written, Unix milliseconds.
     pub timestamp: i64,
     pub op_type: String,
@@ -443,7 +443,7 @@ impl Retention {
 pub struct Writer<'c> {
     tx: Box<dyn WriteTxn + 'c>,
     /// The label its operations go under.
-    label_id: i64,
+    log_context_id: i64,
     /// Whether this write opened that label, which then goes with it when
     /// nothing was written.
     opened_label: bool,
@@ -531,7 +531,7 @@ impl<'c> Writer<'c> {
         let head = tx.head()?;
         let timestamp = now_ms();
         let mut origin = None;
-        let (label_id, opened_label) = match context {
+        let (log_context_id, opened_label) = match context {
             WriteContext::In(id) => {
                 check_client_label(&*tx, id)?;
                 (id, false)
@@ -576,7 +576,7 @@ impl<'c> Writer<'c> {
         };
         Ok(Self {
             tx,
-            label_id,
+            log_context_id,
             opened_label,
             timestamp,
             chain_head: head,
@@ -597,15 +597,15 @@ impl<'c> Writer<'c> {
     }
 
     /// The label this write's operations go under.
-    pub fn label_id(&self) -> i64 {
-        self.label_id
+    pub fn log_context_id(&self) -> i64 {
+        self.log_context_id
     }
 
     /// Notes that this write reverts label `target`: all of it, its children
     /// included, when `tree`, some of its operations otherwise — what the log's
     /// summaries say of an undo without reading its operations.
     pub fn note_label_reverts(&mut self, target: i64, tree: bool) -> Result<()> {
-        self.tx.note_label_reverts(self.label_id, target, tree)
+        self.tx.note_label_reverts(self.log_context_id, target, tree)
     }
 
     /// Marks this write as made on someone's behalf rather than at a
@@ -1482,7 +1482,7 @@ impl<'c> Writer<'c> {
             self.flush_pending()?;
             let origin = self.origin.clone();
             if let Some(done) =
-                self.tx.mass_delete(ids, self.label_id, self.timestamp, origin.as_deref())?
+                self.tx.mass_delete(ids, self.log_context_id, self.timestamp, origin.as_deref())?
             {
                 if let Some(n) = i64::try_from(done.changed.len()).ok().filter(|&n| n > 0) {
                     self.first_op.get_or_insert(done.last_op - n + 1);
@@ -1530,7 +1530,7 @@ impl<'c> Writer<'c> {
         let Some(done) = self.tx.mass_revert(
             first.id,
             last.id,
-            self.label_id,
+            self.log_context_id,
             self.timestamp,
             origin.as_deref(),
         )?
@@ -1657,7 +1657,7 @@ impl<'c> Writer<'c> {
             name,
             values,
             ids,
-            self.label_id,
+            self.log_context_id,
             self.timestamp,
             origin.as_deref(),
         )?
@@ -1707,7 +1707,7 @@ impl<'c> Writer<'c> {
         if self.flushed == 0 && self.pending.is_empty() {
             // Nothing was written: drop the label it opened, leave HEAD alone.
             if self.opened_label {
-                self.tx.drop_label(self.label_id)?;
+                self.tx.drop_label(self.log_context_id)?;
             }
         } else {
             self.flush_pending()?;
@@ -1778,7 +1778,7 @@ impl<'c> Writer<'c> {
             return Ok(());
         }
         let pending = std::mem::take(&mut self.pending);
-        let last = self.tx.append_ops(self.label_id, self.timestamp, &pending)?;
+        let last = self.tx.append_ops(self.log_context_id, self.timestamp, &pending)?;
         self.first_op.get_or_insert(last - pending.len() as i64 + 1);
         self.flushed += pending.len() as i64;
         self.chain_head = Some(last);

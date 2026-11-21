@@ -36,7 +36,7 @@ impl TargetArgs {
         let target = match (self.id, self.timestamp, self.label) {
             (Some(id), None, None) => json!({"id": id}),
             (None, Some(ts), None) => json!({"timestamp": parse_timestamp(&ts)?}),
-            (None, None, Some(label)) => json!({"label": label}),
+            (None, None, Some(label)) => json!({"log_context": label}),
             _ => {
                 return Err(CliError::Usage(
                     "give exactly one of <label>, --id, or --timestamp".into(),
@@ -95,7 +95,7 @@ pub fn undo_run(
         return Ok(0);
     };
     let target = RevertTarget {
-        label_id: Some(label),
+        log_context_id: Some(label),
         only: Some(if redo { "undos" } else { "changes" }),
         ..Default::default()
     };
@@ -227,7 +227,7 @@ fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
         if args.ops {
             query.push(("limit", window.to_string()));
         } else {
-            query.push(("labels", window.to_string()));
+            query.push(("log_contexts", window.to_string()));
             query.push(("limit", LOG_OP_CAP.max(window).to_string()));
         }
     }
@@ -246,7 +246,7 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         std::collections::HashMap::new();
     // The labels the operation cap cut.
     let mut partial: std::collections::HashSet<i64> = std::collections::HashSet::new();
-    for label in resp["labels"].as_array().into_iter().flatten() {
+    for label in resp["log_contexts"].as_array().into_iter().flatten() {
         if let Some(id) = label["id"].as_i64() {
             let created = label["created"].as_i64().unwrap_or(0);
             let name = label["name"].as_str().unwrap_or("").to_string();
@@ -261,10 +261,10 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     // labels by their highest operation id.
     let mut groups: Vec<(i64, Vec<&Json>)> = Vec::new();
     for op in &ops {
-        let label_id = op["label_id"].as_i64().unwrap_or(0);
-        match groups.iter_mut().find(|(l, _)| *l == label_id) {
+        let log_context_id = op["log_context_id"].as_i64().unwrap_or(0);
+        match groups.iter_mut().find(|(l, _)| *l == log_context_id) {
             Some((_, list)) => list.push(op),
-            None => groups.push((label_id, vec![op])),
+            None => groups.push((log_context_id, vec![op])),
         }
     }
     groups.sort_by_key(|(_, list)| {
@@ -272,9 +272,9 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     });
 
     // The HEAD label is the one holding the HEAD operation.
-    let head_label = head
+    let head_log_context = head
         .and_then(|h| ops.iter().find(|o| o["id"].as_i64() == Some(h)))
-        .and_then(|o| o["label_id"].as_i64());
+        .and_then(|o| o["log_context_id"].as_i64());
 
     let limit = if args.all { None } else { Some(args.limit.unwrap_or(DEFAULT_LOG_WINDOW)) };
 
@@ -285,25 +285,24 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
 
     let mut shown_ops = 0usize;
     let mut shown_labels = 0usize;
-    for (label_id, list) in &groups {
+    for (log_context_id, list) in &groups {
         // Operations within a label are displayed newest first.
         let mut ops_sorted = list.clone();
         ops_sorted.sort_by_key(|o| std::cmp::Reverse(o["id"].as_i64().unwrap_or(0)));
 
-        let is_head = Some(*label_id) == head_label;
+        let is_head = Some(*log_context_id) == head_log_context;
         // A label opened for one write is as old as its operations; a context
         // is older than most of them, and the newest says when it was used.
-        let ts = ops_sorted
-            .first()
-            .and_then(|o| o["timestamp"].as_i64())
-            .unwrap_or_else(|| label_meta.get(label_id).map(|(created, _)| *created).unwrap_or(0));
-        let name = label_meta.get(label_id).map(|(_, n)| n.as_str()).unwrap_or("");
+        let ts = ops_sorted.first().and_then(|o| o["timestamp"].as_i64()).unwrap_or_else(|| {
+            label_meta.get(log_context_id).map(|(created, _)| *created).unwrap_or(0)
+        });
+        let name = label_meta.get(log_context_id).map(|(_, n)| n.as_str()).unwrap_or("");
         let marker = if is_head { ">" } else { " " };
-        let mut line = format!("{marker} label {label_id}  {}  {name}", fmt_minute(ts));
+        let mut line = format!("{marker} label {log_context_id}  {}  {name}", fmt_minute(ts));
         if ops_sorted.len() > 1 {
             line.push_str(&format!("  ({})", op_breakdown(&ops_sorted)));
         }
-        if partial.contains(label_id) {
+        if partial.contains(log_context_id) {
             line.push_str(&format!("  [the newest {} operations shown]", ops_sorted.len()));
         }
         if is_head {
@@ -331,7 +330,7 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// What `mf log labels` lists.
+/// What `mf log contexts` lists.
 #[derive(Default)]
 pub struct LabelsArgs {
     pub parent: Option<i64>,
@@ -339,7 +338,7 @@ pub struct LabelsArgs {
     pub all: bool,
 }
 
-/// `mf log labels` — the labels, newest first, as the daemon summarises them
+/// `mf log contexts` — the labels, newest first, as the daemon summarises them
 /// (doc "Log context summaries"): the operations of a label are not read, so a
 /// write to ten thousand records costs one line.
 pub fn log_labels(ctx: &Ctx, args: &LabelsArgs) -> Result<i32, CliError> {
@@ -356,8 +355,8 @@ pub fn log_labels(ctx: &Ctx, args: &LabelsArgs) -> Result<i32, CliError> {
         if let Some(before) = before {
             query.push(("before", before.to_string()));
         }
-        let resp = ctx.client.get(&format!("{base}/log/labels"), &query)?;
-        let labels = resp["labels"].as_array().cloned().unwrap_or_default();
+        let resp = ctx.client.get(&format!("{base}/log/contexts"), &query)?;
+        let labels = resp["log_contexts"].as_array().cloned().unwrap_or_default();
         if shown == 0 && labels.is_empty() {
             println!("(empty history)");
             return Ok(0);
@@ -399,7 +398,7 @@ fn fmt_label_line(label: &Json) -> String {
         _ => {}
     }
     for reverted in label["reverts"].as_array().into_iter().flatten() {
-        let of = reverted["label"].as_i64().unwrap_or(0);
+        let of = reverted["log_context"].as_i64().unwrap_or(0);
         if reverted["whole"].as_bool() == Some(true) {
             line.push_str(&format!("  [undoes label {of}]"));
         } else {
@@ -461,13 +460,13 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
             CliError::Usage(format!("invalid label '{target}' (expected a label id or HEAD)"))
         })?
     };
-    let resp = ctx.client.get(&format!("{base}/log/labels/{id}"), &[])?;
+    let resp = ctx.client.get(&format!("{base}/log/contexts/{id}"), &[])?;
     if raw {
         println!("{}", serde_json::to_string_pretty(&resp).expect("JSON"));
         return Ok(0);
     }
 
-    let label = &resp["label"];
+    let label = &resp["log_context"];
     let id = label["id"].as_i64().unwrap_or(0);
     let ts = label["created"].as_i64().unwrap_or(0);
     let name = label["name"].as_str().unwrap_or("");
@@ -502,7 +501,7 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
 }
 
 /// What `mf log show` prints for a label with no operation of its own: empty,
-/// or its writes are in its sub-labels (a context `mf label begin` opened).
+/// or its writes are in its sub-labels (a context `mf context new` created).
 fn fmt_no_operation(children: Option<&Vec<Json>>) -> String {
     let ids: Vec<String> = children
         .into_iter()
@@ -637,7 +636,7 @@ mod tests {
     fn log_list_bounds_what_it_asks_the_daemon_for() {
         let q = log_query(&LogArgs::default()).unwrap();
         assert!(
-            q.contains(&("labels", "20".to_string())),
+            q.contains(&("log_contexts", "20".to_string())),
             "the default listing must bound the read by labels: {q:?}"
         );
         // And by operations: one label can hold a whole reconcile.
@@ -649,11 +648,11 @@ mod tests {
         // `--ops` counts operations, so it bounds operations.
         let q = log_query(&LogArgs { ops: true, limit: Some(5), ..LogArgs::default() }).unwrap();
         assert!(q.contains(&("limit", "5".to_string())), "{q:?}");
-        assert!(!q.iter().any(|(k, _)| *k == "labels"), "{q:?}");
+        assert!(!q.iter().any(|(k, _)| *k == "log_contexts"), "{q:?}");
 
         // `--all` asks for everything, on purpose.
         let q = log_query(&LogArgs { all: true, ..LogArgs::default() }).unwrap();
-        assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "labels"), "{q:?}");
+        assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "log_contexts"), "{q:?}");
     }
 
     #[test]
@@ -691,7 +690,7 @@ mod tests {
 /// omitted, the label of the newest operation.
 #[derive(Clone, Default)]
 pub struct RevertTarget {
-    pub label_id: Option<i64>,
+    pub log_context_id: Option<i64>,
     pub op_ids: Vec<i64>,
     /// Unix ms: back to the state at that time (doc "Rollback").
     pub since: Option<i64>,
@@ -710,9 +709,9 @@ impl RevertTarget {
         } else if !self.op_ids.is_empty() {
             json!({"op_ids": self.op_ids})
         } else {
-            let mut target = match self.label_id {
-                Some(l) => json!({"label_id": l}),
-                None => json!({"label_id": "head"}),
+            let mut target = match self.log_context_id {
+                Some(l) => json!({"log_context_id": l}),
+                None => json!({"log_context_id": "head"}),
             };
             if let Some(only) = self.only {
                 target["only"] = json!(only);
@@ -733,7 +732,7 @@ impl RevertTarget {
                 Some("undos") => "the undos of ",
                 _ => "",
             };
-            match self.label_id {
+            match self.log_context_id {
                 Some(l) => format!("{what}label {l}"),
                 None => "the newest label".into(),
             }
@@ -774,7 +773,7 @@ fn changed_lines(plan: &Json) -> Vec<String> {
         }
         let what = match changed["op_id"].as_i64() {
             Some(id) => {
-                let label = changed["label_id"].as_i64().unwrap_or(0);
+                let label = changed["log_context_id"].as_i64().unwrap_or(0);
                 let when = changed["timestamp"].as_i64().map(fmt_minute).unwrap_or_default();
                 format!("changed since by op {id} (label {label}, {when})")
             }
@@ -869,7 +868,7 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
 /// Prints what a revert wrote and what it left out.
 fn report_revert(target: &RevertTarget, plan: &Json, resp: &Json) {
     let reverted = resp["reverted_operations"].as_array().cloned().unwrap_or_default();
-    match resp["label"].as_i64() {
+    match resp["log_context"].as_i64() {
         None => println!("Nothing was reverted."),
         Some(label) => println!(
             "Reverted {} in label {label} ({} operation(s)).",

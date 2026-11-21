@@ -42,7 +42,7 @@ const OP_LABELS = /** @type {Record<string, string>} */ ({
  * @typedef {import('./tree.js').Node} Node
  * @typedef {import('./tree.js').Row} Row
  *
- * One operation of `GET /log/labels/:id?op=`, with the rows it took off.
+ * One operation of `GET /log/contexts/:id?op=`, with the rows it took off.
  * @typedef {{id: number, op_type: string, entity_uuid: string,
  *            field_name: string|null, reverts_op_id: number|null,
  *            snapshots_before: import('./snapshots.js').Snapshot[]}} Detail
@@ -120,18 +120,18 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      const log = /** @type {{head?: number|null, head_label?: number|null,
+      const log = /** @type {{head?: number|null, head_log_context?: number|null,
        *                      labels?: Label[], next_before?: number|null,
-       *                      total_labels?: number}} */ (
-        await daemon.call('GET', `/repos/${repo}/log/labels?limit=${limit}`)
+       *                      total_log_contexts?: number}} */ (
+        await daemon.call('GET', `/repos/${repo}/log/contexts?limit=${limit}`)
       );
       head = log.head ?? null;
-      totals = typeof log.total_labels === 'number' ? log.total_labels : null;
+      totals = typeof log.total_log_contexts === 'number' ? log.total_log_contexts : null;
       moreUnits = log.next_before != null;
       truncated = null;
-      headLabels = await labelsAbove(log.head_label ?? null);
+      headLabels = await labelsAbove(log.head_log_context ?? null);
       const before = path;
-      tree = buildTree(log.labels ?? []);
+      tree = buildTree(log.log_contexts ?? []);
       // Back into what was gone into: each level read again.
       path = [];
       for (const key of before) {
@@ -164,7 +164,7 @@ export async function mount(root, metafolder) {
     out.add(id);
     try {
       const body = /** @type {{ancestors?: {id: number}[]}} */ (
-        await daemon.call('GET', `/repos/${repo}/labels/${id}`)
+        await daemon.call('GET', `/repos/${repo}/contexts/${id}`)
       );
       for (const ancestor of body.ancestors ?? []) out.add(ancestor.id);
     } catch {
@@ -180,19 +180,19 @@ export async function mount(root, metafolder) {
     if (node.kind !== 'label' || repo === null) return;
     const [nested, own] = await Promise.all([
       /** @type {Promise<{labels?: Label[]}>} */ (
-        daemon.call('GET', `/repos/${repo}/log/labels?parent=${node.id}&limit=500`)
+        daemon.call('GET', `/repos/${repo}/log/contexts?parent=${node.id}&limit=500`)
       ),
       node.label.operations > 0
         ? /** @type {Promise<{label?: {operation_count?: number}, operations?: Op[]}>} */ (
           daemon.call(
             'GET',
-            `/repos/${repo}/log/labels/${node.id}?newest=1&limit=${LEVEL_OPS}&snapshots=0`,
+            `/repos/${repo}/log/contexts/${node.id}?newest=1&limit=${LEVEL_OPS}&snapshots=0`,
           )
         )
-        : Promise.resolve({ label: { operation_count: 0 }, operations: [] }),
+        : Promise.resolve({ log_context: { operation_count: 0 }, operations: [] }),
     ]);
-    withChildren(node, nested.labels ?? [], own.operations ?? []);
-    const of = own.label?.operation_count ?? 0;
+    withChildren(node, nested.log_contexts ?? [], own.operations ?? []);
+    const of = own.log_context?.operation_count ?? 0;
     if (of > (own.operations ?? []).length) {
       truncated = { shown: (own.operations ?? []).length, of };
     }
@@ -425,7 +425,7 @@ export async function mount(root, metafolder) {
     if (op === null || repo === null) return;
     try {
       const body = /** @type {{operations?: Detail[]}} */ (
-        await daemon.call('GET', `/repos/${repo}/log/labels/${op.label_id}?op=${op.id}`)
+        await daemon.call('GET', `/repos/${repo}/log/contexts/${op.log_context_id}?op=${op.id}`)
       );
       if (mine !== detailGeneration) return;
       detail = body.operations?.[0] ?? null;
@@ -610,13 +610,13 @@ export async function mount(root, metafolder) {
   async function prune() {
     const target = revertTarget(focusKey());
     if (target === null || repo === null) return;
-    const what = 'op_ids' in target ? `operation ${target.op_ids[0]}` : `label #${target.label_id}`;
+    const what = 'op_ids' in target ? `operation ${target.op_ids[0]}` : `label #${target.log_context_id}`;
     if (!confirm(`Prune all history before ${what}? This cannot be undone.`)) return;
     try {
       const result = /** @type {{pruned_operations: number}} */ (
         await daemon.call('POST', `/repos/${repo}/log/prune`, {
           // A label is kept whole: the cut is its oldest operation.
-          target: 'op_ids' in target ? { id: target.op_ids[0] } : { label: target.label_id },
+          target: 'op_ids' in target ? { id: target.op_ids[0] } : { log_context: target.log_context_id },
         })
       );
       void statusBar.message(
@@ -637,22 +637,22 @@ export async function mount(root, metafolder) {
    *  was written since carries `changed_since` (doc "Reverting onto the
    *  current state"): the revert overwrites that write.
    *  @typedef {{requires_lock?: boolean,
-   *             operations?: {changed_since?: {label_id?: number} | null}[]}} RevertPlan */
+   *             operations?: {changed_since?: {log_context_id?: number} | null}[]}} RevertPlan */
 
   /** The query string for a revert plan of `target`.
-   *  @param {{label_id: number}|{op_ids: number[]}} target */
+   *  @param {{log_context_id: number}|{op_ids: number[]}} target */
   function planQuery(target) {
     return 'op_ids' in target
       ? `target_op_ids=${target.op_ids.join(',')}`
-      : `target_label_id=${target.label_id}`;
+      : `target_log_context_id=${target.log_context_id}`;
   }
 
   /** How the confirmation and the messages name what is being reverted.
-   *  @param {{label_id: number}|{op_ids: number[]}} target */
+   *  @param {{log_context_id: number}|{op_ids: number[]}} target */
   function describeTarget(target) {
     return 'op_ids' in target
       ? `operation${target.op_ids.length === 1 ? '' : 's'} ${target.op_ids.join(', ')}`
-      : `label #${target.label_id}`;
+      : `label #${target.log_context_id}`;
   }
 
   /** Reverts whatever is selected: a label whole — what is nested in it
@@ -707,13 +707,13 @@ export async function mount(root, metafolder) {
   async function revertLabel(mf) {
     const key = focusKey();
     const node = key === null ? null : findNode(key);
-    if (node?.kind === 'op') reveal(`label:${node.op.label_id}`);
+    if (node?.kind === 'op') reveal(`label:${node.op.log_context_id}`);
     return revert(mf);
   }
 
   /**
    * @param {MetafolderApi} mf
-   * @param {{label_id: number}|{op_ids: number[]}} target
+   * @param {{log_context_id: number}|{op_ids: number[]}} target
    * @param {RevertPlan} plan
    */
   async function runRevert(mf, target, plan) {
@@ -750,9 +750,9 @@ export async function mount(root, metafolder) {
       const result = await mf.log.revert(repo, target);
       const count = result.reverted_operations?.length ?? 0;
       const summary =
-        result.label === null
+        result.log_context === null
           ? 'Nothing was reverted.'
-          : `Reverted ${describeTarget(target)} in label #${result.label} (${count} operation(s)).`;
+          : `Reverted ${describeTarget(target)} in label #${result.log_context} (${count} operation(s)).`;
       void statusBar.message([summary, ...result.notes].join(' · '), statusMessageMs);
       await refresh();
       await mf.workspace.set('metarecords:dirty', Date.now());

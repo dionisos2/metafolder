@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf context new
+catalog: CLI command
+target: mf context new
+summary: Create a log context inside the current one and print it, to export as METAFOLDER_LOG_CONTEXT
+
+!! Reference
+
+```
+Create a log context inside the current one and print it, to export as METAFOLDER_LOG_CONTEXT
+
+Usage: mf context new <NAME> [DESCRIPTION]
+
+Arguments:
+  <NAME>
+          
+
+  [DESCRIPTION]
+          
+
+Options:
+  -h, --help
+          Print help
+```

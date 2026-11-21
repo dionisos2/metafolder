@@ -25,9 +25,9 @@ die() { echo "demo metadata: $*" >&2; exit 1; }
 # step <name> — what follows is written under a label of that name. Each step
 # is a label of its own, not one nested in the previous step's.
 step() {
-    unset METAFOLDER_LABEL
-    METAFOLDER_LABEL=$("$MF" label begin "$1") || die "cannot open the label $1"
-    export METAFOLDER_LABEL
+    unset METAFOLDER_LOG_CONTEXT
+    METAFOLDER_LOG_CONTEXT=$("$MF" context new "$1") || die "cannot open the label $1"
+    export METAFOLDER_LOG_CONTEXT
 }
 
 # files <folder> [<terms>] — the DSL query of the files under a folder, narrowed

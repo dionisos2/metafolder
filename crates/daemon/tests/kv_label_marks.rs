@@ -33,7 +33,7 @@ fn records(store: &mut KvStore, n: usize) -> Vec<Uuid> {
 /// A labelled write: the label.
 fn labelled(store: &mut KvStore, name: &str, f: impl FnOnce(&mut Writer)) -> i64 {
     let mut w = Writer::begin(store, Some(name.into())).unwrap();
-    let label = w.label_id();
+    let label = w.log_context_id();
     f(&mut w);
     w.commit().unwrap();
     label
@@ -87,7 +87,7 @@ fn a_revert_marks_the_labels_it_reverts_and_is_marked_on_them() {
     // A whole label undone.
     let ops = revert::label_ops(&store, one).unwrap();
     let mut w = Writer::begin(&mut store, Some("undo one".into())).unwrap();
-    let undo = w.label_id();
+    let undo = w.log_context_id();
     revert::apply(&mut w, &ops).unwrap();
     w.note_label_reverts(one, true).unwrap();
     w.commit().unwrap();
@@ -98,7 +98,7 @@ fn a_revert_marks_the_labels_it_reverts_and_is_marked_on_them() {
     // One operation of another: only part of it, and the label it is in.
     let ops = revert::label_ops(&store, two).unwrap();
     let mut w = Writer::begin(&mut store, Some("undo an op".into())).unwrap();
-    let part = w.label_id();
+    let part = w.log_context_id();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
     assert_eq!(store.label_reverts(part).unwrap(), vec![(two, false)]);
@@ -106,7 +106,7 @@ fn a_revert_marks_the_labels_it_reverts_and_is_marked_on_them() {
 }
 
 #[test]
-fn pruning_a_label_takes_its_marks_with_it() {
+fn a_label_emptied_by_a_prune_keeps_its_marks_until_a_reindex() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 6);
     let one = labelled(&mut store, "one", |w| {
@@ -114,14 +114,18 @@ fn pruning_a_label_takes_its_marks_with_it() {
     });
     let ops = revert::label_ops(&store, one).unwrap();
     let mut w = Writer::begin(&mut store, Some("undo".into())).unwrap();
-    let undo = w.label_id();
+    let undo = w.log_context_id();
     revert::apply(&mut w, &ops).unwrap();
     w.note_label_reverts(one, true).unwrap();
     w.commit().unwrap();
     assert!(!store.label_reverted_by(one).unwrap().is_empty());
-    // The undo is the newest: prune everything before it.
+    // The undo is the newest: prune everything before it. The labels stay
+    // (doc "Log contexts"), and so do their marks.
     let first = store.label_first_op(undo).unwrap().unwrap();
     metafolder_daemon::log::prune(&mut store, first).unwrap();
+    assert_eq!(store.label_reverts(undo).unwrap(), vec![(one, true)]);
+    // A reindex removes the emptied label, and what points at it.
+    store.reindex().unwrap();
     assert!(store.label_reverted_by(one).unwrap().is_empty(), "one is gone");
     assert_eq!(store.label_reverts(undo).unwrap(), vec![], "and so is what points at it");
 }

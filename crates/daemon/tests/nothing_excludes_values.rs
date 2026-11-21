@@ -51,7 +51,7 @@ fn write_then_undo(
     let mut w = Writer::begin(store, None).unwrap();
     w.set_mass_threshold(threshold);
     write(&mut w);
-    let label = w.label_id();
+    let label = w.log_context_id();
     w.commit().unwrap();
     move |store: &mut KvStore| {
         let ops = revert::label_ops(store, label).unwrap();

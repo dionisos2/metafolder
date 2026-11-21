@@ -338,7 +338,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
             let newer = ops.iter().filter(|o| o.id > last).count() as i64;
             if head - last == newer && writer.undelete_pending(run)? {
                 done += run.len();
-                touched.extend(run.iter().map(|o| o.label_id));
+                touched.extend(run.iter().map(|o| o.log_context_id));
                 at -= run.len();
                 continue;
             }
@@ -352,7 +352,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         );
         if run.len() >= MASS_UNDO_MIN && writer.revert_mass_run(run)? {
             done += run.len();
-            touched.extend(run.iter().map(|o| o.label_id));
+            touched.extend(run.iter().map(|o| o.log_context_id));
             at -= run.len();
             continue;
         }
@@ -434,7 +434,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
             }
         }
         done += 1;
-        touched.insert(op.label_id);
+        touched.insert(op.log_context_id);
     }
     writer.reverting(None);
     for label in touched {
@@ -476,7 +476,7 @@ mod tests {
     fn op(op_type: &str, origin: Option<&str>) -> OpRow {
         OpRow {
             id: 1,
-            label_id: 1,
+            log_context_id: 1,
             timestamp: 0,
             op_type: op_type.into(),
             entity_uuid: uuid::Uuid::nil(),

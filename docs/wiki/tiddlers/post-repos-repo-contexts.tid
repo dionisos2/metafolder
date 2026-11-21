@@ -1,7 +1,7 @@
-title: GET /repos/:repo/labels/:id
+title: POST /repos/:repo/contexts
 tags: [[HTTP endpoint]] [[Log endpoints]]
 kind: reference
 audience: dev
-summary: One label, its ancestors and its children.
+summary: Opens a label, a context the client's writes then name in `X-Metafolder-Log-Context`.
 
 Bodies, answers and errors: [[Log endpoints]]; what a label is: [[Log contexts]].

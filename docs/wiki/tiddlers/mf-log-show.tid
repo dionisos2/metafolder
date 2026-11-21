@@ -5,4 +5,4 @@ summary: Show full details of one label (a label id, or HEAD for the newest oper
 
 One label — its name, description and ancestors — and its own operations with their values before and after; `--raw` for the JSON ([[Reading the log]]).
 
-A label with no operation of its own says so instead of stopping after its header: `(empty: no operation)`, or, for a context opened by `mf label begin`, the sub-labels its commands wrote in (`(no operation of its own: see its sub-label 7)`).
+A label with no operation of its own says so instead of stopping after its header: `(empty: no operation)`, or, for a context opened by `mf context new`, the sub-labels its commands wrote in (`(no operation of its own: see its sub-label 7)`).

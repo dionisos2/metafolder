@@ -575,7 +575,7 @@ walk_children "" file file-a file-b file-a file-b
 walk_path file-a /top/a.txt
 walk_path file-b /top/b.txt
 walk_counts 2 2 1 2 1
-mock_respond 'label begin *' '@queue:labels'
+mock_respond 'context new *' '@queue:labels'
 mock_queue labels r:1 r:2 r:3 r:4 r:5 r:6
 mock_prompt '/top'
 #   a.txt yes, then BACK at b.txt's question — which undoes it and re-asks —
@@ -586,7 +586,7 @@ assert "back: exits 0" [ "$code" -eq 0 ]
 assert "back: the undone answer's label was reverted" \
     [ "$(mock_count 'log revert 2 --force --silent')" -eq 1 ]
 assert "back: and nothing else was" [ "$(mock_count 'log revert*')" -eq 1 ]
-assert "back: the run is a label" [ "$(mock_count 'label begin gui-tag-folder music *')" -eq 1 ]
+assert "back: the run is a label" [ "$(mock_count 'context new gui-tag-folder music *')" -eq 1 ]
 assert "back: the previous entry is asked again" [ "$(asked /top/a.txt)" -eq 2 ]
 assert "back: and the second answer is the one that stands" \
     [ "$(mock_count 'tag -i file-a deny music')" -eq 1 ]
@@ -605,7 +605,7 @@ walk_children "" file file-b file-b
 walk_path dir-sub /sub
 walk_path file-b /b.txt
 walk_counts 3 3 2 3 2
-mock_respond 'label begin *' '@queue:labels2'
+mock_respond 'context new *' '@queue:labels2'
 mock_queue labels2 r:1 r:2 r:3 r:4 r:5 r:6
 mock_prompt '/top'
 #   sub skipped, BACK at the next question, sub answered m this time, then done
@@ -826,7 +826,7 @@ assert "rest y: the entry is not tagged on its own" \
 assert "rest y: the folder is closed for the rest of the run" \
     [ "$(mock_count '*AND NOT mfr_path ->* "/top" AND*')" -ge 1 ]
 assert "rest y: the answer is a label of its own" \
-    [ "$(mock_count 'label begin /top/a.txt: a y')" -eq 1 ]
+    [ "$(mock_count 'context new /top/a.txt: a y')" -eq 1 ]
 assert_contains "rest y: reports done" "$out" "done tagging 'music'"
 
 # ── Case 31: "a" then "n" denies the same rest ──────────────────────────────

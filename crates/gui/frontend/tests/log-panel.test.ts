@@ -34,7 +34,7 @@ type Handler = (...args: string[]) => unknown;
 const ENTITY = 'e'.repeat(32);
 const op = (id: number, label: number) => ({
   id,
-  label_id: label,
+  log_context_id: label,
   op_type: 'set_field',
   origin: null,
   reverts_op_id: null,
@@ -42,9 +42,9 @@ const op = (id: number, label: number) => ({
   field_name: 'tag',
   entity_uuid: null,
 });
-/** What `GET /log/labels/:id?op=` answers: the operation with its snapshots. */
+/** What `GET /log/contexts/:id?op=` answers: the operation with its snapshots. */
 const DETAIL = (id: number, label: number) => ({
-  label: { id: label, name: 'mf tag add', created: 0, is_head: false, operation_count: 2 },
+  log_context: { id: label, name: 'mf tag add', created: 0, is_head: false, operation_count: 2 },
   operations: [
     {
       id,
@@ -59,7 +59,7 @@ const DETAIL = (id: number, label: number) => ({
     },
   ],
 });
-/** A label as `GET /log/labels` summarises it (doc "Log context summaries"). */
+/** A label as `GET /log/contexts` summarises it (doc "Log context summaries"). */
 const label = (id: number, name: string, extra: Record<string, unknown> = {}) => ({
   id,
   name,
@@ -82,13 +82,13 @@ const label = (id: number, name: string, extra: Record<string, unknown> = {}) =>
 // command of its own (#9).
 const UNITS = {
   head: 12,
-  head_label: 9,
-  labels: [
+  head_log_context: 9,
+  log_contexts: [
     label(9, 'edit', { operations: 1, last_op: 12, is_head: true }),
     label(1, 'run', { children: 1 }),
   ],
   next_before: null,
-  total_labels: 4,
+  total_log_contexts: 4,
 };
 /** What a label holds: the labels nested in it, and its own operations. */
 const NESTED: Record<number, ReturnType<typeof label>[]> = {
@@ -108,16 +108,16 @@ async function mountPanel(units: typeof UNITS = UNITS, above: number[] = []) {
     whenVisible: (fn: () => void) => fn(),
     daemon: {
       call: vi.fn(async (_method: string, url: string) => {
-        const detail = /\/log\/labels\/(\d+)\?op=(\d+)$/.exec(url);
+        const detail = /\/log\/contexts\/(\d+)\?op=(\d+)$/.exec(url);
         if (detail) return DETAIL(Number(detail[2]), Number(detail[1]));
-        const own = /\/log\/labels\/(\d+)\?newest=1/.exec(url);
+        const own = /\/log\/contexts\/(\d+)\?newest=1/.exec(url);
         if (own) {
           const ops = OPS[Number(own[1])] ?? [];
-          return { label: { id: Number(own[1]), operation_count: ops.length }, operations: ops };
+          return { log_context: { id: Number(own[1]), operation_count: ops.length }, operations: ops };
         }
-        const nested = /\/log\/labels\?parent=(\d+)/.exec(url);
-        if (nested) return { labels: NESTED[Number(nested[1])] ?? [], next_before: null };
-        if (/\/labels\/\d+$/.test(url)) {
+        const nested = /\/log\/contexts\?parent=(\d+)/.exec(url);
+        if (nested) return { log_contexts: NESTED[Number(nested[1])] ?? [], next_before: null };
+        if (/\/contexts\/\d+$/.test(url)) {
           return { id: 9, ancestors: above.map((id) => ({ id })), children: [] };
         }
         return structuredClone(units);
@@ -201,7 +201,7 @@ describe('log panel: going into a label', () => {
       p.rowWith(name).querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
       await settle();
     }
-    expect(p.api.daemon.call).toHaveBeenCalledWith('GET', '/repos/r/log/labels/3?op=10');
+    expect(p.api.daemon.call).toHaveBeenCalledWith('GET', '/repos/r/log/contexts/3?op=10');
     expect(p.rows()).toEqual([]);
     expect(p.crumbs()).toContain('op 10');
     // The log keeps what the operation replaced, not what it left.
@@ -308,7 +308,7 @@ describe('log panel: after a revert', () => {
     vi.stubGlobal('confirm', () => true);
     await p.run('cursor:first');
     p.api.daemon.call.mockResolvedValueOnce({ operations: [{ id: 12 }] } as never); // the plan
-    p.api.log.revert.mockResolvedValueOnce({ label: 20, reverted_operations: [12], notes: [] });
+    p.api.log.revert.mockResolvedValueOnce({ log_context: 20, reverted_operations: [12], notes: [] });
     await p.run('log:revert', 'label');
     expect(p.api.log.revert).toHaveBeenCalled();
     expect(p.api.workspace.set).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));
@@ -326,8 +326,8 @@ describe('log panel: no operation is read until a label is gone into', () => {
   test('the top level asks for label summaries only', async () => {
     const p = await mountPanel();
     const urls = p.api.daemon.call.mock.calls.map((c) => c[1]);
-    expect(urls).toContain('/repos/r/log/labels?limit=100');
-    expect(urls.some((u) => /\/log\?|\/log\/labels\/\d/.test(u))).toBe(false);
+    expect(urls).toContain('/repos/r/log/contexts?limit=100');
+    expect(urls.some((u) => /\/log\?|\/log\/contexts\/\d/.test(u))).toBe(false);
   });
 
   test('going into a label reads what it holds: its labels and the newest of its operations', async () => {
@@ -335,27 +335,27 @@ describe('log panel: no operation is read until a label is gone into', () => {
     p.rowWith('edit').querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
     await settle();
     const urls = p.api.daemon.call.mock.calls.map((c) => c[1]);
-    expect(urls).toContain('/repos/r/log/labels?parent=9&limit=500');
-    expect(urls).toContain('/repos/r/log/labels/9?newest=1&limit=500&snapshots=0');
+    expect(urls).toContain('/repos/r/log/contexts?parent=9&limit=500');
+    expect(urls).toContain('/repos/r/log/contexts/9?newest=1&limit=500&snapshots=0');
     expect(p.rows()).toEqual(['op 12: set_field tag']);
   });
 
   test('a unit says what the daemon says of it: HEAD, undone, what it undid', async () => {
     const p = await mountPanel({
       ...UNITS,
-      labels: [
+      log_contexts: [
         label(12, 'undo 9', {
           operations: 1,
-          reverts: [{ label: 9, whole: true }],
+          reverts: [{ log_context: 9, whole: true }],
           is_head: true,
         }),
         label(9, 'edit', {
           operations: 1,
           undone: 'fully',
-          reverted_by: [{ label: 12, whole: true }],
+          reverted_by: [{ log_context: 12, whole: true }],
         }),
       ],
-      head_label: 12,
+      head_log_context: 12,
     });
     const badges = (name: string) =>
       [...p.rowWith(name).querySelectorAll('.badge')].map((b) => b.textContent);
@@ -366,7 +366,7 @@ describe('log panel: no operation is read until a label is gone into', () => {
 
   test('a unit holding the HEAD operation in a nested label is marked HEAD', async () => {
     // The HEAD operation is in label #3, nested in #2, nested in #1.
-    const p = await mountPanel({ ...UNITS, head_label: 3 }, [2, 1]);
+    const p = await mountPanel({ ...UNITS, head_log_context: 3 }, [2, 1]);
     const badges = (name: string) =>
       [...p.rowWith(name).querySelectorAll('.badge')].map((b) => b.textContent);
     expect(badges('run')).toContain('HEAD');

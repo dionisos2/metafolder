@@ -9,14 +9,14 @@ use std::collections::HashSet;
 #[derive(Deserialize)]
 pub(super) struct RevertTarget {
     #[serde(default)]
-    label_id: Option<serde_json::Value>,
+    log_context_id: Option<serde_json::Value>,
     #[serde(default)]
     op_ids: Option<Vec<i64>>,
     /// Unix ms: back to the state at that time (doc "Reverting everything
     /// since a time").
     #[serde(default)]
     since: Option<i64>,
-    /// With `label_id`: only its standing `changes` (an undo) or its standing
+    /// With `log_context_id`: only its standing `changes` (an undo) or its standing
     /// `undos` (a redo) — doc "Undo and redo by log context".
     #[serde(default)]
     only: Option<String>,
@@ -32,7 +32,7 @@ pub(super) struct RevertBody {
 #[derive(Deserialize)]
 pub(super) struct RevertPlanParams {
     #[serde(default)]
-    target_label_id: Option<String>,
+    target_log_context_id: Option<String>,
     #[serde(default)]
     target_op_ids: Option<String>,
     #[serde(default)]
@@ -41,7 +41,7 @@ pub(super) struct RevertPlanParams {
     only: Option<String>,
 }
 
-/// The label a `label_id` of a target names: a number, or `"head"`, the label
+/// The label a `log_context_id` of a target names: a number, or `"head"`, the label
 /// of the newest operation.
 fn label_of_target(
     conn: &dyn crate::store::Store,
@@ -54,16 +54,16 @@ fn label_of_target(
             Ok(conn
                 .op(head)?
                 .ok_or_else(|| ApiError::not_found("HEAD names no operation"))?
-                .label_id)
+                .log_context_id)
         }
         serde_json::Value::Number(n) => {
-            n.as_i64().ok_or_else(|| ApiError::bad_request("label_id must be an integer"))
+            n.as_i64().ok_or_else(|| ApiError::bad_request("log_context_id must be an integer"))
         }
-        _ => Err(ApiError::bad_request("label_id must be a number or \"head\"")),
+        _ => Err(ApiError::bad_request("log_context_id must be a number or \"head\"")),
     }
 }
 
-/// The label a target reverts whole — the one a `label_id` names, and no
+/// The label a target reverts whole — the one a `log_context_id` names, and no
 /// other kind of target — which the revert's own label says it undid (doc
 /// "Label summaries").
 fn whole_label_of(
@@ -71,7 +71,7 @@ fn whole_label_of(
     head: Option<i64>,
     target: &RevertTarget,
 ) -> Result<Option<i64>, ApiError> {
-    match (&target.label_id, &target.op_ids, target.since) {
+    match (&target.log_context_id, &target.op_ids, target.since) {
         (Some(label), None, None) => Ok(Some(label_of_target(conn, head, label)?)),
         _ => Ok(None),
     }
@@ -83,14 +83,14 @@ fn resolve_revert_target(
     head: Option<i64>,
     target: &RevertTarget,
 ) -> Result<Vec<crate::log::OpRow>, ApiError> {
-    if target.since.is_some() && (target.label_id.is_some() || target.op_ids.is_some()) {
+    if target.since.is_some() && (target.log_context_id.is_some() || target.op_ids.is_some()) {
         return Err(ApiError::bad_request(
-            "the target needs exactly one of label_id, op_ids or since",
+            "the target needs exactly one of log_context_id, op_ids or since",
         ));
     }
     if let Some(t) = target.since {
         if target.only.is_some() {
-            return Err(ApiError::bad_request("only narrows a label_id target"));
+            return Err(ApiError::bad_request("only narrows a log_context_id target"));
         }
         // The log must reach back to the time: what was written before its
         // first operation is not known, so neither is the state then.
@@ -102,18 +102,18 @@ fn resolve_revert_target(
         })?;
         return Ok(crate::revert::since(conn, cut)?);
     }
-    let ops = match (&target.label_id, &target.op_ids) {
+    let ops = match (&target.log_context_id, &target.op_ids) {
         (Some(label), None) => {
-            let label_id = label_of_target(conn, head, label)?;
+            let log_context_id = label_of_target(conn, head, label)?;
             // A label nothing was written in reverts nothing; one that does not
             // exist (or was dropped with its last operation) is a 404.
-            if conn.labels(&[label_id])?.is_empty() {
+            if conn.labels(&[log_context_id])?.is_empty() {
                 return Err(ApiError::not_found(format!(
-                    "no label {label_id}: it never existed, or what it held was pruned or \
+                    "no label {log_context_id}: it never existed, or what it held was pruned or \
                      trimmed away"
                 )));
             }
-            let ops = crate::revert::label_ops(conn, label_id)?;
+            let ops = crate::revert::label_ops(conn, log_context_id)?;
             match target.only.as_deref() {
                 None => ops,
                 Some(only) => {
@@ -128,7 +128,7 @@ fn resolve_revert_target(
         }
         (None, Some(ids)) => {
             if target.only.is_some() {
-                return Err(ApiError::bad_request("only narrows a label_id target"));
+                return Err(ApiError::bad_request("only narrows a log_context_id target"));
             }
             if ids.is_empty() {
                 return Err(ApiError::bad_request("op_ids must not be empty"));
@@ -146,7 +146,7 @@ fn resolve_revert_target(
         }
         _ => {
             return Err(ApiError::bad_request(
-                "the target needs exactly one of label_id, op_ids or since",
+                "the target needs exactly one of log_context_id, op_ids or since",
             ))
         }
     };
@@ -158,7 +158,7 @@ fn revert_name(target: &RevertTarget) -> String {
     if let Some(t) = target.since {
         return format!("rollback to {}", metafolder_core::date::iso8601_from_ms(t));
     }
-    match (&target.label_id, &target.op_ids) {
+    match (&target.log_context_id, &target.op_ids) {
         (Some(label), _) => {
             let what = match target.only.as_deref() {
                 Some("changes") => "undo",
@@ -183,7 +183,7 @@ fn revert_name_of(ids: &[i64]) -> String {
 fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
     json!({
         "op_id": op.id,
-        "label_id": op.label_id,
+        "log_context_id": op.log_context_id,
         "op_type": op.op_type,
         "entity_uuid": hex(op.entity_uuid),
         "field_name": op.field_name,
@@ -248,7 +248,7 @@ fn revert_plan_json(
             // The trash correlation key: the version the record held before
             // the whole label — one flush of the watcher — which is the only
             // one anything outside it observed (doc "Trash, undo and redo").
-            if let Some(v) = conn.version_before_label(op.label_id, op.entity_uuid)? {
+            if let Some(v) = conn.version_before_label(op.log_context_id, op.entity_uuid)? {
                 entry["entity_version_before_label"] = json!(v);
             }
         }
@@ -284,9 +284,9 @@ pub(super) async fn revert_plan(
         })
         .transpose()?;
     let target = RevertTarget {
-        // `head` is a legal label_id here as it is in the body, so a plan and
+        // `head` is a legal log_context_id here as it is in the body, so a plan and
         // the revert it describes take the same target spelling.
-        label_id: params.target_label_id.as_ref().map(|s| match s.parse::<i64>() {
+        log_context_id: params.target_log_context_id.as_ref().map(|s| match s.parse::<i64>() {
             Ok(n) => serde_json::Value::from(n),
             Err(_) => serde_json::Value::String(s.clone()),
         }),
@@ -345,7 +345,7 @@ pub(super) async fn revert(
         if effective.is_empty() {
             // Nothing left to apply: writing nothing records nothing.
             return Ok(Json(json!({
-                "label": serde_json::Value::Null,
+                "log_context": serde_json::Value::Null,
                 "head": head,
                 "reverted_operations": [],
                 "skipped_operations": skipped,
@@ -361,13 +361,13 @@ pub(super) async fn revert(
         if let (Some(whole), true) = (whole, skipped.is_empty()) {
             writer.note_label_reverts(whole, true)?;
         }
-        let label_id = writer.label_id();
+        let log_context_id = writer.log_context_id();
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         let new_head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({
-            "label": label_id,
+            "log_context": log_context_id,
             "head": new_head,
             "reverted_operations": applied,
             "skipped_operations": skipped,
@@ -482,7 +482,7 @@ pub(super) async fn revert_commit(
             let (kept, skipped) = narrow_to_applied(effective, &body.apply)?;
             if kept.is_empty() {
                 return Ok(json!({
-                    "label": serde_json::Value::Null,
+                    "log_context": serde_json::Value::Null,
                     "head": head,
                     "reverted_operations": [],
                     "skipped_operations": skipped,
@@ -495,13 +495,13 @@ pub(super) async fn revert_commit(
             if let (Some(whole), true) = (whole, kept.len() == locked.len()) {
                 writer.note_label_reverts(whole, true)?;
             }
-            let label_id = writer.label_id();
+            let log_context_id = writer.log_context_id();
             let effects = writer.effects();
             slowlog::timed("commit", || writer.commit())?;
             repo_state.settle(&conn, &effects)?;
             let new_head = crate::store::Log::head(&*conn)?;
             Ok(json!({
-                "label": label_id,
+                "log_context": log_context_id,
                 "head": new_head,
                 "reverted_operations": applied,
                 "skipped_operations": skipped,

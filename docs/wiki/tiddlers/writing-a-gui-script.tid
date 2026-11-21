@@ -107,15 +107,15 @@ label of its own ([[Log contexts]]), and going back reverts it:
 
 ```
 RUN_LABEL=$(mf_label_begin "my-script $TAG")      # once: the run is one label
-export METAFOLDER_LABEL=$RUN_LABEL
+export METAFOLDER_LOG_CONTEXT=$RUN_LABEL
 ...
 answer=$(mf_label_begin "$path: y")               # inside the run's
-METAFOLDER_LABEL=$answer mf tag -i "$uuid" add "$TAG"
+METAFOLDER_LOG_CONTEXT=$answer mf tag -i "$uuid" add "$TAG"
 ...
 mf_label_back "$answer"                           # on u
 ```
 
-`mf_label_begin` is [[mf label begin]] (empty when it could not open one), and
+`mf_label_begin` is [[mf context new]] (empty when it could not open one), and
 `mf_label_back` an [[mf log revert]] of the answer's label — what each write of the
 answer replaced coming back, which no hand-written ''untag'' would do; the watcher's
 writes meanwhile are left alone, and an answer that wrote nothing reverts nothing. Go

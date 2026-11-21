@@ -177,7 +177,7 @@ impl Fix {
             .unwrap()
             .iter()
             .find(|o| o["id"].as_i64() == Some(head))
-            .unwrap()["label_id"]
+            .unwrap()["log_context_id"]
             .as_i64()
             .unwrap()
     }
@@ -236,12 +236,12 @@ impl Fix {
 
     /// An undo of `label`, as the clients write it.
     async fn undo(&self, label: i64) -> Value {
-        self.revert(json!({"label_id": label, "only": "changes"})).await
+        self.revert(json!({"log_context_id": label, "only": "changes"})).await
     }
 
     /// A redo of the undo written in `label`.
     async fn redo(&self, label: i64) -> Value {
-        self.revert(json!({"label_id": label, "only": "undos"})).await
+        self.revert(json!({"log_context_id": label, "only": "undos"})).await
     }
 }
 
@@ -420,7 +420,7 @@ async fn maintain(fx: &Fix, fold: bool, reindex: bool) {
 }
 
 fn nothing_written(out: &Value) -> bool {
-    out["label"].is_null() && out["reverted_operations"] == json!([])
+    out["log_context"].is_null() && out["reverted_operations"] == json!([])
 }
 
 /// One test per write, so that they run side by side.
@@ -489,7 +489,7 @@ async fn redoing_again(write: Write) {
                 between.apply(&fx, write).await;
                 let written = fx.snapshot().await;
                 let undo = fx.undo(label).await;
-                let undo_label = undo["label"].as_i64().expect("the undo has a label");
+                let undo_label = undo["log_context"].as_i64().expect("the undo has a label");
                 maintain(&fx, mask & 1 == 1, false).await;
                 let first = fx.redo(undo_label).await;
                 assert!(!nothing_written(&first), "{case}: the redo wrote nothing: {first}");
@@ -511,7 +511,7 @@ async fn redoing_again(write: Write) {
                     );
                 }
                 // The redo's own label is not an undo of a change: redoing it is nothing.
-                let redo_label = first["label"].as_i64().unwrap();
+                let redo_label = first["log_context"].as_i64().unwrap();
                 let out = fx.redo(redo_label).await;
                 assert!(nothing_written(&out), "{case}: a redo of a redo wrote: {out}");
                 fx.check(&case).await;
@@ -553,7 +553,7 @@ async fn undo_of_undo(write: Write) {
                 let mut undone = None;
                 for round in 0..3 {
                     let undo = fx.undo(label).await;
-                    let undo_label = undo["label"]
+                    let undo_label = undo["log_context"]
                         .as_i64()
                         .unwrap_or_else(|| panic!("{case}, round {round}: nothing undone: {undo}"));
                     maintain(&fx, mask & 2 == 2, false).await;
@@ -565,7 +565,7 @@ async fn undo_of_undo(write: Write) {
                         "{case}, round {round}: not the state of the first undo"
                     );
                     let back = if round == 1 {
-                        fx.revert(json!({"label_id": undo_label})).await
+                        fx.revert(json!({"log_context_id": undo_label})).await
                     } else {
                         fx.redo(undo_label).await
                     };
@@ -650,7 +650,7 @@ async fn older_write(write: Write) {
                 assert!(nothing_written(&fx.undo(label).await), "{case}, undo {again}");
                 assert_eq!(fx.head().await, head, "{case}: the log moved");
             }
-            fx.redo(undo["label"].as_i64().unwrap()).await;
+            fx.redo(undo["log_context"].as_i64().unwrap()).await;
             assert_eq!(
                 fx.snapshot().await,
                 both,
@@ -702,13 +702,13 @@ async fn two_writes_are_undone_and_redone_as_a_stack() {
                     let undo_b = fx.undo(b).await;
                     let undo_a = fx.undo(a).await;
                     maintain(&fx, fold, false).await;
-                    if undo_b["label"].is_null() || undo_a["label"].is_null() {
+                    if undo_b["log_context"].is_null() || undo_a["log_context"].is_null() {
                         // Nothing to undo: the second write changed nothing.
                         continue;
                     }
                     assert_eq!(fx.snapshot().await, base, "{case}: not the state before both");
-                    fx.redo(undo_a["label"].as_i64().unwrap()).await;
-                    fx.redo(undo_b["label"].as_i64().unwrap()).await;
+                    fx.redo(undo_a["log_context"].as_i64().unwrap()).await;
+                    fx.redo(undo_b["log_context"].as_i64().unwrap()).await;
                     assert_eq!(fx.snapshot().await, both, "{case}: not the state of both");
                     fx.check(&case).await;
                 }

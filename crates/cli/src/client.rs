@@ -53,7 +53,7 @@ pub struct Client {
 }
 
 /// A command's log context (doc "Log contexts"): the name and description
-/// it is created with, the context it runs in (`METAFOLDER_LABEL`), and the
+/// it is created with, the context it runs in (`METAFOLDER_LOG_CONTEXT`), and the
 /// context it created in each repository — at its first request there that
 /// may write, so that a command that only reads creates none.
 #[derive(Debug)]
@@ -223,7 +223,7 @@ impl Client {
             "parent": outer,
         });
         let created =
-            self.send("POST", &format!("/repos/{}/labels", repo.as_simple()), &[], Some(&body))?;
+            self.send("POST", &format!("/repos/{}/contexts", repo.as_simple()), &[], Some(&body))?;
         let id =
             created["id"].as_i64().ok_or((None, "the daemon named no log context".to_string()))?;
         command.created.lock().unwrap_or_else(|e| e.into_inner()).insert(repo, id);
@@ -391,7 +391,7 @@ pub(crate) mod tests {
         assert!(read.starts_with(&format!("post {base}/query ")), "{read}");
         assert!(read.contains("x-metafolder-log-context: 3"), "{read}");
         let created = seen.recv().unwrap();
-        assert!(created.starts_with(&format!("post {base}/labels ")), "{created}");
+        assert!(created.starts_with(&format!("post {base}/contexts ")), "{created}");
         let body: Json = serde_json::from_str(created.split("\r\n\r\n").nth(1).unwrap()).unwrap();
         assert_eq!(
             body,

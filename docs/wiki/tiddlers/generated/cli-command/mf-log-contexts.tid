@@ -1,14 +1,14 @@
-title: $:/mf/gen/CLI command/mf log labels
+title: $:/mf/gen/CLI command/mf log contexts
 catalog: CLI command
-target: mf log labels
-summary: List the labels with their counts and what undid them, newest first, reading no operation
+target: mf log contexts
+summary: List the log contexts with their counts and what undid them, newest first, reading no operation
 
 !! Reference
 
 ```
-List the labels with their counts and what undid them, newest first, reading no operation
+List the log contexts with their counts and what undid them, newest first, reading no operation
 
-Usage: mf log labels [OPTIONS]
+Usage: mf log contexts [OPTIONS]
 
 Options:
       --in <PARENT>

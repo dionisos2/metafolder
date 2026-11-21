@@ -7,7 +7,7 @@
 
 /// The log context a request writes in: a context id, `0` or absent for
 /// none — the daemon then opens one of its own for the write. A client
-/// creates its context before it writes (`POST /repos/:repo/labels`) and
+/// creates its context before it writes (`POST /repos/:repo/contexts`) and
 /// passes it on; leaving it is ceasing to send it.
 pub const LOG_CONTEXT_HEADER: &str = "x-metafolder-log-context";
 
@@ -23,7 +23,7 @@ pub const ACTIVITY_ENV: &str = "METAFOLDER_ACTIVITY";
 /// The environment variable a context is passed on in ([`Context`]): the
 /// label every `mf` started meanwhile writes in. Leaving the context is not
 /// passing it on.
-pub const LABEL_ENV: &str = "METAFOLDER_LABEL";
+pub const LOG_CONTEXT_ENV: &str = "METAFOLDER_LOG_CONTEXT";
 
 /// A context as it is passed on: a label, and the repository it belongs to —
 /// a label id means nothing in another repository, so a client sends it only
@@ -121,7 +121,7 @@ const READ_ONLY_POSTS: &[&str] = &[
     "eligibility",
     "watch/activity",
     "watch/check",
-    "labels",
+    "contexts",
 ];
 
 #[cfg(test)]
@@ -161,7 +161,7 @@ mod tests {
         assert!(!may_write("POST", &format!("{repo}/query")));
         assert!(!may_write("POST", &format!("{repo}/query?limit=3")));
         assert!(!may_write("POST", &format!("{repo}/tree/resolve-paths")));
-        assert!(!may_write("POST", &format!("{repo}/labels")));
+        assert!(!may_write("POST", &format!("{repo}/contexts")));
         assert!(may_write("POST", &format!("{repo}/metarecords")));
         assert!(may_write("POST", &format!("{repo}/query/fields/set")));
         assert!(may_write("DELETE", &format!("{repo}/metarecords/x")));

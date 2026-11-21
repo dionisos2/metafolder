@@ -100,7 +100,7 @@ impl Fx {
     fn mass_delete(&mut self, uuids: &[Uuid]) -> i64 {
         let ids = self.ids(uuids);
         let mut w = Writer::begin(&mut self.store, Some("delete".into())).unwrap();
-        let label = w.label_id();
+        let label = w.log_context_id();
         w.mass_delete_ids(&ids).unwrap();
         w.commit().unwrap();
         label

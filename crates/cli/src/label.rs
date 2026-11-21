@@ -1,4 +1,4 @@
-//! `mf label` (doc "Log contexts"): opening a context and reading
+//! `mf context` (doc "Log contexts"): opening a context and reading
 //! one, and what a command tells the daemon about itself — the name and
 //! description its label is opened with.
 
@@ -61,14 +61,14 @@ fn repo_uuid(ctx: &Ctx) -> Result<uuid::Uuid, CliError> {
         .map_err(|_| CliError::Op(format!("unexpected repository path '{base}'")))
 }
 
-/// `mf label begin NAME [DESCRIPTION]`: opens a label inside the current
-/// context and prints it as `METAFOLDER_LABEL` takes it.
+/// `mf context new NAME [DESCRIPTION]`: opens a label inside the current
+/// context and prints it as `METAFOLDER_LOG_CONTEXT` takes it.
 pub fn begin(ctx: &Ctx, name: &str, description: Option<&str>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let repo = repo_uuid(ctx)?;
     let parent = ctx.client.context().filter(|c| c.repo == repo).map(|c| c.label);
     let label = ctx.client.post(
-        &format!("{base}/labels"),
+        &format!("{base}/contexts"),
         &json!({"name": name, "description": description, "parent": parent}),
     )?;
     let id =
@@ -77,7 +77,24 @@ pub fn begin(ctx: &Ctx, name: &str, description: Option<&str>) -> Result<i32, Cl
     Ok(0)
 }
 
-/// `mf label show [LABEL]`: a label (default: the current context) and the
+/// `mf context parent`: the context the current one is in, as `begin`
+/// prints it — `0` at the root, or with no current context.
+pub fn parent(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let repo = repo_uuid(ctx)?;
+    let current = ctx.client.context().filter(|c| c.repo == repo && c.label != 0);
+    let parent = match current {
+        None => None,
+        Some(c) => ctx.client.get(&format!("{base}/contexts/{}", c.label), &[])?["parent"].as_i64(),
+    };
+    match parent {
+        Some(id) => println!("{}", Context { repo, label: id }),
+        None => println!("0"),
+    }
+    Ok(0)
+}
+
+/// `mf context show [CONTEXT]`: a label (default: the current context) and the
 /// labels it is nested in. `LABEL` is a label id, or a context as `begin`
 /// prints it.
 pub fn show(ctx: &Ctx, label: Option<&str>) -> Result<i32, CliError> {
@@ -104,7 +121,7 @@ pub fn show(ctx: &Ctx, label: Option<&str>) -> Result<i32, CliError> {
             }
         },
     };
-    let label = ctx.client.get(&format!("{base}/labels/{id}"), &[])?;
+    let label = ctx.client.get(&format!("{base}/contexts/{id}"), &[])?;
     println!("{}", line(&label));
     if let Some(description) = label["description"].as_str() {
         println!("  {description}");

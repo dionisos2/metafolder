@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf context parent
+catalog: CLI command
+target: mf context parent
+summary: Print the context the current one is in, as `new` prints it; 0 at the root
+
+!! Reference
+
+```
+Print the context the current one is in, as `new` prints it; 0 at the root
+
+Usage: mf context parent
+
+Options:
+  -h, --help
+          Print help
+```

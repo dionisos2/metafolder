@@ -98,7 +98,7 @@ pub fn active(repo: &str) -> Option<WorkContext> {
 }
 
 /// The context in force on `repo`, as it is passed on to a process
-/// (`METAFOLDER_LABEL`).
+/// (`METAFOLDER_LOG_CONTEXT`).
 pub fn context_of(repo: &str) -> Option<metafolder_core::context::Context> {
     let key = Uuid::parse_str(repo).ok()?;
     with_active(|map| {
@@ -176,7 +176,8 @@ pub async fn set(
     let previous = change(|map| map.remove(&key));
     let opened = async {
         let body = json!({"name": name, "description": description});
-        let response = daemon.request("POST", &format!("/repos/{repo}/labels"), Some(body)).await?;
+        let response =
+            daemon.request("POST", &format!("/repos/{repo}/contexts"), Some(body)).await?;
         if response.status >= 300 {
             return Err(crate::daemon_proxy::error_message(&response.body, || {
                 format!("opening the label failed with status {}", response.status)
@@ -232,7 +233,7 @@ pub async fn pending(daemon: &DaemonProxy, repo: &str) -> Result<Pending, String
     }
     let metafolder = crate::history::metafolder_dir_of(daemon, repo).await?;
     let Some(context) = read_file(&metafolder)? else { return Ok(Pending::None) };
-    let path = format!("/repos/{repo}/labels/{}", context.label);
+    let path = format!("/repos/{repo}/contexts/{}", context.label);
     let response = daemon.request("GET", &path, None).await?;
     match response.status {
         200..=299 => Ok(Pending::Open(context)),

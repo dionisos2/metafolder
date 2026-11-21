@@ -56,7 +56,7 @@ async fn setup(prefix: &str) -> (Router, String, TempDir) {
 
 async fn new_label(app: &Router, repo: &str, body: Value) -> i64 {
     let (status, label) =
-        send(app, "POST", &format!("/repos/{repo}/labels"), Some(body), None).await;
+        send(app, "POST", &format!("/repos/{repo}/contexts"), Some(body), None).await;
     assert_eq!(status, StatusCode::OK, "label creation failed: {label}");
     label["id"].as_i64().expect("a label id")
 }
@@ -80,7 +80,7 @@ async fn a_label_is_read_back_with_its_ancestors() {
     let answer = new_label(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
 
     let (status, label) =
-        send(&app, "GET", &format!("/repos/{repo}/labels/{answer}"), None, None).await;
+        send(&app, "GET", &format!("/repos/{repo}/contexts/{answer}"), None, None).await;
     assert_eq!(status, StatusCode::OK, "{label}");
     assert_eq!(label["name"], "answer 1");
     assert_eq!(label["parent"], run);
@@ -90,7 +90,7 @@ async fn a_label_is_read_back_with_its_ancestors() {
     assert_eq!(ancestors[0]["id"], run);
     assert_eq!(ancestors[0]["description"], "all photos");
 
-    let (status, _) = send(&app, "GET", &format!("/repos/{repo}/labels/99999"), None, None).await;
+    let (status, _) = send(&app, "GET", &format!("/repos/{repo}/contexts/99999"), None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -100,7 +100,7 @@ async fn a_label_under_an_unknown_parent_is_refused() {
     let (status, body) = send(
         &app,
         "POST",
-        &format!("/repos/{repo}/labels"),
+        &format!("/repos/{repo}/contexts"),
         Some(json!({"name": "x", "parent": 99999})),
         None,
     )
@@ -117,11 +117,11 @@ async fn a_write_inside_a_context_carries_its_label() {
     let (status, body) = create(&app, &repo, Some(&answer.to_string())).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let op = newest_op(&app, &repo).await;
-    assert_eq!(op["label_id"], answer, "{op}");
+    assert_eq!(op["log_context_id"], answer, "{op}");
 
     // The listing names the label and every ancestor of it.
     let (_, log) = send(&app, "GET", &format!("/repos/{repo}/log?limit=1"), None, None).await;
-    let labels = log["labels"].as_array().unwrap();
+    let labels = log["log_contexts"].as_array().unwrap();
     let ids: Vec<i64> = labels.iter().map(|l| l["id"].as_i64().unwrap()).collect();
     assert!(ids.contains(&answer) && ids.contains(&run), "{log}");
 }
@@ -133,10 +133,10 @@ async fn a_write_without_a_context_opens_its_own_label() {
     let first = newest_op(&app, &repo).await;
     create(&app, &repo, None).await;
     let second = newest_op(&app, &repo).await;
-    assert_ne!(first["label_id"], second["label_id"], "one label per request");
+    assert_ne!(first["log_context_id"], second["log_context_id"], "one label per request");
 
-    let id = second["label_id"].as_i64().unwrap();
-    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/labels/{id}"), None, None).await;
+    let id = second["log_context_id"].as_i64().unwrap();
+    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/contexts/{id}"), None, None).await;
     assert!(!label["name"].as_str().unwrap().is_empty(), "{label}");
     assert_eq!(label["parent"], Value::Null);
 }
@@ -160,16 +160,16 @@ async fn a_label_detail_lists_its_operations() {
     create(&app, &repo, Some(&label.to_string())).await;
 
     let (status, detail) =
-        send(&app, "GET", &format!("/repos/{repo}/log/labels/{label}"), None, None).await;
+        send(&app, "GET", &format!("/repos/{repo}/log/contexts/{label}"), None, None).await;
     assert_eq!(status, StatusCode::OK, "{detail}");
-    assert_eq!(detail["label"]["name"], "two writes");
-    assert_eq!(detail["label"]["operation_count"], 2);
+    assert_eq!(detail["log_context"]["name"], "two writes");
+    assert_eq!(detail["log_context"]["operation_count"], 2);
     assert_eq!(detail["operations"].as_array().unwrap().len(), 2);
 
     let (status, head) =
-        send(&app, "GET", &format!("/repos/{repo}/log/labels/head"), None, None).await;
+        send(&app, "GET", &format!("/repos/{repo}/log/contexts/head"), None, None).await;
     assert_eq!(status, StatusCode::OK, "{head}");
-    assert_eq!(head["label"]["id"], label);
+    assert_eq!(head["log_context"]["id"], label);
 }
 
 /// Reverting a label reverts what was written inside it, child labels
@@ -187,7 +187,7 @@ async fn reverting_a_label_reverts_its_children_too() {
         &app,
         "POST",
         &format!("/repos/{repo}/revert"),
-        Some(json!({"target": {"label_id": run}})),
+        Some(json!({"target": {"log_context_id": run}})),
         None,
     )
     .await;
@@ -205,7 +205,7 @@ async fn reverting_a_label_reverts_its_children_too() {
 async fn prune_keeps_a_label_whole() {
     let (app, repo, _root) = setup("prune").await;
     create(&app, &repo, None).await;
-    let pruned = newest_op(&app, &repo).await["label_id"].as_i64().unwrap();
+    let pruned = newest_op(&app, &repo).await["log_context_id"].as_i64().unwrap();
     let kept = new_label(&app, &repo, json!({"name": "kept"})).await;
     create(&app, &repo, Some(&kept.to_string())).await;
     create(&app, &repo, Some(&kept.to_string())).await;
@@ -214,7 +214,7 @@ async fn prune_keeps_a_label_whole() {
         &app,
         "POST",
         &format!("/repos/{repo}/log/prune"),
-        Some(json!({"target": {"label": kept}})),
+        Some(json!({"target": {"log_context": kept}})),
         None,
     )
     .await;
@@ -222,12 +222,12 @@ async fn prune_keeps_a_label_whole() {
     let (_, log) = send(&app, "GET", &format!("/repos/{repo}/log"), None, None).await;
     let ops = log["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 2, "{log}");
-    assert!(ops.iter().all(|op| op["label_id"] == kept), "{log}");
+    assert!(ops.iter().all(|op| op["log_context_id"] == kept), "{log}");
     // A prune removes operations, never contexts: the emptied one stays
     // until a reindex (doc "Log contexts").
     assert_eq!(body["pruned_labels"], Value::Null, "{body}");
     let (status, _) =
-        send(&app, "GET", &format!("/repos/{repo}/labels/{pruned}"), None, None).await;
+        send(&app, "GET", &format!("/repos/{repo}/contexts/{pruned}"), None, None).await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -238,9 +238,9 @@ async fn a_context_of_zero_is_no_context() {
     let (status, body) = create(&app, &repo, Some("0")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let op = newest_op(&app, &repo).await;
-    let id = op["label_id"].as_i64().unwrap();
+    let id = op["log_context_id"].as_i64().unwrap();
     assert!(id >= 1, "{op}");
-    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/labels/{id}"), None, None).await;
+    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/contexts/{id}"), None, None).await;
     assert_eq!(label["parent"], Value::Null, "{label}");
 }
 
@@ -250,7 +250,7 @@ async fn no_label_has_the_id_zero() {
     let (app, repo, _root) = setup("from_one").await;
     let first = new_label(&app, &repo, json!({"name": "first"})).await;
     assert!(first >= 1, "{first}");
-    let (status, _) = send(&app, "GET", &format!("/repos/{repo}/labels/0"), None, None).await;
+    let (status, _) = send(&app, "GET", &format!("/repos/{repo}/contexts/0"), None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -275,7 +275,7 @@ async fn a_command_key_opens_no_label() {
     }
     let (_, log) = send(&app, "GET", &format!("/repos/{repo}/log?limit=2"), None, None).await;
     let ops = log["operations"].as_array().unwrap();
-    assert!(ops.iter().all(|op| op["label_id"] == run), "{log}");
+    assert!(ops.iter().all(|op| op["log_context_id"] == run), "{log}");
 }
 
 /// Reverting a label nothing was written in reverts nothing — what a script
@@ -289,16 +289,16 @@ async fn reverting_an_empty_label_reverts_nothing() {
         &app,
         "POST",
         &format!("/repos/{repo}/revert"),
-        Some(json!({"target": {"label_id": empty}})),
+        Some(json!({"target": {"log_context_id": empty}})),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["label"], Value::Null);
+    assert_eq!(body["log_context"], Value::Null);
     let (status, plan) = send(
         &app,
         "GET",
-        &format!("/repos/{repo}/revert/plan?target_label_id={empty}"),
+        &format!("/repos/{repo}/revert/plan?target_log_context_id={empty}"),
         None,
         None,
     )
@@ -310,7 +310,7 @@ async fn reverting_an_empty_label_reverts_nothing() {
         &app,
         "POST",
         &format!("/repos/{repo}/revert"),
-        Some(json!({"target": {"label_id": 99999}})),
+        Some(json!({"target": {"log_context_id": 99999}})),
         None,
     )
     .await;
@@ -363,7 +363,7 @@ async fn undoing_a_label_takes_back_only_its_standing_changes() {
     let first = new_label(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
     set_a(&app, &repo, &uuid, 2, first).await;
     // Going back over answer 1, inside the run: an undo of it.
-    revert(&app, &repo, json!({"label_id": first})).await;
+    revert(&app, &repo, json!({"log_context_id": first})).await;
     let second = new_label(&app, &repo, json!({"name": "answer 1 again", "parent": run})).await;
     set_a(&app, &repo, &uuid, 3, second).await;
     assert_eq!(field_a(&app, &repo, &uuid).await, 3);
@@ -371,7 +371,7 @@ async fn undoing_a_label_takes_back_only_its_standing_changes() {
     let (status, plan) = send(
         &app,
         "GET",
-        &format!("/repos/{repo}/revert/plan?target_label_id={run}&only=changes"),
+        &format!("/repos/{repo}/revert/plan?target_log_context_id={run}&only=changes"),
         None,
         None,
     )
@@ -379,13 +379,13 @@ async fn undoing_a_label_takes_back_only_its_standing_changes() {
     assert_eq!(status, StatusCode::OK, "{plan}");
     assert_eq!(plan["operations"].as_array().unwrap().len(), 1, "only the standing change: {plan}");
 
-    let undo = revert(&app, &repo, json!({"label_id": run, "only": "changes"})).await;
+    let undo = revert(&app, &repo, json!({"log_context_id": run, "only": "changes"})).await;
     assert_eq!(undo["reverted_operations"].as_array().unwrap().len(), 1, "{undo}");
     assert_eq!(field_a(&app, &repo, &uuid).await, 1, "back to before the run");
 
     // Its redo takes the undo back: the run's standing undos, that is.
-    let undo_label = undo["label"].as_i64().unwrap();
-    let redo = revert(&app, &repo, json!({"label_id": undo_label, "only": "undos"})).await;
+    let undo_label = undo["log_context"].as_i64().unwrap();
+    let redo = revert(&app, &repo, json!({"log_context_id": undo_label, "only": "undos"})).await;
     assert_eq!(redo["reverted_operations"].as_array().unwrap().len(), 1, "{redo}");
     assert_eq!(field_a(&app, &repo, &uuid).await, 3);
 
@@ -393,7 +393,7 @@ async fn undoing_a_label_takes_back_only_its_standing_changes() {
         &app,
         "POST",
         &format!("/repos/{repo}/revert"),
-        Some(json!({"target": {"label_id": run, "only": "everything"}})),
+        Some(json!({"target": {"log_context_id": run, "only": "everything"}})),
         None,
     )
     .await;

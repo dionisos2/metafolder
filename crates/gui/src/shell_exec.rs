@@ -37,7 +37,7 @@ pub(crate) fn next_task_id() -> String {
 }
 
 /// [`run_to_completion`], the subprocess passed `context` as
-/// `METAFOLDER_LABEL`: every `mf` it starts writes in that label (doc
+/// `METAFOLDER_LOG_CONTEXT`: every `mf` it starts writes in that label (doc
 /// "Labels and contexts"). `root` is the workspace repository's root, where
 /// a line runs with nothing selected ([`working_dir`]).
 pub async fn run_in(
@@ -92,9 +92,11 @@ pub async fn run_in(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     match context {
-        Some(context) => command.env(metafolder_core::context::LABEL_ENV, context.to_string()),
+        Some(context) => {
+            command.env(metafolder_core::context::LOG_CONTEXT_ENV, context.to_string())
+        }
         // The GUI's own context, if it was started in one, is not the run's.
-        None => command.env_remove(metafolder_core::context::LABEL_ENV),
+        None => command.env_remove(metafolder_core::context::LOG_CONTEXT_ENV),
     };
     let mut child = command.spawn().map_err(|e| format!("cannot run shell command: {e}"))?;
 
@@ -310,7 +312,7 @@ async fn forward(
 /// `label`: run it in a label of its own, so what a script writes is one
 /// piece of work in the log — opened in the workspace's active repository,
 /// inside the work context in force there (the proxy sends it), and passed on
-/// as `METAFOLDER_LABEL`. A plain `!` line is passed the work context alone:
+/// as `METAFOLDER_LOG_CONTEXT`. A plain `!` line is passed the work context alone:
 /// each `mf` it runs is a command with a label of its own anyway. `typed`: a
 /// line the user typed, which runs in the workspace's persistent shell.
 #[tauri::command]
@@ -387,7 +389,7 @@ async fn open_context(
     let repo = gui.active_repo(ws_id).ok()?;
     let body = serde_json::json!({"name": name});
     let response =
-        daemon.request("POST", &format!("/repos/{repo}/labels"), Some(body)).await.ok()?;
+        daemon.request("POST", &format!("/repos/{repo}/contexts"), Some(body)).await.ok()?;
     let label = response.body["id"].as_i64().filter(|_| response.status < 300)?;
     Some(metafolder_core::context::Context { repo: uuid::Uuid::parse_str(&repo).ok()?, label })
 }
@@ -480,7 +482,7 @@ mod tests {
     async fn test_a_run_is_given_its_context_and_only_it() {
         let gui = gui();
         let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
-        let line = "echo \"in:${METAFOLDER_LABEL:-none}\"";
+        let line = "echo \"in:${METAFOLDER_LOG_CONTEXT:-none}\"";
         run_in(gui.clone(), "ws-1".into(), line.into(), Some(context), None).await.unwrap();
         run_in(gui.clone(), "ws-1".into(), line.into(), None, None).await.unwrap();
         let log = gui.shell_log("ws-1").unwrap();

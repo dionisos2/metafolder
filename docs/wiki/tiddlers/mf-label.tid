@@ -1,6 +1,0 @@
-title: mf label
-tags: [[CLI command]] [[Event log]]
-kind: reference
-summary: Contexts: name the work under way, so what is written in it is one label
-
-Opening a context and reading one ([[Log contexts]]): `mf label begin` opens a label, `mf label show` reads it.

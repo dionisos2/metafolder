@@ -19,7 +19,7 @@ An operation is ''not'' the one when:
 * it is an `unknown` operation, which carries nothing to invert;
 * it is the log's first operation — the root metarecord written at init, or the oldest operation a prune left (`first` in `GET /log`). Undo stops there; `mf log revert <label>` still reaches it.
 
-Undoing the label chosen is a revert of `{"label_id": L, "only": "changes"}`: the daemon
+Undoing the label chosen is a revert of `{"log_context_id": L, "only": "changes"}`: the daemon
 takes the operations of L and of every label nested in it, and keeps those that are not
 reverts, not the watcher's, and still standing ([[Revert endpoints]]). The daemon narrows,
 not the client: a label — a script's run — may start long before the window the client
@@ -33,7 +33,7 @@ operations, the redos, and the undos already redone: pressing redo again goes on
 undo before. The newest ordinary change still standing ends the search: ''a new change
 clears what could be redone'', as in any editor. What it cleared is still in the log, and
 an explicit `mf log revert` of the undo reaches it. Redoing label L is a revert of
-`{"label_id": L, "only": "undos"}`: its reverts of an ordinary change still standing.
+`{"log_context_id": L, "only": "undos"}`: its reverts of an ordinary change still standing.
 
 Undo, change, undo, undo — then redo, redo, redo: the first two redos bring back what the
 last two undos took, the third finds the change and answers "Nothing to redo."; the

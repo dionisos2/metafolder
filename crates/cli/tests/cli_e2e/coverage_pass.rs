@@ -157,7 +157,10 @@ fn stub_task_daemon(status: &'static str) -> String {
     use axum::routing::{get, post};
     let app = axum::Router::new()
         // The command's log context, created before its first write.
-        .route("/repos/{repo}/labels", post(|| async { axum::Json(serde_json::json!({"id": 1})) }))
+        .route(
+            "/repos/{repo}/contexts",
+            post(|| async { axum::Json(serde_json::json!({"id": 1})) }),
+        )
         .route(
             "/repos/{repo}/duplicates/scan",
             post(|| async { axum::Json(serde_json::json!({"task_id": "t1"})) }),

@@ -90,7 +90,7 @@ fn revision_count(repo: &RepoState) -> i64 {
 /// The label of the newest operation (HEAD's), and that operation's origin.
 fn newest_revision(store: &dyn metafolder_daemon::store::Store) -> (i64, Option<String>) {
     let head = store.op(store.head().unwrap().unwrap()).unwrap().unwrap();
-    (head.label_id, head.origin)
+    (head.log_context_id, head.origin)
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -1172,7 +1172,7 @@ fn test_groups_become_separate_revisions() {
         let ops = metafolder_daemon::store::Log::all_ops(&*conn).unwrap();
         ops.iter()
             .filter(|op| op.op_type == "create_metarecord" && op.field_name.is_none())
-            .map(|op| op.label_id)
+            .map(|op| op.log_context_id)
             .collect::<std::collections::HashSet<_>>()
             .len()
     };
@@ -1738,8 +1738,8 @@ fn test_a_flush_writes_under_the_watchers_label_and_nobody_else_can() {
     let watcher = conn.watcher_label().unwrap().expect("the watcher's label");
     let flushes = conn.label_children(watcher).unwrap();
     assert_eq!(flushes.len(), 2, "one label per flush");
-    let (head_label, _) = newest_revision(&*conn);
-    assert_eq!(flushes[1], head_label);
+    let (head_log_context, _) = newest_revision(&*conn);
+    assert_eq!(flushes[1], head_log_context);
 
     for context in [
         WriteContext::In(watcher),

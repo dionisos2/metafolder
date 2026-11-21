@@ -40,7 +40,7 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     // The labels of the operations in hand and their ancestors — never the
     // whole table. A window of fifty operations must not pay for the log
     // behind it (doc "Performance testing").
-    let labels = labels_with_ancestors(log, ops.iter().map(|op| op.label_id))?;
+    let labels = labels_with_ancestors(log, ops.iter().map(|op| op.log_context_id))?;
 
     // A label whose oldest operation of its own is not in the window was cut
     // by the operation bound (only the oldest can be: the window keeps the
@@ -48,7 +48,7 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     // label on purpose. One key per label.
     let mut oldest_shown: HashMap<i64, i64> = HashMap::new();
     for op in ops.iter().filter(|_| q.entity.is_none()) {
-        let first = oldest_shown.entry(op.label_id).or_insert(op.id);
+        let first = oldest_shown.entry(op.log_context_id).or_insert(op.id);
         *first = (*first).min(op.id);
     }
     let mut partial = HashSet::new();
@@ -75,7 +75,7 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     // panel fetches only the most recent `limit` operations) can still report
     // how much log there is. Two counts off the primary keys — not the size of
     // the returned window, and unaffected by `limit`.
-    let (total_entries, total_labels) = log.counts()?;
+    let (total_entries, total_log_contexts) = log.counts()?;
 
     Ok(json!({
         "head": head,
@@ -83,9 +83,9 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
         // operation a prune left (doc "The undo selection").
         "first": log.first_op()?,
         "operations": op_values,
-        "labels": label_values,
+        "log_contexts": label_values,
         "total_entries": total_entries,
-        "total_labels": total_labels,
+        "total_log_contexts": total_log_contexts,
     }))
 }
 
@@ -177,7 +177,7 @@ fn satisfied(q: &LogQuery, ops: &[OpRow]) -> bool {
 }
 
 fn distinct_labels(ops: &[OpRow]) -> usize {
-    ops.iter().map(|op| op.label_id).collect::<HashSet<_>>().len()
+    ops.iter().map(|op| op.log_context_id).collect::<HashSet<_>>().len()
 }
 
 /// Trims the selection to what was asked for: the most recent `limit`
@@ -191,7 +191,7 @@ fn bound_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
     }
     if let Some(max) = q.labels {
         let kept = newest_labels(ops, max);
-        ops.retain(|op| kept.contains(&op.label_id));
+        ops.retain(|op| kept.contains(&op.log_context_id));
     }
 }
 
@@ -199,11 +199,11 @@ fn bound_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
 fn newest_labels(ops: &[OpRow], max: usize) -> HashSet<i64> {
     let mut kept = HashSet::new();
     for op in ops.iter().rev() {
-        if !kept.contains(&op.label_id) {
+        if !kept.contains(&op.log_context_id) {
             if kept.len() == max {
                 break;
             }
-            kept.insert(op.label_id);
+            kept.insert(op.log_context_id);
         }
     }
     kept
@@ -232,7 +232,7 @@ const GROWTH: usize = 8;
 pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<serde_json::Value> {
     let mut value = json!({
         "id": op.id,
-        "label_id": op.label_id,
+        "log_context_id": op.log_context_id,
         "timestamp": op.timestamp,
         "origin": op.origin,
         "op_type": op.op_type,
@@ -282,7 +282,7 @@ pub fn snapshots_json(log: &dyn Log, op_id: i64) -> Result<serde_json::Value> {
 
 // ── Label summaries (doc "Log context summaries") ──────────────────────────────────
 
-/// Which labels `GET /repos/:repo/log/labels` lists.
+/// Which labels `GET /repos/:repo/log/contexts` lists.
 #[derive(Debug, Clone, Copy)]
 pub enum Under {
     /// The units of work: the labels that are nested in none.
@@ -357,7 +357,7 @@ fn undone_state(log: &dyn Log, label: i64, memo: &mut HashMap<i64, Undone>) -> R
     Ok(state)
 }
 
-/// The body of `GET /repos/:repo/log/labels`: labels, newest first, each with
+/// The body of `GET /repos/:repo/log/contexts`: labels, newest first, each with
 /// what the log knows of it without reading an operation — how many it holds,
 /// its first and its last, who wrote it, what it reverts and is reverted by.
 /// The cost is a few keys per label, whatever the number of operations in it.
@@ -401,8 +401,8 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
     }
     let metas = log.labels(&ids)?;
     let head = log.head()?;
-    let head_label = match head {
-        Some(h) => log.op(h)?.map(|op| op.label_id),
+    let head_log_context = match head {
+        Some(h) => log.op(h)?.map(|op| op.log_context_id),
         None => None,
     };
     let mut memo = HashMap::new();
@@ -422,7 +422,7 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
         let marks = |pairs: Vec<(i64, bool)>| -> serde_json::Value {
             pairs
                 .into_iter()
-                .map(|(label, whole)| json!({"label": label, "whole": whole}))
+                .map(|(label, whole)| json!({"log_context": label, "whole": whole}))
                 .collect()
         };
         let mut value = label_json(*id, meta);
@@ -442,14 +442,14 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
         value["reverts"] = marks(log.label_reverts(*id)?);
         value["reverted_by"] = marks(log.label_reverted_by(*id)?);
         value["undone"] = undone;
-        value["is_head"] = json!(head_label == Some(*id));
+        value["is_head"] = json!(head_log_context == Some(*id));
         labels.push(value);
     }
     Ok(json!({
         "head": head,
-        "head_label": head_label,
-        "labels": labels,
+        "head_log_context": head_log_context,
+        "log_contexts": labels,
         "next_before": if more { ids.last().copied() } else { None },
-        "total_labels": log.counts()?.1,
+        "total_log_contexts": log.counts()?.1,
     }))
 }
