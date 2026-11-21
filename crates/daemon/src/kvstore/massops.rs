@@ -133,11 +133,12 @@ impl Stub {
 
     fn encode(&self) -> Vec<u8> {
         let mut out = Out::default();
-        out.int(self.label)
-            .int(self.timestamp)
-            .opt_bytes(self.origin.as_deref().map(str::as_bytes))
-            .bytes(self.type_name().as_bytes())
-            .bytes(ROOT.as_slice())
+        out.int(self.label).int(self.timestamp);
+        out.0.push(super::codec::origin_byte(self.origin.as_deref()).expect("a known origin"));
+        out.0.extend_from_slice(
+            &super::codec::op_type_bytes(self.type_name()).expect("a stub's type"),
+        );
+        out.bytes(ROOT.as_slice())
             .opt_bytes(Some(self.field.as_bytes()))
             .opt_int(self.reverts)
             .int(self.values.len() as i64);
@@ -202,8 +203,8 @@ impl Stub {
         let mut r = In(b);
         r.int()?;
         r.int()?;
-        r.opt_bytes()?;
-        r.bytes()?;
+        r.take(1)?;
+        r.take(2)?;
         r.bytes()?;
         r.opt_bytes()?;
         r.opt_int()?;

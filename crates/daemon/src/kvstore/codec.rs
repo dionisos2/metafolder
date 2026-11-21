@@ -282,9 +282,79 @@ pub(crate) fn dec_context(b: &[u8]) -> Result<(crate::store::LabelMeta, Option<U
     Ok((crate::store::LabelMeta { name, description, parent, created }, key))
 }
 
+/// An operation's type as its log entry keeps it (doc "Log storage"): its
+/// effect, one byte, and its file action, one byte — the high bit of which
+/// marks, for now, an entry of many targets. The wire's type is read back
+/// from the two.
+const OP_TYPES: [(&str, [u8; 2]); 15] = [
+    ("create_metarecord", [0, 0]),
+    ("delete_metarecord", [1, 0]),
+    ("set_metarecord", [2, 0]),
+    ("append_field", [3, 0]),
+    ("delete_field", [4, 0]),
+    ("set_field", [5, 0]),
+    ("unknown", [7, 0]),
+    ("file_deleted", [5, 1]),
+    ("file_moved", [5, 2]),
+    ("file_modified", [5, 3]),
+    ("mass_add", [3, 0x80]),
+    ("mass_remove", [4, 0x80]),
+    ("mass_set", [5, 0x80]),
+    ("mass_unset", [6, 0x80]),
+    ("mass_delete", [1, 0x80]),
+];
+
+/// The effect and file action of an operation type.
+pub(crate) fn op_type_bytes(name: &str) -> Result<[u8; 2]> {
+    match OP_TYPES.iter().find(|(n, _)| *n == name) {
+        Some((_, b)) => Ok(*b),
+        None => bail!("an operation of type {name:?}"),
+    }
+}
+
+/// The operation type an effect and a file action are.
+pub(crate) fn op_type_name(bytes: &[u8]) -> Result<&'static str> {
+    match OP_TYPES.iter().find(|(_, b)| b[..] == *bytes) {
+        Some((n, _)) => Ok(n),
+        None => bail!("an operation of effect and file action {bytes:?}"),
+    }
+}
+
+/// An operation's origin, one byte: a client's (none), the watcher's, the
+/// trash's (doc "Operations and their origin").
+pub(crate) fn origin_byte(origin: Option<&str>) -> Result<u8> {
+    Ok(match origin {
+        None => 0,
+        Some(crate::log::ORIGIN_WATCHER) => 1,
+        Some(crate::log::ORIGIN_TRASH) => 2,
+        Some(other) => bail!("an operation of origin {other:?}"),
+    })
+}
+
+pub(crate) fn origin_of(byte: u8) -> Result<Option<String>> {
+    Ok(match byte {
+        0 => None,
+        1 => Some(crate::log::ORIGIN_WATCHER.to_string()),
+        2 => Some(crate::log::ORIGIN_TRASH.to_string()),
+        other => bail!("an operation of origin byte {other}"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_operation_type_is_an_effect_and_a_file_action() {
+        for (name, bytes) in OP_TYPES {
+            assert_eq!(op_type_bytes(name).unwrap(), bytes);
+            assert_eq!(op_type_name(&bytes).unwrap(), name);
+        }
+        assert!(op_type_bytes("nonsense").is_err());
+        for origin in [None, Some("watcher"), Some("trash")] {
+            assert_eq!(origin_of(origin_byte(origin).unwrap()).unwrap().as_deref(), origin);
+        }
+    }
 
     #[test]
     fn a_log_context_comes_back_compact() {

@@ -587,22 +587,23 @@ fn enc_rows(rows: &[FieldRow]) -> Vec<u8> {
     mass::Record::plain(rows.to_vec()).encode()
 }
 
-fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Vec<u8> {
+fn enc_op(op: &NewOp, label: i64, timestamp: i64) -> Result<Vec<u8>> {
     let mut out = Out::default();
-    out.int(label)
-        .int(timestamp)
-        .opt_bytes(op.origin.as_deref().map(str::as_bytes))
-        .bytes(op.op_type.as_str().as_bytes())
-        .bytes(op.entity.as_bytes())
+    out.int(label).int(timestamp);
+    out.0.push(codec::origin_byte(op.origin.as_deref())?);
+    out.0.extend_from_slice(&codec::op_type_bytes(op.op_type.as_str())?);
+    out.bytes(op.entity.as_bytes())
         .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
         .opt_int(op.reverts_op_id);
-    out.0
+    Ok(out.0)
 }
 
 fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
     let mut r = In(b);
-    let (label_id, timestamp, origin) = (r.int()?, r.int()?, r.opt_string()?);
-    let (op_type, entity_uuid) = (r.string()?, uuid_of(r.bytes()?));
+    let (label_id, timestamp) = (r.int()?, r.int()?);
+    let origin = codec::origin_of(r.take(1)?[0])?;
+    let op_type = codec::op_type_name(r.take(2)?)?.to_string();
+    let entity_uuid = uuid_of(r.bytes()?);
     Ok(OpRow {
         id,
         label_id,
@@ -2913,7 +2914,7 @@ impl WriteTxn for KvTxn<'_> {
         let t = self.t;
         for (i, op) in ops.iter().enumerate() {
             let id = base + i as i64;
-            t.log_entries.put(&mut w, &be(id), &enc_op(op, label, timestamp))?;
+            t.log_entries.put(&mut w, &be(id), &enc_op(op, label, timestamp)?)?;
             // What the write took off, and — of an append alone — the value
             // it added, which a revert takes off in its turn.
             let added: &[FieldRow] =
