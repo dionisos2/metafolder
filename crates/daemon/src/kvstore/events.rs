@@ -20,7 +20,7 @@
 //!
 //! | table  | key                 | value                               |
 //! |--------|---------------------|-------------------------------------|
-//! | events | field · number      | kind · values · a bitmap of ids     |
+//! | index_pending_writes | field · chunk · number | kind · values · the ids of the chunk |
 
 use std::collections::BTreeSet;
 
@@ -90,7 +90,30 @@ impl Event {
     }
 }
 
-/// `field`'s pending events, oldest first.
+/// The key of a pending index write of `field`, in `chunk`, of write number
+/// `seq`.
+fn event_key(field: &str, chunk: u16, seq: i64) -> Vec<u8> {
+    [&name_key(field)[..], &chunk.to_be_bytes(), &seq.to_be_bytes()].concat()
+}
+
+/// `ids` cut by chunk of 65 536 ids, in the order of the chunks.
+pub(crate) fn by_chunk(ids: &RoaringBitmap) -> Vec<(u16, RoaringBitmap)> {
+    let (Some(min), Some(max)) = (ids.min(), ids.max()) else { return Vec::new() };
+    let mut out = Vec::new();
+    for chunk in (min >> 16)..=(max >> 16) {
+        let lo = chunk << 16;
+        let mut part = RoaringBitmap::new();
+        part.insert_range(lo..=lo | 0xFFFF);
+        part &= ids;
+        if !part.is_empty() {
+            out.push((chunk as u16, part));
+        }
+    }
+    out
+}
+
+/// `field`'s pending events, chunk by chunk, oldest first in each: for any
+/// one id, the order they were written in.
 pub(crate) fn read_events(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<Event>> {
     let mut out = Vec::new();
     for entry in t.index_pending_writes.prefix_iter(r, &name_key(field))? {
@@ -282,12 +305,23 @@ impl KvTxn<'_> {
         self.append_event(field, &event)
     }
 
+    /// Files `event` under one write number, one key per chunk of 65 536 ids
+    /// it names — `field · chunk · number`, as the postings are chunked — so
+    /// that a chunk's pending index writes are its own (doc "Mass writes in
+    /// the store"). Chunks name disjoint ids: replaying a field's keys in the
+    /// order of the table, chunk by chunk, is replaying them in the order of
+    /// the numbers for each id.
     fn append_event(&self, field: &str, event: &Event) -> Result<()> {
         let pending = self.eventful(field)?;
         let seq = self.next(super::super::State::NextWriteNumber)?;
-        let key = [&name_key(field)[..], &seq.to_be_bytes()].concat();
-        self.t.index_pending_writes.put(&mut self.txn.borrow_mut(), &key, &event.encode())?;
-        self.events.borrow_mut().insert(field.to_string(), pending + 1);
+        let mut filed = 0;
+        for (chunk, ids) in by_chunk(&event.ids) {
+            let key = event_key(field, chunk, seq);
+            let part = Event { ids, ..event.clone() };
+            self.t.index_pending_writes.put(&mut self.txn.borrow_mut(), &key, &part.encode())?;
+            filed += 1;
+        }
+        self.events.borrow_mut().insert(field.to_string(), pending + filed);
         Ok(())
     }
 

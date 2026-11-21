@@ -416,3 +416,24 @@ fn a_nothing_and_a_long_text_are_written_in_bulk() {
     assert_eq!(common::engines::both(&store, &eq(&huge), &[]).len(), 40);
     settled(&mut store, all[0]);
 }
+
+/// A pending index write is filed by chunk of 65 536 ids, as the postings are:
+/// one key per chunk a write touches, so that reading a chunk replays only
+/// what was written there.
+#[test]
+fn a_pending_index_write_is_filed_by_chunk() {
+    let (mut store, _dir) = open();
+    let all = write(&mut store, |w| {
+        (0..65_600).map(|_| w.create_metarecord(Vec::new()).unwrap().uuid).collect::<Vec<_>>()
+    });
+    // Over both chunks: two keys; over the first alone: one more.
+    write(&mut store, |w| w.mass_set("tag", vec![s("x")], &all).unwrap());
+    assert_eq!(store.pending_events("tag").unwrap(), 2);
+    write(&mut store, |w| w.mass_set("tag", vec![s("y")], &all[..10]).unwrap());
+    assert_eq!(store.pending_events("tag").unwrap(), 3);
+    // Replayed, chunk by chunk, as a rebuild has it; then folded in.
+    check(&store);
+    store.fold().unwrap();
+    assert_eq!(store.pending_events("tag").unwrap(), 0);
+    check(&store);
+}

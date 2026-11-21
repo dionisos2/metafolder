@@ -39,8 +39,11 @@ names. It is never set back. Only the order of the numbers matters.
 !! One pending index write per operation
 
 A field has a list of ''pending index writes'' (table `index_pending_writes`, keyed by
-field and write number). A write to many records appends one, naming the records — a
-bitmap of dense ids — and files nothing per record:
+field, chunk and write number). A write to many records appends one, naming the
+records — a bitmap of dense ids — and files nothing per record. It is filed ''by chunk''
+of 65 536 ids, as the postings are: one key per chunk it touches, under one write number,
+each holding the ids of its chunk. Chunks name disjoint ids, so replaying a field's keys
+chunk by chunk is replaying them, for each id, in the order they were written:
 
 |!Kind |!Content |!A value's holders become |
 |add |type · value |`∪ B` for the value; `∖ B` for `nothing` |

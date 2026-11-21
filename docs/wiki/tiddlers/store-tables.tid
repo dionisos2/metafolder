@@ -138,7 +138,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`index_trigram_pending` |F · chunk |bitmap |in a field kept by metarecord, the ids written since the last fold |
 |`index_histogram_rows` |F · bucket |rows (count) |the planner's estimate of a range ([[Query planner]]) |
 |`index_histogram_keys` |F · bucket |posting keys (count) |the cost of walking it |
-|`index_pending_writes` |F · write number |kind · content · bitmap |a write to many records' values not yet in the postings ([[Mass writes in the store]]) |
+|`index_pending_writes` |F · chunk · write number |kind · content · the ids of the chunk |a write to many records' values not yet in the postings ([[Mass writes in the store]]) |
 |`log_entries_by_metarecord` |uuid · op id |— |a metarecord's history; written at the idle fold, the entries past the pointer read directly ([[Log storage]]) |
 
 The tables that were kinds of one table — the sets, the trigrams — keep the byte
