@@ -124,7 +124,7 @@ fn last_status(notifier: &RecordingNotifier) -> (String, String, Value) {
 fn user_log() -> Value {
     json!({
         "head": 4,
-        "first": 1,
+        "root_op": 1,
         "operations": [op(1, 1), op(2, 2), op(3, 2), op(4, 3)],
     })
 }
@@ -133,7 +133,7 @@ fn user_log() -> Value {
 fn log_with_the_watcher_on_top() -> Value {
     json!({
         "head": 3,
-        "first": 1,
+        "root_op": 1,
         "operations": [op(1, 1), op(2, 2), watcher_op(3, 3)],
     })
 }
@@ -194,7 +194,7 @@ async fn test_an_undo_over_a_cell_changed_since_still_reverts() {
 
 #[tokio::test]
 async fn test_undo_with_nothing_to_undo_says_so() {
-    let log = json!({"head": 1, "first": 1, "operations": [op(1, 1)]});
+    let log = json!({"head": 1, "root_op": 1, "operations": [op(1, 1)]});
     let (url, stub) = spawn_stub(log).await;
     let (gui, daemon, ws, notifier) = setup(&url);
 
@@ -211,7 +211,7 @@ async fn test_undo_with_nothing_to_undo_says_so() {
 async fn test_redo_reverts_the_undo_across_the_watchers_work() {
     let log = json!({
         "head": 4,
-        "first": 1,
+        "root_op": 1,
         "operations": [op(1, 1), op(2, 2), revert_op(3, 3, 2), watcher_op(4, 4)],
     });
     let (url, stub) = spawn_stub(log).await;
@@ -271,7 +271,7 @@ async fn test_no_active_repo_is_an_error() {
 async fn test_undo_of_a_change_in_several_labels_names_them() {
     let log = json!({
         "head": 2,
-        "first": 1,
+        "root_op": 1,
         "operations": [op(1, 1), op(2, 3)],
         "log_contexts": [{"id": 3, "name": "mf tag add x", "parent": 2},
                    {"id": 2, "name": "tag run", "parent": null}],

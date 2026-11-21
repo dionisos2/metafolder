@@ -17,6 +17,23 @@ use crate::log::OpRow;
 use crate::rows;
 use crate::store::{LabelMeta, Log};
 
+/// The operation that created the repository's root — the log's first, written
+/// at init —, while the log holds it: what undo never takes back (doc "The
+/// undo selection"). `None` once a prune or the conversion to layout 11 took
+/// it away: the oldest operation left is then a change like another.
+fn root_op(store: &dyn crate::store::Store) -> Result<Option<i64>> {
+    let Some(first) = store.first_op()? else { return Ok(None) };
+    let Some(op) = store.op(first)? else { return Ok(None) };
+    if op.op_type != "create_metarecord" || op.reverts_op_id.is_some() {
+        return Ok(None);
+    }
+    let is_root = store.rows(op.entity_uuid)?.iter().any(|row| {
+        row.name == "mfr_path"
+            && matches!(&row.value, metafolder_core::metarecord::Value::TreeRef { parent: None, name } if name.as_bytes().is_empty())
+    });
+    Ok(is_root.then_some(first))
+}
+
 /// One log listing request.
 #[derive(Debug, Clone, Default)]
 pub struct LogQuery {
@@ -33,7 +50,8 @@ pub struct LogQuery {
 }
 
 /// The body of `GET /repos/:repo/log`.
-pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
+pub fn listing(store: &dyn crate::store::Store, q: &LogQuery) -> Result<serde_json::Value> {
+    let log: &dyn Log = store;
     let head = log.head()?;
     let ops = select_ops(log, q, head)?;
 
@@ -79,9 +97,9 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
 
     Ok(json!({
         "head": head,
-        // Where undo stops: the root metarecord written at init, or the oldest
-        // operation a prune left (doc "The undo selection").
-        "first": log.first_op()?,
+        // Where undo stops: the creation of the repository's root, while the
+        // log holds it (doc "The undo selection").
+        "root_op": root_op(store)?,
         "operations": op_values,
         "log_contexts": label_values,
         "total_entries": total_entries,

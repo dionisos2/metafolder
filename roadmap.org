@@ -19,11 +19,6 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   wiki's prose, where the wire, the CLI and the GUI say "log context" (API 30). The
   GUI's remembered work context (=.metafolder/gui/context=) keeps its ={"label", …}=
   form: renaming it is a persisted format change.
-- Undo after the conversion to layout 11: the conversion empties the log, and undo
-  stops at the log's first operation (doc "The undo selection"), so the first change
-  written after it cannot be undone by =mf log undo= — =mf log undo <context>= still
-  can. To decide: whether the first operation is protected only when it is the
-  root written at init.
 - The sync store (=sync.rs=, one LMDB per pair of repositories: =meta=, =links=,
   =by_a=, =by_b=, =snaps=) was left out of the review of the store's tables
   (user decision, 20 November 2026): independent, with a migration of its own. To

@@ -34,7 +34,7 @@ may write — a `GET`, a query or a path to resolve writes nothing (`may_write`,
 |`include_snapshots` |`false` |each operation with `snapshots_before` (the rows it took off; the log keeps no state a write left, so there is no `snapshots_after` since API 28) |
 
 ```
-{"head": 3, "first": 1,
+{"head": 3, "root_op": 1,
  "operations": [{"id": 1, "log_context_id": 1, "timestamp": 1700000000000, "origin": null,
                  "op_type": "create_metarecord", "entity_uuid": "…", "field_name": null,
                  "reverts_op_id": null}, …],
@@ -44,7 +44,7 @@ may write — a `GET`, a query or a path to resolve writes nothing (`may_write`,
 ```
 
 Operations run oldest first — the log is a sequence ([[The operation log]]). `head` is the
-newest operation, `first` the oldest still in the log — where undo stops ([[The undo selection]]). `origin` is `"watcher"` for what the daemon recorded for the filesystem,
+newest operation, `root_op` the creation of the repository's root while the log holds it (`null` once pruned) — where undo stops ([[The undo selection]]; `first` until API 31). `origin` is `"watcher"` for what the daemon recorded for the filesystem,
 `"trash"` for a trashing, `null` otherwise ([[Operations and their origin]]). `labels` lists
 the labels the returned operations are in ''and all their ancestors'', so a client can
 draw the nesting; a label whose own operations the `limit` cut carries `"partial": true`

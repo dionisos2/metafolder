@@ -188,17 +188,18 @@ fn window(ops: &[LogOp]) -> (Vec<&LogOp>, HashSet<i64>) {
 /// What undo offers, from a `GET /log` body.
 pub fn undo_from_log(log: &Json) -> Option<Selection> {
     let (ops, labels) = read_log(log);
-    undo(&ops, &labels, log["first"].as_i64())
+    undo(&ops, &labels, log["root_op"].as_i64())
 }
 
 /// The undo decision: the newest operation the user wrote that is not itself
-/// an undo or a redo and still stands. `first` is the log's first operation —
-/// the root metarecord written at init, or the oldest a prune left — where
-/// undo stops (`mf log revert` still reaches it).
-fn undo(ops: &[LogOp], labels: &Labels, first: Option<i64>) -> Option<Selection> {
+/// an undo or a redo and still stands. `root` is the creation of the
+/// repository's root while the log holds it (`root_op` in `GET /log`), where
+/// undo stops (`mf log revert` still reaches it); once it is pruned, the
+/// oldest operation left is undone as any other.
+fn undo(ops: &[LogOp], labels: &Labels, root: Option<i64>) -> Option<Selection> {
     let (newest_first, undone) = window(ops);
     for op in newest_first {
-        if Some(op.id) == first {
+        if Some(op.id) == root {
             return None;
         }
         // A revert is itself an undo or a redo: undoing it would be a redo,
@@ -331,16 +332,34 @@ mod tests {
     }
 
     #[test]
-    fn undo_stops_at_the_first_operation_of_the_log() {
+    fn undo_stops_at_the_creation_of_the_root() {
         let log = ops(&[(1, 1, "create_metarecord")]);
         assert_eq!(undo(&log, &Labels::new(), Some(1)), None);
+    }
+
+    /// Without the root's creation in the log — pruned, or emptied by the
+    /// conversion to layout 11 — the oldest operation is undone as any other.
+    #[test]
+    fn the_oldest_operation_left_is_undone_like_another() {
+        let body = |root: Json| {
+            json!({
+                "head": 7,
+                "root_op": root,
+                "operations": [
+                    {"id": 7, "log_context_id": 3, "op_type": "create_metarecord", "reverts_op_id": null},
+                ],
+                "log_contexts": [{"id": 3, "name": "mf metarecord add", "parent": null}],
+            })
+        };
+        assert_eq!(undo_from_log(&body(json!(null))).map(|s| s.op), Some(7));
+        assert_eq!(undo_from_log(&body(json!(7))), None, "the root's creation stays");
     }
 
     #[test]
     fn the_json_body_of_get_log_is_read_directly() {
         let log = json!({
             "head": 2,
-            "first": 0,
+            "root_op": 0,
             "operations": [
                 {"id": 1, "log_context_id": 1, "op_type": "set_field", "reverts_op_id": null},
                 {"id": 2, "log_context_id": 2, "op_type": "create_metarecord", "reverts_op_id": null,

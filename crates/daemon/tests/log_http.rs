@@ -99,10 +99,12 @@ async fn test_log_and_filters() {
     assert_eq!(ops.last().unwrap()["id"].as_i64().unwrap(), head);
     assert!(ops.windows(2).all(|w| w[0]["id"].as_i64() < w[1]["id"].as_i64()), "oldest first");
     assert!(ops[0].get("parent_id").is_none(), "the log is a sequence: no parent");
-    // The log's first operation, where undo stops (doc "The undo selection").
-    assert_eq!(log["first"], ops[0]["id"]);
+    // The creation of the repository's root, where undo stops (doc "The undo
+    // selection").
+    assert_eq!(log["root_op"], ops[0]["id"]);
+    assert!(log.get("first").is_none());
     let limited = get_log(&app, &repo, "?limit=1").await;
-    assert_eq!(limited["first"], ops[0]["id"], "whatever the window");
+    assert_eq!(limited["root_op"], ops[0]["id"], "whatever the window");
     assert_eq!(ops[2]["op_type"], "set_field");
     assert_eq!(ops[2]["field_name"], "a");
     assert!(!log["log_contexts"].as_array().unwrap().is_empty());
@@ -415,4 +417,23 @@ async fn test_log_since_truncates_oversized_delta() {
         request(&app, "GET", &format!("/repos/{repo}/log/since?op={h0}&limit=100"), None).await;
     assert_eq!(full["truncated"], json!(false));
     assert!(full["operations"].as_array().unwrap().len() >= 5);
+}
+
+/// Once a prune took the root's creation away, nothing stops undo: the oldest
+/// operation left is a change like another (doc "The undo selection").
+#[tokio::test]
+async fn test_the_root_op_goes_with_a_prune() {
+    let (app, repo, _root) = setup("root_op").await;
+    create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
+    let log = get_log(&app, &repo, "").await;
+    let kept = log["operations"][1]["id"].as_i64().unwrap();
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/log/prune"),
+        Some(json!({"target": {"id": kept}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(get_log(&app, &repo, "").await["root_op"], Value::Null);
 }
