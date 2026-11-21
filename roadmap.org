@@ -5,6 +5,78 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
+* Vocabulary after the store's table review
+The wiki and the code's comments, then its names, still speak the store of before
+the review (November 2026). Done group by group, one commit each: first fix the
+replacement of each term, then the wiki and the comments, then the identifiers.
+Inventory from a diff of =dddf9437= (before the review) against =main=; the old
+names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
+(=kvstore/mod.rs=) stay: they are the conversion's.
+
+** "label" → "log context" (first)
+- Wiki: about 400 mentions in 105 notes, many of them UI labels, not the log's.
+  Most hit: =log-endpoints=, =log-panel=, =log-context-summaries= (its summary
+  too), =reading-the-log=, =undo-and-redo=, =the-operation-log=,
+  =revert-endpoints=, =undo-and-redo-by-log-context=, =the-undo-selection=,
+  =operations-and-their-origin=, =event-log=. The note "Reverting a label" to
+  rename.
+- The CLI's help (the generated =mf-log*= notes say "label"): code, not wiki.
+- Code, the log's names: =LabelMeta=, =Log::labels=, =create_label=, =new_label=,
+  =label_ops=, =label_children=, =label_first_op=, =label_last_op=,
+  =label_op_count=, =label_op_ids=, =label_reverts=, =label_reverted_by=,
+  =note_label_reverts=, =version_before_label=, =entity_version_before_label=,
+  =undo_label=, =redo_label=, =revert_label=, =watcher_label=,
+  =set_watcher_label=, =drop_label=, =walk_labels=, =label_summaries=,
+  =label_marks=, =check_client_label=, =LabelsArgs=, =NewLabel=…
+- Files: =cli/src/label.rs=, =daemon/tests/labels_http.rs=,
+  =label_summaries_http.rs=, =kv_label_marks.rs=, =gui/tests/command_label.rs=;
+  in the GUI =panel-types/log/{main,tree}.js=, =work_context.rs=.
+- No exception: the GUI's remembered work context (=.metafolder/gui/context=,
+  ={"label", …}=) is renamed too, its conversion done *before* the rest (doc
+  "Persisted format changes").
+
+** Operation and entry: two words, two things
+Since the log has one form of entry, an entry is one operation on a list of
+targets and takes an operation id per target (doc "Log storage"): a *log
+operation* and a *log entry* are no longer the same. Every "op" / "operation" of
+the log (about 870 =ops= in the code, 11 notes) is to be read again and named one
+or the other.
+
+** Tables and keys renamed, still in the code
+| Old | Now | Where it stays |
+|-----+-----+----------------|
+| =sets= (=t.sets()=, =SetTables=, =SETS=) | =index_value_holders=, =index_parent_holders=, =index_descendants=… | =derived.rs=, =source.rs=, =massops.rs= |
+| =grams= (=t.grams()=, =GramTables=, =gram_*=) | =index_trigram_{texts,holders,state,pending}= | =derived.rs=, =source.rs=, =kv_text.rs= |
+| =hist= (=t.hist()=, =HistTables=) | =index_histogram_{rows,keys}= | =derived.rs=, =source.rs= |
+| =events= (=derived::events=, =Event=, =read_events=, "pending events") | =index_pending_writes= ("pending index write") | =events.rs=, =source.rs= |
+| =kids= | =index_parents= / =index_raw_holder= | =massops.rs=, =derived.rs=, =log_view.rs=, tests |
+| =mass= (=mass.rs=, =massops.rs=, =mass_op=) | =pending_writes= | kvstore, =bench/regression/storage.rs= |
+| =watcher_ops= / =user_ops= | =log_watcher_entries= / =log_user_entries= | =log.rs=, =config.rs=, =daemon_config.rs= |
+| =meta='s =next_op=, =next_id=, =next_label=, =head=, =layout=, =derived= | =next_log_op=, =next_metarecord_id=, =next_log_context=, =log_head=, =primary_version=, =derived_version= | comments |
+| =cells=, =field_cells=, =row_owner=, =by_field= | gone (a record keeps its fields) | comments in =log.rs=, =storage.rs=, =kv_layout.rs= |
+
+** The byte of a former kind at the head of the index keys
+When =sets= and =grams= were split into a table per kind, each key kept the byte
+that told the kinds apart (=UNIVERSE=, =ABSENT=, =PARENTS=, =REFERRERS=,
+=POSTINGS=, =SETS=, =GRAMS=, =GRAM_VALUES=…), and =index_histogram_keys= its =FF=
+(commit =6d3c00d1=, doc "Store tables"): the code reached a kind's table by that
+byte, so the split did not rewrite it. Nothing needs the byte any more — a byte per
+key — and the vocabulary that goes with it (the "part" =VALUE= / =NAME= of
+=source.rs=, "absent", "referrers", "postings"…) is to be gone through case by
+case. Dropping the byte changes the keys: a derived format, =DERIVED_VERSION= to
+bump (a reindex, no conversion).
+
+** Concepts gone or changed
+- "snapshot" / =snaps= for the log: now a target and its before (=log_targets=).
+  =snaps= stays in the sync store (=sync.rs=), left out of the review.
+- "stub" (about 580 in the code): to sort, the log's sense from the others.
+- "op type": now an effect and a file action, the origin a byte.
+- "version delta" (1 note, 3 places in the code) and "command key" (2 notes):
+  gone.
+- "tombs", "row numbers", "cleared fields": gone (a few comments).
+- "absent", "present", "multi", "partition": to check note by note —
+  =partition= is also a tag flag, which stays.
+
 * Storage: what is left after the dense id work
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:
@@ -14,11 +86,6 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   keeps of a deletion.
 - The =undo_redo_properties= suite takes about 3 minutes on four cores; the cost
   left is the writes of its cases, not their set-up.
-- After the store's table review (November 2026), "label" is still the word of
-  the code's names (=LabelMeta=, =Log::labels=, =create_label=…) and of much of the
-  wiki's prose, where the wire, the CLI and the GUI say "log context" (API 30). The
-  GUI's remembered work context (=.metafolder/gui/context=) keeps its ={"label", …}=
-  form: renaming it is a persisted format change.
 - The sync store (=sync.rs=, one LMDB per pair of repositories: =meta=, =links=,
   =by_a=, =by_b=, =snaps=) was left out of the review of the store's tables
   (user decision, 20 November 2026): independent, with a migration of its own. To
