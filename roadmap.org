@@ -9,19 +9,21 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:
 
-- =scripts/dev/bench.sh --quick= (16 November 2026) shows =query.subtree_range_text=
-  at about 6.3 ms against a recorded 0.56 ms. It is not the dense id work (the same
-  at 786dce1e, before it): it comes from the postings changes (derived 11 to 14),
-  not yet bisected. The history was not appended with that run.
 - Open questions, none decided (doc "Storage open questions"): replace and rename
   not being mass writes, the marks a deleted record loses, compressing what the log
   keeps of a deletion.
 - The =undo_redo_properties= suite takes about 3 minutes on four cores; the cost
   left is the writes of its cases, not their set-up.
-- The kinds of the =sets= table (universe, counts, absent, referrers, descendants,
-  postings, …) told apart by a first byte become tables of their own (user
-  decision, 18 November 2026), and the tables' names are to be gone over at the
-  same time.
+- After the store's table review (November 2026), "label" is still the word of
+  the code's names (=LabelMeta=, =Log::labels=, =create_label=…) and of much of the
+  wiki's prose, where the wire, the CLI and the GUI say "log context" (API 30). The
+  GUI's remembered work context (=.metafolder/gui/context=) keeps its ={"label", …}=
+  form: renaming it is a persisted format change.
+- Undo after the conversion to layout 11: the conversion empties the log, and undo
+  stops at the log's first operation (doc "The undo selection"), so the first change
+  written after it cannot be undone by =mf log undo= — =mf log undo <context>= still
+  can. To decide: whether the first operation is protected only when it is the
+  root written at init.
 - The sync store (=sync.rs=, one LMDB per pair of repositories: =meta=, =links=,
   =by_a=, =by_b=, =snaps=) was left out of the review of the store's tables
   (user decision, 20 November 2026): independent, with a migration of its own. To
