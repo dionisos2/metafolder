@@ -83,14 +83,16 @@ pub struct DaemonProxy {
 tokio::task_local! {
     /// Set around a request that is not the user's activity.
     static NOT_ACTIVITY: bool;
+    /// Set around a request a command's run sends: the run's key.
+    static RUN: Option<String>;
 }
 
-/// The command the shell is running, whose writes — this proxy's and the
-/// blocking client's — are in a log context of its own (doc "Log
-/// contexts"). The process's: one GUI, one shell.
-static COMMAND: Mutex<Option<RunningCommand>> = Mutex::new(None);
+/// The commands the shell is running, by key, each of whose writes — this
+/// proxy's and the blocking client's — are in a log context of its own (doc
+/// "Log contexts"); the newest last. The process's: one GUI, one shell.
+static RUNS: Mutex<Vec<RunningCommand>> = Mutex::new(Vec::new());
 
-/// The command under way: its key (the shell's handle on it) and name, how
+/// A command under way: its key (the shell's handle on it) and name, how
 /// many commands deep the shell is in it — one run from inside it is part of
 /// it —, and the context it created in each repository, at its first request
 /// there that may write.
@@ -110,15 +112,22 @@ pub(crate) enum LogContext {
     Create { key: String, repo: uuid::Uuid, body: Value, parent: Option<i64> },
 }
 
-/// The log context of a request to `path`: the running command's own in that
-/// repository — to create when the request may write and it has none yet —,
-/// else the work context in force there (doc "The GUI's work context").
+/// The log context of a request to `path`: the own context in that
+/// repository of the run it is sent for — the run of [`DaemonProxy::in_run`],
+/// else the newest command running — to create when the request may write
+/// and it has none yet; else the work context in force there (doc "The
+/// GUI's work context").
 pub(crate) fn log_context_for(method: &str, path: &str) -> LogContext {
     use metafolder_core::context;
     let work = crate::work_context::label_for(path);
     let Some(repo) = context::repo_of(path) else { return LogContext::Send(work) };
-    let guard = COMMAND.lock_recover();
-    let Some(running) = guard.as_ref() else { return LogContext::Send(work) };
+    let run = RUN.try_with(Clone::clone).ok().flatten();
+    let guard = RUNS.lock_recover();
+    let running = match &run {
+        Some(key) => guard.iter().find(|r| &r.key == key),
+        None => guard.last(),
+    };
+    let Some(running) = running else { return LogContext::Send(work) };
     if let Some(&own) = running.created.get(&repo) {
         return LogContext::Send(Some(own));
     }
@@ -137,8 +146,8 @@ pub(crate) fn log_context_for(method: &str, path: &str) -> LogContext {
 /// requests there name from now on — the first one created, should two
 /// requests have raced to create it.
 pub(crate) fn context_created(key: &str, repo: uuid::Uuid, id: i64) -> i64 {
-    let mut guard = COMMAND.lock_recover();
-    match guard.as_mut().filter(|r| r.key == key) {
+    let mut guard = RUNS.lock_recover();
+    match guard.iter_mut().find(|r| r.key == key) {
         Some(running) => *running.created.entry(repo).or_insert(id),
         None => id,
     }
@@ -190,39 +199,40 @@ impl DaemonProxy {
     }
 
     /// A command starts: its key, which [`Self::command_end`] takes back. One
-    /// started while another runs is part of it, and gets the outer key — the
-    /// approximation of a shell that knows which command runs, not which call
-    /// each command made: two commands running at once share a context.
-    pub fn command_begin(&self, name: &str) -> String {
-        let mut guard = COMMAND.lock_recover();
-        match guard.as_mut() {
-            Some(running) => {
-                running.depth += 1;
-                running.key.clone()
-            }
-            None => {
-                let key = uuid::Uuid::new_v4().as_simple().to_string();
-                *guard = Some(RunningCommand {
-                    key: key.clone(),
-                    name: name.into(),
-                    depth: 1,
-                    created: Default::default(),
-                });
-                key
+    /// started from inside a command still running names it as `parent`, is
+    /// part of it, and gets its key; any other is a run of its own — two
+    /// commands running at once have a context each (doc "Log contexts").
+    pub fn command_begin(&self, name: &str, parent: Option<&str>) -> String {
+        let mut guard = RUNS.lock_recover();
+        if let Some(running) = parent.and_then(|p| guard.iter_mut().find(|r| r.key == p)) {
+            running.depth += 1;
+            return running.key.clone();
+        }
+        let key = uuid::Uuid::new_v4().as_simple().to_string();
+        guard.push(RunningCommand {
+            key: key.clone(),
+            name: name.into(),
+            depth: 1,
+            created: Default::default(),
+        });
+        key
+    }
+
+    /// The command `key` ended; a key that is not running changes nothing.
+    pub fn command_end(&self, key: &str) {
+        let mut guard = RUNS.lock_recover();
+        if let Some(at) = guard.iter().position(|r| r.key == key) {
+            guard[at].depth -= 1;
+            if guard[at].depth == 0 {
+                guard.remove(at);
             }
         }
     }
 
-    /// The command `key` ended; a key that is not the current one changes
-    /// nothing.
-    pub fn command_end(&self, key: &str) {
-        let mut guard = COMMAND.lock_recover();
-        if let Some(running) = guard.as_mut().filter(|r| r.key == key) {
-            running.depth -= 1;
-            if running.depth == 0 {
-                *guard = None;
-            }
-        }
+    /// Runs `call` so that the requests it makes are the run `run`'s: in its
+    /// log context ([`log_context_for`]).
+    pub async fn in_run<F: std::future::Future>(&self, run: Option<String>, call: F) -> F::Output {
+        RUN.scope(run, call).await
     }
 
     /// The daemon token, read from the token file and cached. `None` when the

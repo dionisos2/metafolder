@@ -357,6 +357,27 @@ fn undone_state(log: &dyn Log, label: i64, memo: &mut HashMap<i64, Undone>) -> R
     Ok(state)
 }
 
+/// Whether anything is written in `label` or under it: an empty context (a
+/// command that wrote nothing, an answer left empty) is no unit of work, and
+/// is not listed — it stays until a reindex (doc "Log contexts"). Stops at the
+/// first operation found, the label's own almost always.
+fn holds_anything(log: &dyn Log, label: i64) -> Result<bool> {
+    let mut todo = vec![label];
+    let mut seen = 0;
+    while let Some(id) = todo.pop() {
+        if log.label_first_op(id)?.is_some() {
+            return Ok(true);
+        }
+        seen += 1;
+        if seen > 100_000 {
+            // A corrupted store's cycle: listed rather than looped over.
+            return Ok(true);
+        }
+        todo.extend(log.label_children(id)?);
+    }
+    Ok(false)
+}
+
 /// The body of `GET /repos/:repo/log/contexts`: labels, newest first, each with
 /// what the log knows of it without reading an operation — how many it holds,
 /// its first and its last, who wrote it, what it reverts and is reverted by.
@@ -370,9 +391,16 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
             let mut kids = log.label_children(parent)?;
             kids.reverse();
             kids.retain(|id| q.before.is_none_or(|b| *id < b));
-            more = kids.len() > limit;
-            kids.truncate(limit);
-            ids = kids;
+            for id in kids {
+                if !holds_anything(log, id)? {
+                    continue;
+                }
+                if ids.len() == limit {
+                    more = true;
+                    break;
+                }
+                ids.push(id);
+            }
         }
         Under::Roots => {
             const CHUNK: usize = 256;
@@ -385,7 +413,9 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
                 before = chunk.last().copied();
                 let metas = log.labels(&chunk)?;
                 for id in &chunk {
-                    if metas.get(id).is_some_and(|m| m.parent.is_none()) {
+                    if metas.get(id).is_some_and(|m| m.parent.is_none())
+                        && holds_anything(log, *id)?
+                    {
                         if ids.len() == limit {
                             more = true;
                             break 'scan;

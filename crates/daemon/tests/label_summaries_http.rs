@@ -242,3 +242,43 @@ async fn the_label_detail_can_give_the_newest_operations_without_their_snapshots
     assert_eq!(got, vec![ids[9], ids[8], ids[7]]);
     assert!(window["operations"][0].get("snapshots_before").is_none(), "{window}");
 }
+
+/// A context nothing is in — a command that wrote nothing, a script's
+/// answer left empty — is no unit of work: the summaries leave it out, at the
+/// top level and inside a context, until something is written in it or under
+/// it (doc "Log context summaries").
+#[tokio::test]
+async fn an_empty_context_is_not_listed() {
+    let r = setup("empty").await;
+    let ids = |listed: &Value| -> Vec<i64> {
+        listed["log_contexts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["id"].as_i64().unwrap())
+            .collect()
+    };
+    let run = r.call("POST", "/contexts", Some(json!({"name": "mf reconcile"}))).await["id"]
+        .as_i64()
+        .unwrap();
+    assert!(!ids(&r.labels("?limit=50").await).contains(&run), "an empty root is left out");
+
+    let answer = r.call("POST", "/contexts", Some(json!({"name": "answer", "parent": run}))).await
+        ["id"]
+        .as_i64()
+        .unwrap();
+    assert!(!ids(&r.labels("?limit=50").await).contains(&run), "a child that is empty too");
+    assert_eq!(ids(&r.labels(&format!("?parent={run}")).await), Vec::<i64>::new());
+
+    // Written in, the answer is listed, and so is the run that holds it.
+    let write = Request::builder()
+        .method("POST")
+        .uri(format!("/repos/{}/metarecords", r.repo))
+        .header("x-metafolder-log-context", answer.to_string())
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"fields": []}).to_string()))
+        .unwrap();
+    assert_eq!(r.app.clone().oneshot(write).await.unwrap().status(), StatusCode::OK);
+    assert!(ids(&r.labels("?limit=50").await).contains(&run));
+    assert_eq!(ids(&r.labels(&format!("?parent={run}")).await), [answer]);
+}

@@ -731,8 +731,8 @@ pub fn append_message(app: AppHandle, ws_id: String, text: String) -> Result<(),
 /// it writes until [`command_end`] is one label, named after it. Answers the
 /// key to end it with.
 #[tauri::command]
-pub fn command_begin(app: AppHandle<'_>, name: String) -> String {
-    app.daemon.command_begin(&name)
+pub fn command_begin(app: AppHandle<'_>, name: String, parent: Option<String>) -> String {
+    app.daemon.command_begin(&name, parent.as_deref())
 }
 
 /// The command `key` ended.
@@ -757,6 +757,9 @@ pub async fn daemon_request(
     // `activity`: false for a poll, which is not the user's activity (doc
     // "Folding in idle time"); absent or true, the call counts.
     activity: Option<bool>,
+    // `run`: the command run the call is made for, whose log context its
+    // writes are in (doc "Log contexts"); absent, the newest command's.
+    run: Option<String>,
 ) -> Result<ProxyResponse, String> {
     let call = app.daemon.request_with_context(
         &method,
@@ -765,6 +768,7 @@ pub async fn daemon_request(
         context.as_deref(),
         abort_id.as_deref(),
     );
+    let call = app.daemon.in_run(run, call);
     let result =
         if activity == Some(false) { app.daemon.not_activity(call).await } else { call.await };
     if result.as_ref().is_err_and(|e| e != "aborted") {

@@ -13,7 +13,10 @@ the keys of the log say alone.
 !! What a summary holds
 
 `GET /repos/:repo/log/contexts` ([[GET /repos/:repo/log/contexts]]) lists labels, newest
-first, each with:
+first — but not a context nothing is in, nor under it: a command that wrote nothing
+(`mf reconcile` on an empty folder) or an answer left empty is no unit of work, and stays
+in the store only until a reindex ([[Log contexts]]); whether one is empty is read off
+its first operation, then its children's, stopping at the first found —, each with:
 
 * its own `operations`, counted off `log_entries_by_context` — one key per entry, which holds its number of targets — and its `first_op` and `last_op`;
 * when it was last written in (`updated`), its `origin` and whether it is the `watcher`'s, read off its first and last operations;

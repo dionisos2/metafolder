@@ -594,7 +594,8 @@ export async function dispatch(
   let txn = context.txn;
   if (txn !== undefined && ("shell" in parsed || !isUserCommand(parsed.name))) {
     await flushTransaction(txn);
-    context = { ws: context.ws, slot: context.slot };
+    // Out of the transaction, still in the caller's run: in its log context.
+    context = { ws: context.ws, slot: context.slot, run: context.run };
     txn = undefined;
   }
   // A macro records what the keyboard runs (doc "Macros"), as it ran — and
@@ -684,9 +685,14 @@ export async function dispatch(
     await invoke("append_message", { wsId: ws, text: `> ${echo}` });
   }
 
-  // What the command writes is one label in the log, named after it (doc
-  // "Labels and contexts"): the proxy tells the daemon while it runs.
-  const commandKey = await beginCommand([name, ...args].join(" ").trim());
+  // What the command writes is in one log context, named after it (doc "Log
+  // contexts"): its run, or its caller's when run from inside another. The
+  // calls its API makes carry the run.
+  const commandKey = await beginCommand(
+    [name, ...args].join(" ").trim(),
+    context.run ?? null,
+  );
+  if (commandKey !== null) context = { ...context, run: commandKey };
   // A user command not invoked by another, a panel's command and a generic
   // one run in a transaction of their own.
   let own: number | null = null;
@@ -729,9 +735,12 @@ export async function dispatch(
 
 /** Tells the daemon proxy a command starts; its key, or null when the proxy
  *  cannot be told (a test without the Rust side). */
-async function beginCommand(name: string): Promise<string | null> {
+async function beginCommand(
+  name: string,
+  parent: string | null,
+): Promise<string | null> {
   try {
-    return await invoke<string>("command_begin", { name });
+    return await invoke<string>("command_begin", { name, parent });
   } catch {
     return null;
   }

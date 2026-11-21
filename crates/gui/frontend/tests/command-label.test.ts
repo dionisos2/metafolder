@@ -1,6 +1,7 @@
-// A command is a label (doc "Log contexts"): the shell tells the
-// daemon proxy when one starts and ends, so what it writes in between is one
-// label in the log, named after it.
+// A command run has a log context (doc "Log contexts"): the shell tells the
+// daemon proxy when one starts and ends, so what it writes in between is in
+// one context, named after it — a command run from inside another, in the
+// caller's.
 
 import { describe, expect, test, vi } from 'vitest';
 import { dispatch } from '../src/lib/commands';
@@ -23,8 +24,21 @@ describe('a dispatched command', () => {
     expect(await dispatch('message:clear', context)).toEqual({ ok: true });
     const cmds = tauri.map((c) => c.cmd).filter((c) => c !== 'append_message');
     expect(cmds).toEqual(['command_begin', 'clear_messages', 'command_end']);
-    expect(tauri.find((c) => c.cmd === 'command_begin')?.args).toEqual({ name: 'message:clear' });
+    expect(tauri.find((c) => c.cmd === 'command_begin')?.args).toEqual({
+      name: 'message:clear',
+      parent: null,
+    });
     expect(tauri.find((c) => c.cmd === 'command_end')?.args).toEqual({ key: 'key-1' });
+  });
+
+  test('run from inside another names it as its parent', async () => {
+    tauri.length = 0;
+    const context: ExecContext = { ws: 'ws-2', slot: 'right', run: 'key-0' };
+    expect(await dispatch('message:clear', context)).toEqual({ ok: true });
+    expect(tauri.find((c) => c.cmd === 'command_begin')?.args).toEqual({
+      name: 'message:clear',
+      parent: 'key-0',
+    });
   });
 
   test('ends even when it fails', async () => {

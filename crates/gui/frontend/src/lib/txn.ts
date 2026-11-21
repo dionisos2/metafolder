@@ -48,14 +48,19 @@ const CARRIED_CALLS = new Set([
 
 /**
  * `invoke` within the transaction `txn()` returns — read at each call, so an
- * API outside any (`undefined`) passes every call as is.
+ * API outside any (`undefined`) passes every call as is — and for the command
+ * run `run()` returns: a daemon call carries it, so its writes are in the
+ * run's log context (doc "Log contexts").
  */
 export function transactional(
   invoke: Invoke,
   txn: () => number | undefined,
   flush: (txn: number) => Promise<void>,
+  run: () => string | undefined = () => undefined,
 ): Invoke {
-  return async (command, args) => {
+  return async (command, given) => {
+    const key = command === 'daemon_request' ? run() : undefined;
+    const args = key === undefined ? given : { ...given, run: key };
     const id = txn();
     if (id === undefined || CARRIED_CALLS.has(command)) return invoke(command, args);
     if (VARIABLE_CALLS.has(command)) return invoke(command, { ...args, txn: id });

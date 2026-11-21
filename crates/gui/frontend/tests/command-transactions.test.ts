@@ -51,6 +51,21 @@ function recording() {
 }
 
 describe('transactional invoke', () => {
+  test("a daemon call carries the run it is made for, in a transaction or not (doc \"Log contexts\")", async () => {
+    const { calls, invoke } = recording();
+    const flush = vi.fn(async () => {});
+    await transactional(invoke, () => 7, flush, () => 'run-1')('daemon_request', { path: '/x' });
+    await transactional(invoke, () => undefined, flush, () => 'run-2')('daemon_request', { path: '/y' });
+    await transactional(invoke, () => undefined, flush)('daemon_request', { path: '/z' });
+    await transactional(invoke, () => 7, flush, () => 'run-1')('post_status', { text: 'a' });
+    expect(calls.map((c) => [c.command, c.args?.run])).toEqual([
+      ['daemon_request', 'run-1'],
+      ['daemon_request', 'run-2'],
+      ['daemon_request', undefined],
+      ['post_status', undefined],
+    ]);
+  });
+
   test('the variable calls carry the transaction, without flushing', async () => {
     const { calls, invoke } = recording();
     const flush = vi.fn(async () => {});
@@ -308,6 +323,11 @@ describe('dispatch', () => {
     afterEach(() => {
       setPanelDispatch(null);
       store.commands = [];
+    });
+
+    test('invoked by a user command, it stays in the caller\'s run (doc "Log contexts")', async () => {
+      expect(await dispatch('p:x', { ...context, txn: 3, run: 'run-1' })).toEqual({ ok: true });
+      expect(ran.map((c) => c.run)).toEqual(['run-1']);
     });
 
     test('runs in a transaction of its own, ended before the command settles', async () => {

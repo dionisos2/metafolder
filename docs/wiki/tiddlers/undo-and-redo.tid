@@ -46,7 +46,8 @@ at the same time — a script running while you edit by hand, two windows —, t
 operation may be the other one's: undo then offers ''its'' labels, not the ones of what you
 just did. The candidates' names say whose they are before anything is undone; name the
 label you mean. In the GUI, two commands running at once — a long reconcile and a field
-edited meanwhile — even share a label ([[Log contexts]]).
+edited meanwhile — each write in a context of their own ([[Log contexts]]): a request
+that names no run (a builtin's, a click's) goes in the newest command's.
 
 !! Files
 

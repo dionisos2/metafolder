@@ -8,7 +8,10 @@ export type SlotId = 'left' | 'right';
  *  ones unless the command moved to another for a block of its own
  *  (`mf.withContext`) — and the transaction it runs in, if any (doc "Command
  *  transactions"). Lexical: a command's, never a global. */
-export type ExecContext = { ws: string | null; slot: SlotId; txn?: number };
+/** Where a command runs: its workspace and slot, its transaction (doc
+ *  "Command transactions") and its run, whose log context its daemon writes
+ *  are in (doc "Log contexts"). */
+export type ExecContext = { ws: string | null; slot: SlotId; txn?: number; run?: string };
 
 export interface WorkspaceInfo {
   id: string;

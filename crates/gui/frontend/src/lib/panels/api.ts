@@ -176,7 +176,12 @@ export function createUserCommandApi(
   // transactions"): its variable calls carry it, and what it does not carry
   // is preceded by a flush.
   const flush = (txn: number) => deps.flush?.(txn) ?? Promise.resolve();
-  const invoke = transactional(deps.invoke, () => ctx.context().txn, flush);
+  const invoke = transactional(
+    deps.invoke,
+    () => ctx.context().txn,
+    flush,
+    () => ctx.context().run,
+  );
   // Commands invoked from here run where this API acts.
   const { api } = createPanelApi(
     {
@@ -974,7 +979,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
   return {
     api,
-    forRun: (run) => build(transactional(deps.invoke, () => run.txn, flush), () => run),
+    forRun: (run) =>
+      build(
+        transactional(deps.invoke, () => run.txn, flush, () => run.run),
+        () => run,
+      ),
     pushVarChanged(key, value) {
       for (const l of varListeners.get(key) ?? []) l(value);
       for (const l of varListeners.get('*') ?? []) l(value, key);
