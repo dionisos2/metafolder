@@ -198,13 +198,19 @@ impl<'a> Dec<'a> {
 /// `nothing` group holds no count: it is the one row). The rows come back
 /// grouped: `order` says, for each row written, where it is in the rows read.
 pub(crate) fn put_rows(out: &mut Enc, rows: &[FieldRow]) -> Vec<usize> {
-    // The groups in the order their first row comes.
+    // The groups in the order their first row comes, found through a map: a
+    // search of the list made each encoding cost rows × fields, and a write to
+    // a record of thousands of fields took seconds.
     let mut groups: Vec<((&str, u8), Vec<usize>)> = Vec::new();
+    let mut index: std::collections::HashMap<(&str, u8), usize> = Default::default();
     for (i, row) in rows.iter().enumerate() {
         let group = (row.name.as_str(), type_code(&row.value));
-        match groups.iter_mut().find(|(g, _)| *g == group) {
-            Some((_, members)) => members.push(i),
-            None => groups.push((group, vec![i])),
+        match index.entry(group) {
+            std::collections::hash_map::Entry::Occupied(at) => groups[*at.get()].1.push(i),
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(groups.len());
+                groups.push((group, vec![i]));
+            }
         }
     }
     let mut order = vec![0; rows.len()];
