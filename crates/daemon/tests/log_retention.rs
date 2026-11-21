@@ -120,10 +120,10 @@ fn test_a_repository_writes_with_its_configured_retention() {
     let root = TempDir::new("log_retention_repo");
     common::seed_config(&root);
     let mut opened = repo::init_repository(&root, None, None, false).unwrap();
-    opened.config.log_retention_user_ops = Some(4);
+    opened.config.log_retention_user_entries = Some(4);
     let settings = DaemonSettings {
-        log_retention_watcher_ops: 900,
-        log_retention_user_ops: 900,
+        log_retention_watcher_entries: 900,
+        log_retention_user_entries: 900,
         ..common::settings()
     };
     let state = RepoState::from_opened_with(opened, &settings);

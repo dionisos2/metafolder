@@ -75,7 +75,7 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     // panel fetches only the most recent `limit` operations) can still report
     // how much log there is. Two counts off the primary keys — not the size of
     // the returned window, and unaffected by `limit`.
-    let (total_operations, total_labels) = log.counts()?;
+    let (total_entries, total_labels) = log.counts()?;
 
     Ok(json!({
         "head": head,
@@ -84,7 +84,7 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
         "first": log.first_op()?,
         "operations": op_values,
         "labels": label_values,
-        "total_operations": total_operations,
+        "total_entries": total_entries,
         "total_labels": total_labels,
     }))
 }

@@ -145,13 +145,14 @@ async fn test_log_reports_repository_wide_totals() {
     let full = get_log(&app, &repo, "").await;
     let operations = full["operations"].as_array().unwrap().len() as i64;
     let revisions = full["labels"].as_array().unwrap().len() as i64;
-    assert_eq!(full["total_operations"], operations);
+    // The log is counted by entry (doc "Log storage"): here one per write.
+    assert_eq!(full["total_entries"], operations);
     assert_eq!(full["total_labels"], revisions);
 
     // A bounded window still reports the whole log's size.
     let limited = get_log(&app, &repo, "?limit=2").await;
     assert_eq!(limited["operations"].as_array().unwrap().len(), 2);
-    assert_eq!(limited["total_operations"], operations);
+    assert_eq!(limited["total_entries"], operations);
     assert_eq!(limited["total_labels"], revisions);
 
     std::fs::remove_dir_all(root).unwrap();

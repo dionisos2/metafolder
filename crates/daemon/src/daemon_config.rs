@@ -36,12 +36,20 @@ pub struct DaemonSettings {
     /// inotify and says so. Pointing it at a path where nothing listens is how
     /// one stays on inotify.
     pub watchd_socket: PathBuf,
-    /// Operations of the watcher the event log keeps; the oldest fall off as
+    /// Entries of the watcher the event log keeps; the oldest fall off as
     /// new ones arrive. `0` keeps everything. A repository may override it in
-    /// its own `config.json`.
-    pub log_retention_watcher_ops: u64,
-    /// Operations of every other origin the event log keeps (`0`: all).
-    pub log_retention_user_ops: u64,
+    /// its own `config.json` (doc "Automatic retention").
+    pub log_retention_watcher_entries: u64,
+    /// Entries of every other origin the event log keeps (`0`: all).
+    pub log_retention_user_entries: u64,
+    /// The retention by operations before November 2026, renamed: read so an
+    /// edited config still loads, ignored with a warning naming the new key
+    /// ([`DaemonSettings::obsolete`]).
+    #[serde(default)]
+    pub log_retention_watcher_ops: Option<toml::Value>,
+    /// See `log_retention_watcher_ops`.
+    #[serde(default)]
+    pub log_retention_user_ops: Option<toml::Value>,
     /// The retention of writes before October 2026, gone with them: read
     /// so an edited config still loads, ignored with a warning
     /// ([`DaemonSettings::obsolete`]).
@@ -91,8 +99,8 @@ impl DaemonSettings {
     /// The log-retention policy these settings describe.
     pub fn log_retention(&self) -> crate::log::Retention {
         crate::log::Retention {
-            watcher_ops: self.log_retention_watcher_ops,
-            user_ops: self.log_retention_user_ops,
+            watcher_ops: self.log_retention_watcher_entries,
+            user_ops: self.log_retention_user_entries,
         }
     }
 
@@ -107,8 +115,27 @@ impl DaemonSettings {
         ] {
             if set {
                 out.push(format!(
-                    "the setting '{key}' is ignored: the log is kept by operations per origin \
-                     now (log-retention-watcher-ops, log-retention-user-ops)"
+                    "the setting '{key}' is ignored: the log is kept by entries per origin \
+                     now (log-retention-watcher-entries, log-retention-user-entries)"
+                ));
+            }
+        }
+        for (key, now, set) in [
+            (
+                "log-retention-watcher-ops",
+                "log-retention-watcher-entries",
+                self.log_retention_watcher_ops.is_some(),
+            ),
+            (
+                "log-retention-user-ops",
+                "log-retention-user-entries",
+                self.log_retention_user_ops.is_some(),
+            ),
+        ] {
+            if set {
+                out.push(format!(
+                    "the setting '{key}' is ignored: renamed '{now}', the log being counted by \
+                     entry (doc \"Automatic retention\")"
                 ));
             }
         }
@@ -432,7 +459,20 @@ mod tests {
         assert_eq!(s.log_retention(), shipped_settings().log_retention());
         let warnings = s.obsolete();
         assert_eq!(warnings.len(), 2, "{warnings:?}");
-        assert!(warnings[0].contains("log-retention-watcher-ops"), "{warnings:?}");
+        assert!(warnings[0].contains("log-retention-watcher-entries"), "{warnings:?}");
+    }
+
+    #[test]
+    fn test_the_retention_by_operations_is_read_and_ignored() {
+        // Renamed in November 2026, the log being counted by entry (doc
+        // "Automatic retention"): a config still naming them loads, the shipped
+        // entries in force, with a warning naming the new key.
+        let src = shipped_with("log-retention-watcher-ops", "7");
+        let s = read_config(&write_config(&src)).unwrap().settings;
+        assert_eq!(s.log_retention(), shipped_settings().log_retention());
+        let warnings = s.obsolete();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("log-retention-watcher-entries"), "{warnings:?}");
     }
 
     #[test]
@@ -449,9 +489,12 @@ mod tests {
     fn test_read_config_parses_the_settings_table() {
         let src = shipped_with("watch-quiet-period-ms", "1500");
         let src = src.replace("orphan-cascade-limit = 10000", "orphan-cascade-limit = 7");
+        let src = src.replace(
+            "log-retention-watcher-entries = 50000",
+            "log-retention-watcher-entries = 500",
+        );
         let src =
-            src.replace("log-retention-watcher-ops = 50000", "log-retention-watcher-ops = 500");
-        let src = src.replace("log-retention-user-ops = 1000000", "log-retention-user-ops = 0");
+            src.replace("log-retention-user-entries = 1000000", "log-retention-user-entries = 0");
         let path = write_config(&src);
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings.watch_quiet_period_ms, 1500);

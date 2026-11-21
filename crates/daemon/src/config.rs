@@ -51,18 +51,18 @@ pub struct RepoConfig {
     pub schema: Option<PathBuf>,
     /// Creation timestamp (Unix seconds).
     pub created_at: u64,
-    /// Operations of the watcher this repository's event log keeps,
-    /// overriding the daemon's `[settings] log-retention-watcher-ops`. `0`
+    /// Entries of the watcher this repository's event log keeps,
+    /// overriding the daemon's `[settings] log-retention-watcher-entries`. `0`
     /// keeps them all; absent defers to the daemon (doc "Automatic
     /// retention"). Per repository because the volumes are not comparable —
     /// a watched media tree writes operations all day, a hand-curated one
     /// barely any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub log_retention_watcher_ops: Option<u64>,
+    #[serde(default, alias = "log_retention_watcher_ops", skip_serializing_if = "Option::is_none")]
+    pub log_retention_watcher_entries: Option<u64>,
     /// Operations of every other origin kept, overriding the daemon's
-    /// `[settings] log-retention-user-ops`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub log_retention_user_ops: Option<u64>,
+    /// `[settings] log-retention-user-entries`.
+    #[serde(default, alias = "log_retention_user_ops", skip_serializing_if = "Option::is_none")]
+    pub log_retention_user_entries: Option<u64>,
     /// The most metarecords a write to many of them changes one record at a
     /// time, overriding the daemon's `[settings] mass-write-threshold`
     /// (doc "Mass writes in the store").
@@ -102,8 +102,8 @@ impl RepoConfig {
             root_relative: None,
             schema: None,
             created_at,
-            log_retention_watcher_ops: None,
-            log_retention_user_ops: None,
+            log_retention_watcher_entries: None,
+            log_retention_user_entries: None,
             mass_write_threshold: None,
             system: false,
             storage: Storage::Kv,
@@ -169,8 +169,8 @@ impl RepoConfig {
     /// the daemon's settings otherwise.
     pub fn log_retention(&self, daemon: crate::log::Retention) -> crate::log::Retention {
         crate::log::Retention {
-            watcher_ops: self.log_retention_watcher_ops.unwrap_or(daemon.watcher_ops),
-            user_ops: self.log_retention_user_ops.unwrap_or(daemon.user_ops),
+            watcher_ops: self.log_retention_watcher_entries.unwrap_or(daemon.watcher_ops),
+            user_ops: self.log_retention_user_entries.unwrap_or(daemon.user_ops),
         }
     }
 
@@ -270,11 +270,28 @@ mod tests {
         let mut config = RepoConfig::new(PathBuf::from("/r"), "r".into());
         assert_eq!(config.log_retention(daemon), daemon, "no override: the daemon decides");
 
-        config.log_retention_watcher_ops = Some(20);
+        config.log_retention_watcher_entries = Some(20);
         assert_eq!(
             config.log_retention(daemon),
             crate::log::Retention { watcher_ops: 20, user_ops: 900 }
         );
+    }
+
+    #[test]
+    fn test_the_retention_by_operations_reads_as_by_entries() {
+        // Renamed in November 2026 (doc "Automatic retention"): an older
+        // config.json reads under the new names, and is written with them.
+        let dir = temp_dir();
+        let json = r#"{"repo_uuid":"00000000-0000-4000-8000-000000000001","name":"old",
+                       "version":1,"root":"/r","created_at":0,
+                       "log_retention_watcher_ops":12,"log_retention_user_ops":34}"#;
+        std::fs::write(dir.join("config.json"), json).unwrap();
+        let config = RepoConfig::read(&dir).unwrap();
+        assert_eq!(config.log_retention_watcher_entries, Some(12));
+        assert_eq!(config.log_retention_user_entries, Some(34));
+        let written = serde_json::to_string(&config).unwrap();
+        assert!(written.contains("log_retention_watcher_entries"), "{written}");
+        assert!(!written.contains("log_retention_watcher_ops"), "{written}");
     }
 
     #[test]
@@ -286,8 +303,8 @@ mod tests {
                        "version":1,"root":"/r","created_at":0}"#;
         std::fs::write(dir.join("config.json"), json).unwrap();
         let config = RepoConfig::read(&dir).unwrap();
-        assert_eq!(config.log_retention_watcher_ops, None);
-        assert_eq!(config.log_retention_user_ops, None);
+        assert_eq!(config.log_retention_watcher_entries, None);
+        assert_eq!(config.log_retention_user_entries, None);
         assert_eq!(config.mass_write_threshold, None);
         assert_eq!(config.mass_write_threshold(20), 20);
         std::fs::remove_dir_all(&dir).unwrap();

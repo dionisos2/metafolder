@@ -11,8 +11,8 @@ fn test_repo_check_reports_damage_and_reindex_repairs_it() {
     create_metarecord(&repo, &["note:string=kept"]);
     assert_ok(&mf(&["-u", &repo, "repo", "unload"]));
     {
-        // Every set chunk dropped (the universe, presence, parents), as the
-        // daemon's own test of `check` does (kv_derived.rs).
+        // Every posting dropped, as the daemon's own test of `check` does
+        // (kv_derived.rs).
         let kv = root.join(".metafolder/internal/kv");
         // SAFETY: the repository is unloaded (see above), so nothing else
         // maps the file; no WRITEMAP.
@@ -21,8 +21,10 @@ fn test_repo_check_reports_damage_and_reindex_repairs_it() {
         let r = env.read_txn().unwrap();
         let sets = env
             .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
-                let sets =
-                    dbo.open_database::<heed::types::Bytes, heed::types::Bytes>(r, Some("sets"));
+                let sets = dbo.open_database::<heed::types::Bytes, heed::types::Bytes>(
+                    r,
+                    Some("index_value_holders"),
+                );
                 Ok(heed::CommitOrAbort::<_, ()>::Commit(sets?.unwrap()))
             })
             .unwrap()

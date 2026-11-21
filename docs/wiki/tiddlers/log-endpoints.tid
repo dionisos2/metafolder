@@ -40,7 +40,7 @@ with the same key go in it; a read opens nothing. A key that is not 32 hex digit
                  "reverts_op_id": null}, …],
  "labels": [{"id": 1, "name": "POST /repos/init", "description": null, "parent": null,
              "created": 1700000000000}, …],
- "total_operations": 3, "total_labels": 2}
+ "total_entries": 3, "total_labels": 2}
 ```
 
 Operations run oldest first — the log is a sequence ([[The operation log]]). `head` is the

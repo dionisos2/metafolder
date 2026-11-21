@@ -87,11 +87,14 @@ mass-write-threshold = 20
 # settles on a plateau instead of growing (use `mf log prune` for an actual
 # VACUUM). Kept apart from your own operations below, so the watcher's churn
 # never pushes your history out. 0 = unlimited. Default: 50000.
-log-retention-watcher-ops = 50000
+log-retention-watcher-entries = 50000
 
-# How many of every other operation — your own changes, from the command line,
+# How many of every other entry — your own changes, from the command line,
 # the GUI or a script — the event log keeps. 0 = unlimited. Default: 1000000.
-log-retention-user-ops = 1000000
+# (An entry is one operation on one or many metarecords: a command's writes
+# that follow each other are one; before November 2026 these two settings were
+# log-retention-*-ops and counted operations.)
+log-retention-user-entries = 1000000
 
 # How long an operation must take, in milliseconds, before the daemon writes it
 # to the repository's slow-operation log (.metafolder/internal/slow/, read with
