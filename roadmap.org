@@ -35,9 +35,7 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   turns a name that is not UTF-8 into its displayed form (=%XX=). The wire would
   carry such a string as paths are carried, ={text, bytes}= (doc "Tree
   names").
-- Seen 21 November 2026, not looked into: =kv_cost= takes 915 s in a row (40 to
-  170 s a test) where doc "Performance testing" says seconds — the set-up of its
-  16 000 to 64 000 files, or more. And =query.subtree_range_text= measured 4 to
+- Seen 21 November 2026, not looked into: =query.subtree_range_text= measured 4 to
   9 ms at =main= against 0.7 to 1 ms at =2c8bb168= (9 November): the bench at
   size S is too noisy to bisect it (two commits with the same daemon measured 1.03
   and 2.67 ms) — compare the keys its =kv_cost= test reads

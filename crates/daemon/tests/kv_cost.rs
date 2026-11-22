@@ -18,6 +18,47 @@ use uuid::Uuid;
 mod common;
 use common::TempDir;
 
+/// The files of a store built once in this run, by the name of what built it.
+type Built = Vec<(std::path::PathBuf, Vec<u8>)>;
+
+/// A copy of the store `build` makes, which is built once per run and per
+/// `key`: most tests ask for the same few repositories, and building one of
+/// 16 000 records takes seconds where reading it takes milliseconds. Each test
+/// gets a store of its own — its own counter of keys read, and its writes its
+/// own. The built store is kept in memory, not in a directory: nothing runs
+/// when the test binary exits, and a directory would outlive it.
+fn shared(key: String, build: impl FnOnce() -> (KvStore, TempDir)) -> (KvStore, TempDir) {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static BUILT: OnceLock<Mutex<HashMap<String, Arc<OnceLock<Built>>>>> = OnceLock::new();
+    let slot = BUILT.get_or_init(Default::default).lock().unwrap().entry(key).or_default().clone();
+    let files = slot.get_or_init(|| {
+        let (kv, dir) = build();
+        drop(kv);
+        let mut files = Vec::new();
+        let mut todo = vec![dir.path().to_path_buf()];
+        while let Some(at) = todo.pop() {
+            for entry in std::fs::read_dir(&at).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    todo.push(path);
+                } else {
+                    let rel = path.strip_prefix(dir.path()).unwrap().to_path_buf();
+                    files.push((rel, std::fs::read(&path).unwrap()));
+                }
+            }
+        }
+        files
+    });
+    let dir = TempDir::new("kv-cost");
+    for (rel, bytes) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+    (KvStore::open(dir.path()).unwrap(), dir)
+}
+
 /// `n` files named `file000000.txt`…, `per_folder` per directory (`d0`, …);
 /// a `kind` of three common values, and ten files of a rare one.
 fn repository_in(n: usize, per_folder: usize) -> (KvStore, TempDir) {
@@ -27,6 +68,12 @@ fn repository_in(n: usize, per_folder: usize) -> (KvStore, TempDir) {
 /// [`repository_in`] whose files each carry `extra` more fields, as a real
 /// file carries its `mfr_*` and metadata fields.
 fn repository_with(n: usize, per_folder: usize, extra: usize) -> (KvStore, TempDir) {
+    shared(format!("repository {n} {per_folder} {extra}"), || {
+        build_repository(n, per_folder, extra)
+    })
+}
+
+fn build_repository(n: usize, per_folder: usize, extra: usize) -> (KvStore, TempDir) {
     let dir = TempDir::new("kv-cost");
     let mut kv = KvStore::open(dir.path()).unwrap();
     let mut w = Writer::begin(&mut kv, None).unwrap();
@@ -155,6 +202,10 @@ fn a_page_sorted_on_a_value_reads_the_page() {
 /// values, each of them frequent enough for a posting on either size (the
 /// postings of a field are listed by a walk, whatever the repository's size).
 fn tagged(n: usize) -> (KvStore, TempDir) {
+    shared(format!("tagged {n}"), || build_tagged(n))
+}
+
+fn build_tagged(n: usize) -> (KvStore, TempDir) {
     let dir = TempDir::new("kv-cost");
     let mut kv = KvStore::open_unsynced(dir.path()).unwrap();
     let mut w = Writer::begin(&mut kv, None).unwrap();

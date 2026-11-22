@@ -54,6 +54,7 @@ Three rules for writing one:
 * ''The data must be larger than the bound.'' On a log shorter than the window, the whole log ''is'' the window, and the two sizes differ for the right reason.
 * ''Go through the route's own preparation.'' A cost test that evaluates a query without the forest rewrite the route applies stayed green while the real request walked the whole forest ([[Storage pitfalls]]).
 * ''Combine operands.'' Single-operand queries never exercised what a real search does; the combined shapes found that an equality read one key per holder.
+* ''Build a data set once.'' Writing 16 000 records takes seconds in a debug build, reading them milliseconds: `kv_cost.rs` builds each of its repositories once per run and gives every test a copy of the files (`shared`), so each still has its own store and its own count of keys. That took the file from 200 s to under a minute (November 2026). The copy is kept in memory: a directory would outlive the test binary, which runs nothing at exit.
 
 !! Timed benchmarks — the size of the work
 
