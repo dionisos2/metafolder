@@ -14,6 +14,10 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **Each repository is reindexed once when it is first opened** by this version: an
+  index key no longer begins with a byte naming its former kind, a byte less per key
+  (doc "Store tables").
+
 - **The log's "labels" are called "log contexts" everywhere**: in `mf log`'s output
   (`log context 12`, `undo of log context 9`), its help, the GUI's messages and the
   error `no log context N`. On the wire, a revert's operations carry
