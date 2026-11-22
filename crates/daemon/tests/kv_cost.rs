@@ -772,3 +772,31 @@ fn a_record_is_decoded_and_encoded_once_per_write_transaction() {
     assert_eq!(count.len(), 1);
     assert_eq!(count[0].value, Value::Int(99));
 }
+
+/// A write to a field works on the transaction's decoded record in place, and
+/// on that field alone: it copies the field's rows, not the record's (doc
+/// "Writes and atomicity"). Before, each `set_field` copied the whole record
+/// about ten times, and N writes to a record of K rows cost N × K in copies.
+#[test]
+fn a_write_to_a_field_copies_the_field_not_the_record() {
+    let copies = |k: i64| {
+        let dir = TempDir::new("kv-cost");
+        let mut kv = KvStore::open(dir.path()).unwrap();
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        let fields = (0..k).map(|j| Field::new(format!("f{j:05}"), Value::Int(j))).collect();
+        let uuid = w.create_metarecord(fields).unwrap().uuid;
+        w.commit().unwrap();
+        let before = kv.rows_copied();
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        for i in 0..100 {
+            w.set_field(uuid, "count", Value::Int(i)).unwrap();
+        }
+        w.commit().unwrap();
+        let record = kv.metarecord(uuid).unwrap().expect("the record");
+        assert_eq!(record.fields.len(), k as usize + 1);
+        kv.rows_copied() - before
+    };
+    let (small, large) = (copies(50), copies(5000));
+    assert_eq!(small, large, "rows copied by 100 set_field, for 50 and 5000 fields");
+    assert!(small <= 100 * 10, "{small} rows copied by 100 set_field of one row");
+}

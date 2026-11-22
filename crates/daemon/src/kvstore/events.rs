@@ -653,7 +653,7 @@ impl KvTxn<'_> {
         for (key, held) in stored {
             let holders = &replay(&events, &key, held) & ids;
             let Some(first) = holders.min() else { continue };
-            let rows = self.load_record(first)?.plain_rows();
+            let rows = self.record_rows(first)?;
             let value = rows
                 .into_iter()
                 .find(|r| r.name == field && value_key(&r.value).as_deref() == Some(&key[..]))

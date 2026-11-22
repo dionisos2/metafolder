@@ -33,6 +33,30 @@ each operation read, decoded, re-encoded and wrote the whole record on its own: 
 `set_field` decoded it three times and encoded it twice, and N writes to a record of
 K rows cost N × K (`tests/kv_cost.rs` counts both, `KvStore::record_codings`).
 
+The form is lent, never copied (`KvTxn::with_record`, `with_record_mut`), and it is
+kept ''by field'': each field's values, in the order the fields come, as the encoding
+already groups them. A write to a field changes that field in place — a value pushed,
+a value or the field taken off —, and a read of one field (`Read::rows_named`, through
+the `field` hook: `derive_row`, the `before` of a `set_field`) copies that field only;
+only what needs the whole record (`KvTxn::record_rows`: a deletion, a restoration, a
+read of the metarecord) copies it whole. A field emptied keeps its place, empty, and
+one written again comes last, so the rows come back in the order they did when the
+record was a list of rows. Decoding the record by field also allocates a field's name
+once, not once per row. Before, a `set_field` copied the whole record about ten times
+— four reads of it, each copying the decoded form and then its rows —, and 5000
+writes to one record took 17 s; they copy the field now (`KvStore::rows_copied`,
+`tests/kv_cost.rs`: the same count for a record of 50 fields and of 5000).
+
+When entries of a write to many records name the record ([[Mass writes in the store]]), a field is read with them applied (`mass::effective_values`, which applies
+only that field's entries: an entry writes one field), and a write first takes the
+field as they leave it, then fixes what it wrote — applying the entries again on
+reading gives the same values.
+
+A read of the committed store (`Source::values`, the candidates of a scan) still
+decodes the whole record to read one field: the encoding gives no field alone, the
+values of a group having no length that lets a reader pass over them. Letting it would
+be a change of the persisted format.
+
 A walk of the table itself — the drop of what deleted metarecords left, the
 re-filing of a renumbering, a layout conversion — writes out the decoded records
 first and forgets them. No bound is set on what a transaction holds: a watcher batch

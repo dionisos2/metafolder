@@ -482,7 +482,7 @@ impl KvTxn<'_> {
                 for id in ids.iter() {
                     let rows = match revived.as_ref().and_then(|r| r.iter().find(|f| f.0 == id)) {
                         Some((_, _, rows)) => rows.clone(),
-                        None => self.load_record(id)?.plain_rows(),
+                        None => self.record_rows(id)?,
                     };
                     for row in rows.iter().filter(|r| {
                         r.name == field
@@ -668,7 +668,7 @@ impl KvTxn<'_> {
                 let mut befores = Vec::new();
                 for id in &hit {
                     if let Some(op) = e.deleted_by(id) {
-                        befores.push((op, self.load_record(id)?.plain_rows()));
+                        befores.push((op, self.record_rows(id)?));
                     }
                 }
                 // An operation a prune took has nothing to keep.

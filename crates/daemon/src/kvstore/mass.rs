@@ -48,10 +48,16 @@ pub(crate) fn part_of(id: u32) -> u32 {
     id >> PART_BITS
 }
 
-/// A record as stored.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// A record as stored, decoded by field: the values of each field, in the
+/// order the fields come, so that a write to a field changes that field in
+/// place and costs it, not the record (doc "Writes and atomicity").
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Record {
-    pub(crate) rows: Vec<FieldRow>,
+    /// A field's values, in the order the fields come. A field emptied keeps
+    /// its place, empty and out of `index`: one written again comes last, as
+    /// it did when the record was its rows.
+    fields: Vec<(String, Vec<Value>)>,
+    index: std::collections::HashMap<String, usize>,
     /// Fields set or emptied by hand, after the entries older than the number.
     pub(crate) fixed_fields: Vec<(String, u64)>,
     /// Values added or taken off by hand, after the entries older than the
@@ -59,10 +65,75 @@ pub(crate) struct Record {
     pub(crate) fixed_values: Vec<(String, Value, u64)>,
 }
 
+impl PartialEq for Record {
+    fn eq(&self, other: &Record) -> bool {
+        self.rows() == other.rows()
+            && self.fixed_fields == other.fixed_fields
+            && self.fixed_values == other.fixed_values
+    }
+}
+
 impl Record {
     /// Rows no entry can override.
     pub(crate) fn plain(rows: Vec<FieldRow>) -> Record {
-        Record { rows, fixed_fields: Vec::new(), fixed_values: Vec::new() }
+        let mut record = Record::default();
+        for row in rows {
+            record.values_mut(&row.name).push(row.value);
+        }
+        record
+    }
+
+    /// Its rows, field by field.
+    pub(crate) fn rows(&self) -> Vec<FieldRow> {
+        let mut out = Vec::with_capacity(self.row_count());
+        for (name, values) in &self.fields {
+            for v in values {
+                out.push(FieldRow { name: name.clone(), value: v.clone() });
+            }
+        }
+        out
+    }
+
+    pub(crate) fn row_count(&self) -> usize {
+        self.fields.iter().map(|(_, v)| v.len()).sum()
+    }
+
+    /// The fields it holds a value of, in their order.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.fields.iter().filter(|(_, v)| !v.is_empty()).map(|(n, _)| n.as_str())
+    }
+
+    /// The values of `field`.
+    pub(crate) fn values(&self, field: &str) -> &[Value] {
+        match self.index.get(field) {
+            Some(&at) => &self.fields[at].1,
+            None => &[],
+        }
+    }
+
+    /// The values of `field`, to change: a field it has no place for comes
+    /// last. One left empty is taken out by [`Self::tidy`].
+    pub(crate) fn values_mut(&mut self, field: &str) -> &mut Vec<Value> {
+        let at = match self.index.get(field) {
+            Some(&at) => at,
+            None => {
+                self.fields.push((field.to_string(), Vec::new()));
+                self.index.insert(field.to_string(), self.fields.len() - 1);
+                self.fields.len() - 1
+            }
+        };
+        &mut self.fields[at].1
+    }
+
+    /// A field left empty gives its place up: written again, it comes last.
+    pub(crate) fn tidy(&mut self, field: &str) {
+        if let Some(&at) = self.index.get(field) {
+            if self.fields[at].1.is_empty() {
+                self.index.remove(field);
+                // The place stays, empty, so that no other moves.
+                self.fields[at].0.clear();
+            }
+        }
     }
 
     /// `rows` ([`codec::put_rows`]), then — only when it has any — `varint
@@ -71,7 +142,7 @@ impl Record {
     /// (a value taken off may have no row left to say it).
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = Enc::default();
-        codec::put_rows(&mut out, &self.rows);
+        codec::put_fields(&mut out, &self.fields);
         if !self.fixed_fields.is_empty() || !self.fixed_values.is_empty() {
             out.varint(self.fixed_fields.len() as u64);
             for (field, n) in &self.fixed_fields {
@@ -87,7 +158,8 @@ impl Record {
 
     pub(crate) fn decode(b: &[u8]) -> Result<Record> {
         let mut r = Dec(b);
-        let mut record = Record::plain(codec::get_rows(&mut r)?);
+        let mut record = Record::default();
+        codec::get_fields(&mut r, |name, value| record.values_mut(name).push(value))?;
         if r.is_empty() {
             return Ok(record);
         }
@@ -124,15 +196,15 @@ impl Record {
     /// holds one or the other (doc "Nothing versus unknown"), which records
     /// written before November 2026 did not keep. Whether it changed.
     pub(crate) fn drop_mixed_nothing(&mut self) -> bool {
-        let valued: BTreeSet<String> = self
-            .rows
-            .iter()
-            .filter(|r| !matches!(r.value, Value::Nothing))
-            .map(|r| r.name.clone())
-            .collect();
-        let before = self.rows.len();
-        self.rows.retain(|r| !(matches!(r.value, Value::Nothing) && valued.contains(&r.name)));
-        self.rows.len() != before
+        let mut changed = false;
+        for (_, values) in &mut self.fields {
+            if values.iter().any(|v| !matches!(v, Value::Nothing)) {
+                let before = values.len();
+                values.retain(|v| !matches!(v, Value::Nothing));
+                changed |= values.len() != before;
+            }
+        }
+        changed
     }
 }
 
@@ -285,37 +357,52 @@ pub(crate) fn read_part(t: &Tables, r: &RoTxn<'_>, part: u32) -> Result<Vec<List
 /// are applied: an entry does not touch a field, or a value, the record says
 /// was written to by hand after it.
 pub(crate) fn effective(record: &Record, entries: &[&Listed]) -> Vec<FieldRow> {
-    let mut rows = record.rows.clone();
+    let mut out = Vec::new();
+    let mut names: Vec<&str> = record.names().collect();
     for e in entries {
+        if e.kind != Written::Delete && !names.contains(&e.field.as_str()) {
+            names.push(&e.field);
+        }
+    }
+    for name in names {
+        for value in effective_values(record, entries, name) {
+            out.push(FieldRow { name: name.to_string(), value });
+        }
+    }
+    out
+}
+
+/// The values of `field` in `record` once `entries` are applied: only those
+/// of the field change it, each entry writing one field.
+pub(crate) fn effective_values(record: &Record, entries: &[&Listed], field: &str) -> Vec<Value> {
+    let mut values = record.values(field).to_vec();
+    for e in entries.iter().filter(|e| e.kind != Written::Delete && e.field == field) {
         if record.fixed_fields.iter().any(|(f, n)| *f == e.field && *n > e.op) {
             continue;
         }
         let fixed = |value: &Value| {
             record.fixed_values.iter().any(|(f, v, n)| *f == e.field && v == value && *n > e.op)
         };
-        let holds = |rows: &[FieldRow], value: &Value| {
-            rows.iter().any(|r| r.name == e.field && &r.value == value)
-        };
         match e.kind {
             Written::Delete => {}
             Written::Add | Written::Set | Written::Unset => {
                 if e.kind != Written::Add {
-                    rows.retain(|r| r.name != e.field || fixed(&r.value));
+                    values.retain(|v| fixed(v));
                 }
                 for v in &e.values {
-                    if !fixed(v) && !holds(&rows, v) {
-                        rows.push(FieldRow { name: e.field.clone(), value: v.clone() });
+                    if !fixed(v) && !values.contains(v) {
+                        values.push(v.clone());
                     }
                 }
             }
             Written::Remove => {
                 for v in e.values.iter().filter(|v| !fixed(v)) {
-                    rows.retain(|r| !(r.name == e.field && &r.value == v));
+                    values.retain(|x| x != v);
                 }
             }
         }
     }
-    rows
+    values
 }
 
 /// The entries of `entries` naming `id`, still oldest first.
@@ -338,13 +425,13 @@ pub(crate) fn read_record(
         None => Record::default(),
     };
     if !mass {
-        return Ok(record.rows);
+        return Ok(record.rows());
     }
     let entries = read_part(t, r, part_of(id))?;
     read(1 + entries.len() as u64)?;
     let named = naming(&entries, id);
     if named.is_empty() {
-        return Ok(record.rows);
+        return Ok(record.rows());
     }
     Ok(effective(&record, &named))
 }
@@ -384,7 +471,7 @@ impl Parts {
             None => Record::default(),
         };
         if !mass {
-            return Ok(record.rows);
+            return Ok(record.rows());
         }
         if self.part != Some(part_of(id)) {
             self.entries = read_part(t, r, part_of(id))?;
@@ -392,7 +479,7 @@ impl Parts {
         }
         let named = naming(&self.entries, id);
         if named.is_empty() {
-            return Ok(record.rows);
+            return Ok(record.rows());
         }
         Ok(effective(&record, &named))
     }
@@ -421,13 +508,11 @@ impl KvStore {
     }
 }
 
-/// A record the transaction loaded: what is stored of it, the entries that
-/// name it, and the rows it holds once they are applied.
+/// A record the transaction loaded: its id and the entries that name it. What
+/// is stored of it the transaction holds, and lends ([`KvTxn::with_record`]).
 pub(super) struct Loaded {
     pub(super) id: u32,
-    pub(super) raw: Record,
     pub(super) entries: Vec<Listed>,
-    pub(super) rows: Vec<FieldRow>,
 }
 
 impl Loaded {
@@ -435,11 +520,6 @@ impl Loaded {
     /// changes none, and a write to the record takes it off first.
     pub(super) fn rewritten(&self) -> bool {
         self.entries.iter().any(|e| e.kind != Written::Delete)
-    }
-
-    /// The rows it holds.
-    pub(super) fn plain_rows(&self) -> Vec<FieldRow> {
-        self.rows.clone()
     }
 }
 
@@ -452,17 +532,23 @@ impl KvTxn<'_> {
         self.deletes.get()
     }
 
+    /// Counts `n` rows copied out of the transaction's records.
+    pub(super) fn copied(&self, n: usize) {
+        self.record_codings[2].fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// The entries of `part`, as the transaction has them.
     fn part_entries(&self, part: u32) -> Result<Vec<Listed>> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         read_part(&self.t, &self.txn.borrow(), part)
     }
 
-    /// The stored record of dense id `id`, decoded, as the transaction has
-    /// it: read and decoded the first time, then the form its writes change.
-    pub(super) fn stored_record(&self, id: u32) -> Result<Option<Record>> {
-        if let Some(record) = self.records.borrow().get(&id) {
-            return Ok(record.clone());
+    /// Reads and decodes the stored record of dense id `id` the first time
+    /// the transaction needs it; then it holds that form, which its writes
+    /// change.
+    fn hold_record(&self, id: u32) -> Result<()> {
+        if self.records.borrow().contains_key(&id) {
+            return Ok(());
         }
         self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let record = match self.t.metarecords.get(&self.txn.borrow(), &id.to_be_bytes())? {
@@ -472,8 +558,39 @@ impl KvTxn<'_> {
             }
             None => None,
         };
-        self.records.borrow_mut().insert(id, record.clone());
-        Ok(record)
+        self.records.borrow_mut().insert(id, record);
+        Ok(())
+    }
+
+    /// `f` given the stored record of dense id `id` as the transaction has it
+    /// (`None`: no record), lent, not copied.
+    pub(super) fn with_record<T>(
+        &self,
+        id: u32,
+        f: impl FnOnce(Option<&Record>) -> T,
+    ) -> Result<T> {
+        self.hold_record(id)?;
+        let records = self.records.borrow();
+        Ok(f(records.get(&id).expect("just held").as_ref()))
+    }
+
+    /// `f` given the stored record of dense id `id` to change in place (an
+    /// empty one when there is none): it is encoded and put once, by
+    /// [`Self::flush_records`].
+    pub(super) fn with_record_mut<T>(
+        &self,
+        id: u32,
+        f: impl FnOnce(&mut Record) -> T,
+    ) -> Result<T> {
+        self.hold_record(id)?;
+        self.records_dirty.borrow_mut().insert(id);
+        let mut records = self.records.borrow_mut();
+        Ok(f(records.get_mut(&id).expect("just held").get_or_insert_with(Record::default)))
+    }
+
+    /// Whether the dense id `id` has a stored record.
+    pub(super) fn has_record(&self, id: u32) -> Result<bool> {
+        self.with_record(id, |r| r.is_some())
     }
 
     /// Writes the stored record of dense id `id`: into the transaction's
@@ -506,21 +623,57 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// The record of dense id `id`, with the entries naming it applied.
+    /// The record of dense id `id` and the entries naming it.
     pub(super) fn load_record(&self, id: u32) -> Result<Loaded> {
-        let raw = self.stored_record(id)?.unwrap_or_default();
         let entries: Vec<Listed> = if self.mass_pending() {
             let part = self.part_entries(part_of(id))?;
             part.into_iter().filter(|e| e.ids.contains(id)).collect()
         } else {
             Vec::new()
         };
-        let rows = if entries.is_empty() {
-            raw.rows.clone()
-        } else {
-            effective(&raw, &entries.iter().collect::<Vec<_>>())
-        };
-        Ok(Loaded { id, raw, entries, rows })
+        Ok(Loaded { id, entries })
+    }
+
+    /// The rows the record of dense id `id` holds, the entries naming it
+    /// applied: a copy of the whole record, for what needs it whole.
+    pub(super) fn record_rows(&self, id: u32) -> Result<Vec<FieldRow>> {
+        let loaded = self.load_record(id)?;
+        let rows = self.with_record(id, |r| {
+            let empty = Record::default();
+            let r = r.unwrap_or(&empty);
+            if loaded.entries.is_empty() {
+                r.rows()
+            } else {
+                effective(r, &loaded.entries.iter().collect::<Vec<_>>())
+            }
+        })?;
+        self.copied(rows.len());
+        Ok(rows)
+    }
+
+    /// `f` given the values of `field` a loaded record holds, the entries
+    /// naming it applied: lent when none does.
+    pub(super) fn with_values<T>(
+        &self,
+        loaded: &Loaded,
+        field: &str,
+        f: impl FnOnce(&[Value]) -> T,
+    ) -> Result<T> {
+        if !loaded.rewritten() {
+            return self.with_record(loaded.id, |r| f(r.map_or(&[], |r| r.values(field))));
+        }
+        let values = self.with_record(loaded.id, |r| {
+            let empty = Record::default();
+            effective_values(r.unwrap_or(&empty), &loaded.entries.iter().collect::<Vec<_>>(), field)
+        })?;
+        Ok(f(&values))
+    }
+
+    /// The values of `field` a loaded record holds, copied.
+    pub(super) fn field_values(&self, loaded: &Loaded, field: &str) -> Result<Vec<Value>> {
+        let values = self.with_values(loaded, field, |v| v.to_vec())?;
+        self.copied(values.len());
+        Ok(values)
     }
 
     /// The number of a write to this record that an entry could be older
@@ -533,32 +686,40 @@ impl KvTxn<'_> {
         }
     }
 
-    /// Writes a loaded record's rows back, `fixed` being what the write
-    /// wrote by hand under its number: whole fields (no value), or values. A
-    /// record no entry names is written plain.
-    pub(super) fn save_record(
+    /// Changes the values of `field` of a loaded record in place, `fixed`
+    /// being what the write wrote by hand under its number `n`: the whole
+    /// field (`None`), or a value. A record an entry names first takes the
+    /// field as the entries leave it; one no entry names is written plain.
+    pub(super) fn write_field(
         &self,
         loaded: &Loaded,
-        rows: Vec<FieldRow>,
+        field: &str,
         n: u64,
-        fixed: &[(&str, Option<&Value>)],
+        fixed: Option<&Value>,
+        change: impl FnOnce(&mut Vec<Value>),
     ) -> Result<()> {
         // A record a deletion gave back keeps the rows it took, in the log,
         // before the first write that changes them.
         self.freeze_given_back(&RoaringBitmap::from_iter([loaded.id]))?;
-        let record = if !loaded.rewritten() {
-            Record::plain(rows)
-        } else {
-            let mut record = Record { rows, ..loaded.raw.clone() };
-            for (field, value) in fixed {
-                match value {
+        let rewritten = loaded.rewritten();
+        let entries: Vec<&Listed> = loaded.entries.iter().collect();
+        self.with_record_mut(loaded.id, |record| {
+            if rewritten {
+                let values = effective_values(record, &entries, field);
+                *record.values_mut(field) = values;
+            } else {
+                record.fixed_fields.clear();
+                record.fixed_values.clear();
+            }
+            change(record.values_mut(field));
+            record.tidy(field);
+            if rewritten {
+                match fixed {
                     Some(v) => record.fix_value(field, v, n),
                     None => record.fix_field(field, n),
                 }
             }
-            record
-        };
-        self.put_stored(loaded.id, record)
+        })
     }
 
     /// Appends the entries of a write to many records: one per part its ids
@@ -639,7 +800,7 @@ impl KvTxn<'_> {
         let mut befores = Vec::new();
         for e in entries.iter().filter(|e| e.kind == Written::Delete) {
             for id in &e.ids {
-                let rows = self.load_record(id)?.plain_rows();
+                let rows = self.record_rows(id)?;
                 if !self.live_in(&self.txn.borrow(), id)? {
                     for row in &rows {
                         self.drop_hist(&row.name, &row.value)?;
@@ -656,10 +817,13 @@ impl KvTxn<'_> {
             ids |= &e.ids;
         }
         for id in ids {
-            let raw = self.stored_record(id)?.unwrap_or_default();
             let named: Vec<&Listed> =
                 rewriting.iter().copied().filter(|e| e.ids.contains(id)).collect();
-            self.put_record(id, &effective(&raw, &named))?;
+            let rows = self.with_record(id, |raw| {
+                let empty = Record::default();
+                effective(raw.unwrap_or(&empty), &named)
+            })?;
+            self.put_record(id, &rows)?;
         }
         let mut w = self.txn.borrow_mut();
         for e in &entries {
@@ -744,23 +908,23 @@ mod tests {
         let plain = Record::plain(vec![row("a", 1), row("b", 2)]);
         assert_eq!(Record::decode(&plain.encode()).unwrap(), plain);
         let fixed = Record {
-            rows: vec![row("a", 1)],
             fixed_fields: vec![("b".into(), 7)],
             fixed_values: vec![("a".into(), Value::Int(1), 9), ("c".into(), Value::Int(3), 4)],
+            ..Record::plain(vec![row("a", 1)])
         };
         assert_eq!(Record::decode(&fixed.encode()).unwrap(), fixed);
         // A record no entry names is its rows alone.
         let mut rows = Enc::default();
-        codec::put_rows(&mut rows, &plain.rows);
+        codec::put_rows(&mut rows, &plain.rows());
         assert_eq!(plain.encode(), rows.0);
     }
 
     #[test]
     fn an_entry_older_than_a_fixed_field_does_not_touch_it() {
         let record = Record {
-            rows: vec![row("a", 1)],
             fixed_fields: vec![("a".into(), 5)],
             fixed_values: Vec::new(),
+            ..Record::plain(vec![row("a", 1)])
         };
         let older = [entry(3, Kind::Add, "a", &[2]), entry(4, Kind::Replace, "a", &[])];
         assert_eq!(applied(&record, &older), vec![row("a", 1)]);
@@ -772,9 +936,9 @@ mod tests {
     fn an_entry_older_than_a_fixed_value_does_not_touch_that_value() {
         // 1 added by hand at 5, 2 removed by hand at 5.
         let record = Record {
-            rows: vec![row("a", 1), row("a", 3)],
             fixed_fields: Vec::new(),
             fixed_values: vec![("a".into(), Value::Int(1), 5), ("a".into(), Value::Int(2), 5)],
+            ..Record::plain(vec![row("a", 1), row("a", 3)])
         };
         let older = [entry(2, Kind::Add, "a", &[2]), entry(3, Kind::Remove, "a", &[1])];
         assert_eq!(applied(&record, &older), vec![row("a", 1), row("a", 3)]);

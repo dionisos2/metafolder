@@ -250,6 +250,51 @@ pub(crate) fn get_rows(r: &mut Dec) -> Result<Vec<FieldRow>> {
     Ok(rows)
 }
 
+/// [`put_rows`] of the rows of a record kept by field — each field's values,
+/// a field left empty passed over: the same bytes, without a row made of
+/// each value.
+pub(crate) fn put_fields(out: &mut Enc, fields: &[(String, Vec<Value>)]) {
+    // Within a field, its groups in the order their first value comes.
+    let mut groups: Vec<(&str, u8, Vec<&Value>)> = Vec::new();
+    for (name, values) in fields {
+        let first = groups.len();
+        for v in values {
+            let code = type_code(v);
+            match groups[first..].iter_mut().find(|(_, c, _)| *c == code) {
+                // A field holds one nothing at most; a second is not written.
+                Some((_, NOTHING, _)) => {}
+                Some((_, _, members)) => members.push(v),
+                None => groups.push((name, code, vec![v])),
+            }
+        }
+    }
+    out.varint(groups.len() as u64);
+    for (name, code, members) in &groups {
+        out.bytes(name.as_bytes()).raw(&[*code]);
+        if *code != NOTHING {
+            out.varint(members.len() as u64);
+        }
+        for v in members {
+            out.bare(v);
+        }
+    }
+}
+
+/// The rows [`put_rows`] wrote, given to `row` one by one, the name of a
+/// group read once.
+pub(crate) fn get_fields(r: &mut Dec, mut row: impl FnMut(&str, Value)) -> Result<()> {
+    let groups = r.varint()?;
+    for _ in 0..groups {
+        let name = r.string()?;
+        let code = r.take(1)?[0];
+        let count = if code == NOTHING { 1 } else { r.varint()? };
+        for _ in 0..count {
+            row(&name, r.bare(code)?);
+        }
+    }
+    Ok(())
+}
+
 /// A log context, the value of its id in `log_contexts` (doc "Store
 /// tables"): `varint len · name · flags · [varint len · description] ·
 /// [varint parent] · varint created (ms)`, the flags saying which of the two

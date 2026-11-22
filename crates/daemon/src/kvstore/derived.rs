@@ -1151,7 +1151,7 @@ impl KvTxn<'_> {
             return Ok(false);
         }
         drop(txn);
-        Ok(self.stored_record(id)?.is_none())
+        Ok(!self.has_record(id)?)
     }
 
     /// A metarecord was created: it gets a dense id, in the universe, and
@@ -1170,7 +1170,7 @@ impl KvTxn<'_> {
         };
         self.chunk_member(LIVE, &[], id, true)?;
         // Every metarecord has a record, an empty one included.
-        if self.stored_record(id)?.is_none() {
+        if !self.has_record(id)? {
             self.put_stored(id, super::mass::Record::plain(Vec::new()))?;
         }
         for field in self.parent_fields(id)? {
@@ -1204,7 +1204,7 @@ impl KvTxn<'_> {
         if self.live_in(&self.txn.borrow(), id)? || self.reserved(id)? {
             return Ok(None);
         }
-        let rows = self.load_record(id)?.plain_rows();
+        let rows = self.record_rows(id)?;
         let rows = rows.as_slice();
         // A position a metarecord that exists took since is not given back.
         for row in rows {
@@ -1232,7 +1232,7 @@ impl KvTxn<'_> {
             let op = entries.iter().filter(|e| e.ids.contains(id)).find_map(|e| e.deleted_by(id));
             if let Some(op) = op {
                 if self.mass_undelete_log(op, op)?.is_some() {
-                    return Ok(Some(self.load_record(id)?.plain_rows()));
+                    return Ok(Some(self.record_rows(id)?));
                 }
                 // The deletion is folded before the record is given back.
                 while self.fold_one_delete()? {}

@@ -57,7 +57,7 @@ pub(super) fn dec_record(b: &[u8]) -> Result<Record> {
             0 => {
                 let i = r.int()? as usize;
                 let op = r.int()? as u64;
-                match record.rows.get(i) {
+                match record.rows().get(i) {
                     Some(row) => fixed.push((op, row.name.clone(), Some(row.value.clone()))),
                     None => bail!("a row number for a row a record does not have"),
                 }
@@ -156,7 +156,7 @@ mod tests {
         name(&mut b, "b");
         n(&mut b, 2);
         let record = dec_record(&b).unwrap();
-        assert_eq!(record.rows.len(), 2);
+        assert_eq!(record.rows().len(), 2);
         assert_eq!(record.fixed_fields, vec![("b".to_string(), 2), ("a".to_string(), 4)]);
         assert_eq!(
             record.fixed_values,

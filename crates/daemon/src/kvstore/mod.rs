@@ -56,6 +56,8 @@ const ROOT: [u8; 16] = [0; 16];
 
 /// What a write transaction answers to "which ids hold a row of this field".
 type HoldersOf<'a> = dyn Fn(&str) -> Result<roaring::RoaringBitmap> + 'a;
+/// The rows of one field of a record, by its dense id.
+type FieldOf<'a> = dyn Fn(u32, &str) -> Result<Vec<FieldRow>> + 'a;
 type ValueHoldersOf<'a> = dyn Fn(&str, &Value) -> Result<roaring::RoaringBitmap> + 'a;
 
 #[derive(Clone, Copy)]
@@ -251,8 +253,9 @@ pub struct KvStore {
     reads: std::sync::atomic::AtomicU64,
     /// Records decoded and encoded so far by write transactions: a record is
     /// decoded once and encoded once per transaction that changes it
-    /// ([`KvStore::record_codings`]).
-    record_codings: [std::sync::atomic::AtomicU64; 2],
+    /// ([`KvStore::record_codings`]); and the rows copied out of the records
+    /// a write transaction holds ([`KvStore::rows_copied`]).
+    record_codings: [std::sync::atomic::AtomicU64; 3],
     /// Whether any part has entries pending (doc "Mass writes in the store"):
     /// when none does, no read looks for them.
     mass: std::sync::atomic::AtomicBool,
@@ -754,6 +757,11 @@ struct Read<'a> {
     /// the committed store, which reads the record itself
     /// ([`Read::record_raw`]).
     record: Option<&'a dyn Fn(u32) -> Result<Vec<FieldRow>>>,
+    /// The rows of one field of a record, as a write transaction has it:
+    /// that field copied, not the record; `None` for a read of the committed
+    /// store, which decodes the record whole (its encoding gives no field
+    /// alone, doc "Writes and atomicity").
+    field: Option<&'a FieldOf<'a>>,
     /// The ids of the records a write transaction wrote and has not put in
     /// the table yet; `None` for a read of the committed store.
     unwritten: Option<&'a dyn Fn() -> roaring::RoaringBitmap>,
@@ -860,9 +868,17 @@ impl Read<'_> {
         }
     }
 
-    /// A record's rows of one field: the record, read whole.
+    /// A record's rows of one field: in a write transaction that field, else
+    /// the record, read whole.
     fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
-        Ok(self.rows(uuid)?.into_iter().filter(|r| r.name == name).collect())
+        let Some(field) = self.field else {
+            return Ok(self.rows(uuid)?.into_iter().filter(|r| r.name == name).collect());
+        };
+        self.count(1)?;
+        match derived::id_of(self.t, self.r, uuid.as_bytes())? {
+            Some(id) if self.live(id)? => field(id, name),
+            _ => Ok(Vec::new()),
+        }
     }
 
     /// Counts `n` keys read; fails once the running query was asked to stop
@@ -1551,6 +1567,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         holders: None,
         values: None,
         record: None,
+        field: None,
         unwritten: None,
         mass: me.mass_pending(),
         universe: Default::default(),
@@ -1621,8 +1638,14 @@ impl KvStore {
 
     /// How many records write transactions decoded and encoded so far.
     pub fn record_codings(&self) -> (u64, u64) {
-        let [d, e] = &self.record_codings;
+        let [d, e, _] = &self.record_codings;
         (d.load(std::sync::atomic::Ordering::Relaxed), e.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// How many rows write transactions copied out of the records they hold
+    /// so far: a write to a field copies that field, not the record.
+    pub fn rows_copied(&self) -> u64 {
+        self.record_codings[2].load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The keys the last committed write wrote, by table name (the tables it
@@ -1651,7 +1674,12 @@ impl KvTxn<'_> {
         let live = |id: u32| self.live_in(txn, id);
         let holders = |field: &str| self.holder_ids_now(field);
         let values = |field: &str, value: &Value| self.value_holders_now(field, value);
-        let record = |id: u32| Ok(self.load_record(id)?.rows);
+        let record = |id: u32| self.record_rows(id);
+        let field = |id: u32, name: &str| {
+            let loaded = self.load_record(id)?;
+            let values = self.field_values(&loaded, name)?;
+            Ok(values.into_iter().map(|value| FieldRow { name: name.to_string(), value }).collect())
+        };
         let unwritten = || self.records_dirty.borrow().iter().copied().collect();
         f(&Read {
             t: &self.t,
@@ -1661,6 +1689,7 @@ impl KvTxn<'_> {
             holders: Some(&holders),
             values: Some(&values),
             record: Some(&record),
+            field: Some(&field),
             unwritten: Some(&unwritten),
             mass: self.mass_pending(),
             universe: Default::default(),
@@ -1689,8 +1718,9 @@ pub struct KvTxn<'e> {
     /// The store's read counter: a write's reads count as much as a query's
     /// (`tests/log_cost.rs` holds the trim to it).
     reads: &'e std::sync::atomic::AtomicU64,
-    /// The store's counters of records decoded and encoded.
-    record_codings: &'e [std::sync::atomic::AtomicU64; 2],
+    /// The store's counters of records decoded and encoded, and of rows
+    /// copied out of the transaction's records.
+    record_codings: &'e [std::sync::atomic::AtomicU64; 3],
     /// The stored records the transaction read or wrote, decoded (`None`: no
     /// record), and those it changed, encoded and put at commit: within one
     /// write transaction nothing else writes, so there is nothing to
@@ -2262,9 +2292,9 @@ impl KvStore {
     }
 }
 
-/// How many values — rows that are not `Nothing` — of `field` `rows` hold.
-fn valued_in(rows: &[FieldRow], field: &str) -> u64 {
-    rows.iter().filter(|r| r.name == field && !matches!(r.value, Value::Nothing)).count() as u64
+/// How many of a field's values are not `Nothing`.
+fn valued(values: &[Value]) -> u64 {
+    values.iter().filter(|v| !matches!(v, Value::Nothing)).count() as u64
 }
 
 /// A metarecord's rows as an older layout kept them, each with its row id.
@@ -2447,15 +2477,15 @@ impl KvTxn<'_> {
     }
 
     /// What a row's going away changes outside its record: its forest
-    /// position, the count of its type, the derived data. `before` holds the
-    /// rows the record held before the write that removes this one — one or
-    /// many — which the count of values of the row's field is derived from.
-    fn row_gone(&self, owner: Uuid, row: &FieldRow, before: &[FieldRow]) -> Result<()> {
+    /// position, the count of its type, the derived data. `before` is the
+    /// number of values of the row's field before the write that removes this
+    /// one — one or many —, which the count of values is derived from.
+    fn row_gone(&self, owner: Uuid, row: &FieldRow, before: u64) -> Result<()> {
         if let Some(k) = self.raw_key_now(&row.name, &row.value)? {
             self.t.index_raw_holder.delete(&mut self.txn.borrow_mut(), &k)?;
         }
         self.count_type(&row.name, &row.value, -1)?;
-        self.derive_row(owner, &row.name, &row.value, -1, valued_in(before, &row.name))
+        self.derive_row(owner, &row.name, &row.value, -1, before)
     }
 
     /// Writes a new label, and its place among its parent's children.
@@ -2509,6 +2539,7 @@ impl KvTxn<'_> {
                     holders: None,
                     values: None,
                     record: None,
+                    field: None,
                     unwritten: None,
                     mass: false,
                     universe: Default::default(),
@@ -2633,7 +2664,7 @@ impl WriteTxn for KvTxn<'_> {
         let mut rows = Vec::new();
         if let Some(id) = id {
             self.freeze_given_back(&roaring::RoaringBitmap::from_iter([id]))?;
-            rows = self.load_record(id)?.plain_rows();
+            rows = self.record_rows(id)?;
         }
         for row in &rows {
             self.count_type(&row.name, &row.value, -1)?;
@@ -2649,10 +2680,10 @@ impl WriteTxn for KvTxn<'_> {
         let id =
             self.dense_id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
         let loaded = self.load_record(id)?;
-        let before = loaded.plain_rows();
+        let before = self.with_values(&loaded, name, valued)?;
         // The two uniqueness rules of the data model, with the messages
         // clients already know.
-        if name == "mfr_path" && before.iter().any(|r| r.name == name) {
+        if name == "mfr_path" && self.with_values(&loaded, name, |v| !v.is_empty())? {
             return Err(DomainError::BadRequest(
                 "mfr_path is single-valued: a metarecord tracks at most one path".into(),
             )
@@ -2674,44 +2705,60 @@ impl WriteTxn for KvTxn<'_> {
             }
         }
         let n = self.write_number(&loaded)?;
-        let mut rows = loaded.rows.clone();
-        rows.push(FieldRow { name: name.to_string(), value: value.clone() });
-        self.save_record(&loaded, rows, n, &[(name, Some(value))])?;
+        self.write_field(&loaded, name, n, Some(value), |values| values.push(value.clone()))?;
         self.file_position(name, value, id)?;
         self.count_type(name, value, 1)?;
-        self.derive_row(uuid, name, value, 1, valued_in(&before, name))
+        self.derive_row(uuid, name, value, 1, before)
     }
 
     fn delete_row(&self, owner: Uuid, name: &str, value: &Value) -> Result<()> {
         let Some(id) = self.live_id(owner)? else { return Ok(()) };
         let loaded = self.load_record(id)?;
-        let Some(at) = loaded.rows.iter().position(|r| r.name == name && &r.value == value) else {
+        let (held, before) = self.with_values(&loaded, name, |v| (v.contains(value), valued(v)))?;
+        if !held {
             return Ok(());
-        };
+        }
         let n = self.write_number(&loaded)?;
-        let mut rows = loaded.rows.clone();
-        let row = rows.remove(at);
-        self.save_record(&loaded, rows, n, &[(name, Some(value))])?;
-        self.row_gone(owner, &row, &loaded.plain_rows())
+        self.write_field(&loaded, name, n, Some(value), |values| {
+            if let Some(at) = values.iter().position(|v| v == value) {
+                values.remove(at);
+            }
+        })?;
+        let row = FieldRow { name: name.to_string(), value: value.clone() };
+        self.row_gone(owner, &row, before)
     }
 
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()> {
         let Some(id) = self.live_id(uuid)? else { return Ok(()) };
         let loaded = self.load_record(id)?;
-        let wanted = |row: &FieldRow| name.is_none_or(|n| n == row.name);
-        let gone: Vec<FieldRow> = loaded.rows.iter().filter(|r| wanted(r)).cloned().collect();
-        if gone.is_empty() {
-            return Ok(());
-        }
-        let n = self.write_number(&loaded)?;
-        let kept: Vec<FieldRow> = loaded.rows.iter().filter(|r| !wanted(r)).cloned().collect();
-        let mut fields: Vec<&str> = gone.iter().map(|r| r.name.as_str()).collect();
-        fields.dedup();
-        let fixed: Vec<(&str, Option<&Value>)> = fields.into_iter().map(|f| (f, None)).collect();
-        self.save_record(&loaded, kept, n, &fixed)?;
-        let before = loaded.plain_rows();
-        for row in &gone {
-            self.row_gone(uuid, row, &before)?;
+        let fields: Vec<String> = match name {
+            Some(name) => vec![name.to_string()],
+            // Every field: the record's, and those its entries write.
+            None => {
+                let mut names: Vec<String> = Vec::new();
+                for row in self.record_rows(id)? {
+                    if !names.contains(&row.name) {
+                        names.push(row.name);
+                    }
+                }
+                names
+            }
+        };
+        let mut n = None;
+        for field in fields {
+            let gone = self.field_values(&loaded, &field)?;
+            if gone.is_empty() {
+                continue;
+            }
+            let n = match n {
+                Some(n) => n,
+                None => *n.insert(self.write_number(&loaded)?),
+            };
+            self.write_field(&loaded, &field, n, None, Vec::clear)?;
+            let before = valued(&gone);
+            for value in gone {
+                self.row_gone(uuid, &FieldRow { name: field.clone(), value }, before)?;
+            }
         }
         Ok(())
     }
