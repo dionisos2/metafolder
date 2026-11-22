@@ -40,20 +40,19 @@ impl Cell {
     }
 }
 
-/// The operations of a label and of every label nested in it, oldest first:
-/// reverting a run reverts what was written inside it (doc "Labels and
-/// contexts").
-pub fn label_ops(log: &dyn Log, label: i64) -> Result<Vec<OpRow>> {
+/// The operations of a log context and of every log context nested in it, oldest first:
+/// reverting a run reverts what was written inside it (doc "Log contexts").
+pub fn log_context_ops(log: &dyn Log, log_context: i64) -> Result<Vec<OpRow>> {
     let mut ops = Vec::new();
-    for label in crate::log::label_subtree(log, label)? {
-        ops.extend(log.label_ops(label)?);
+    for log_context in crate::log::log_context_subtree(log, log_context)? {
+        ops.extend(log.log_context_ops(log_context)?);
     }
     ops.sort_by_key(|op| op.id);
     Ok(ops)
 }
 
-/// Which operations of a label an undo or a redo takes (doc "Undo and redo
-/// by label").
+/// Which operations of a log context an undo or a redo takes (doc "Undo and redo
+/// by log context").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Only {
     /// Its changes still standing — what an undo takes back: not a revert,
@@ -323,7 +322,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
     // even when the one it lands on is; the check moves to commit.
     writer.defer_type_checks();
     let mut done = 0usize;
-    // The labels the operations undone are in, said on this write's label.
+    // The log contexts the operations undone are in, said on this write's log context.
     let mut touched: std::collections::BTreeSet<i64> = Default::default();
     let head = crate::store::Log::head(writer.store())?.unwrap_or(0);
     let mut at = ops.len();
@@ -437,8 +436,8 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         touched.insert(op.log_context_id);
     }
     writer.reverting(None);
-    for label in touched {
-        writer.note_label_reverts(label, false)?;
+    for log_context in touched {
+        writer.note_log_context_reverts(log_context, false)?;
     }
     Ok(done)
 }

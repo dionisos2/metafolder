@@ -439,17 +439,17 @@ scenario_undo_redo() {
 
     run log:undo
     command_ok "undo: the command resolves"
-    status_is "undo: takes back the label of the last change" info "Undid label * (1 operations)*"
+    status_is "undo: takes back the log context of the last change" info "Undid log context * (1 operations)*"
 
     run log:redo
-    status_is "redo: takes the undo back" info "Redid label * (1 operations)*"
+    status_is "redo: takes the undo back" info "Redid log context * (1 operations)*"
 
     run log:redo
     status_is "redo at the tip: nothing to redo" info "Nothing to redo."
 }
 
-# The log panel (doc "log panel"): the top level lists the labels from their
-# summaries, a label is gone into, its badges say what undid what.
+# The log panel (doc "log panel"): the top level lists the log contexts from their
+# summaries, a log context is gone into, its badges say what undid what.
 scenario_log_panel() {
     needs_clicks log-panel || return 0
     new_repo log-panel
@@ -457,27 +457,27 @@ scenario_log_panel() {
     df_mf metarecord add note:string=two >/dev/null
     show_panel left log view:refresh log
     sleep 2
-    # The top level: one row per label, the newest holding HEAD.
-    assert "log panel: the labels are listed from their summaries" until_ok 10 \
+    # The top level: one row per log context, the newest holding HEAD.
+    assert "log panel: the log contexts are listed from their summaries" until_ok 10 \
         webview text '#rows tr' 'note:string=two' 
     assert_eq "log panel: the status line counts the units" "6 units of work" "$(webview text '#status-line')"
-    assert "log panel: the newest label holds HEAD" until_ok 5 webview text '#rows tr' 'note:string=two' '.head-marker' HEAD
-    assert_not "log panel: an older label does not" webview text '#rows tr' 'note:string=one' '.head-marker'
+    assert "log panel: the newest log context holds HEAD" until_ok 5 webview text '#rows tr' 'note:string=two' '.head-marker' HEAD
+    assert_not "log panel: an older log context does not" webview text '#rows tr' 'note:string=one' '.head-marker'
 
-    # Going into a label lists its operations; the breadcrumb is the way back.
-    assert "log panel: a label is gone into" until_ok 5 click '#rows tr' 'note:string=one' 'button'
+    # Going into a log context lists its operations; the breadcrumb is the way back.
+    assert "log panel: a log context is gone into" until_ok 5 click '#rows tr' 'note:string=one' 'button'
     assert "log panel: its operation is listed" until_ok 5 webview text '#rows tr' 'op '
     assert "log panel: the breadcrumb says where it is" until_ok 5 webview text '#breadcrumb' 'note:string=one'
     run view:refresh log
-    assert "log panel: a refresh stays inside the label" until_ok 5 webview text '#rows tr' 'op '
+    assert "log panel: a refresh stays inside the log context" until_ok 5 webview text '#rows tr' 'op '
     assert_not "log panel: and does not list the top level" webview text '#rows tr' 'note:string=two'
     run cursor:parent log
-    assert "log panel: back out to the labels" until_ok 5 webview text '#rows tr' 'note:string=two'
+    assert "log panel: back out to the log contexts" until_ok 5 webview text '#rows tr' 'note:string=two'
 
-    # Reverting a label whole: the row is marked undone, a new row says what it undid.
+    # Reverting a log context whole: the row is marked undone, a new row says what it undid.
     assert "log panel: a row is selected" until_ok 5 click '#rows tr' 'note:string=two' '.name'
     answering yes log:revert label
-    status_is "log panel: the revert is reported, not an error" info "Reverted label #7 in label #8 *"
+    status_is "log panel: the revert is reported, not an error" info "Reverted log context #7 in log context #8 *"
     assert "log panel: the new row says what it undid" until_ok 10 \
         webview text '#rows tr' '#8 log:revert label' '.badge.revert' 'undo of #7'
     assert "log panel: the reverted row says what undid it" until_ok 5 \

@@ -728,7 +728,7 @@ pub fn append_message(app: AppHandle, ws_id: String, text: String) -> Result<(),
 // ── Daemon ───────────────────────────────────────────────────────────────
 
 /// The shell starts running command `name` (doc "Log contexts"): what
-/// it writes until [`command_end`] is one label, named after it. Answers the
+/// it writes until [`command_end`] is one log context, named after it. Answers the
 /// key to end it with.
 #[tauri::command]
 pub fn command_begin(app: AppHandle<'_>, name: String, parent: Option<String>) -> String {

@@ -166,7 +166,7 @@ impl ShellSessions {
                 .map(|dir| [b"; cd -- ", shell_quote(&dir).as_bytes()].concat())
                 .unwrap_or_default(),
         };
-        let label = match context {
+        let context_line = match context {
             Some(context) => format!(
                 "export {}={}",
                 metafolder_core::context::LOG_CONTEXT_ENV,
@@ -181,7 +181,8 @@ impl ShellSessions {
         // Bytes: a directory's name need not be text (doc "Tree names").
         let script = [
             boot.unwrap_or_default().as_slice(),
-            format!("export METAFOLDER_GUI_TASK={task}; {label}", task = quote(task_id)).as_bytes(),
+            format!("export METAFOLDER_GUI_TASK={task}; {context_line}", task = quote(task_id))
+                .as_bytes(),
             &cd,
             b"; exec {__mf_in}<",
             shell_quote(&fifo).as_bytes(),
@@ -825,7 +826,7 @@ mod tests {
     #[tokio::test]
     async fn test_each_line_is_given_its_context() {
         let gui = gui();
-        let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
+        let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), log_context: 7 };
         let line = "echo \"in:${METAFOLDER_LOG_CONTEXT:-none}\"";
         gui.shells().run(&gui, "ws-1", line, Some(context), None, None).await.unwrap();
         gui.shells().run(&gui, "ws-1", line, None, None, None).await.unwrap();

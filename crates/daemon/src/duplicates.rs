@@ -233,7 +233,7 @@ pub fn scan_reported(
     drop(conn);
     let mut writes = Writes {
         repo,
-        // One label for the whole scan, its writes being one piece of work: the
+        // One log context for the whole scan, its writes being one piece of work: the
         // first that writes opens it, and the next ones write inside it.
         context: crate::log::current_context().named("duplicate scan"),
         hashes: Vec::new(),
@@ -468,7 +468,7 @@ impl Writes<'_> {
         Ok(())
     }
 
-    /// Commits one take of a write; the next ones write inside its label.
+    /// Commits one take of a write; the next ones write inside its log context.
     fn commit(&mut self, writer: Writer) -> Result<(), ApiError> {
         if writer.op_count() > 0 {
             self.context = crate::log::WriteContext::In(writer.log_context_id());

@@ -328,9 +328,9 @@ mf_gui_scope_into() { # <outfile> <get args...>
 # What "back" means is the script's own business, but for a walk that writes as
 # it goes the answer is always the same: return the repository to where it was
 # before the answer, and ask again. These two helpers are that: each answer
-# writes in a label of its own, and going back reverts it.
+# writes in a log context of its own, and going back reverts it.
 
-# Open a label inside the current context and print it — what to export as
+# Open a log context inside the current context and print it — what to export as
 # METAFOLDER_LOG_CONTEXT so every `mf` started meanwhile writes in it (doc "Labels
 # and contexts"). Empty when it could not be opened: the writes then go where
 # they would have anyway.
@@ -338,8 +338,8 @@ mf_label_begin() { # <name> [description]
     mf context new "$@" 2>/dev/null || true
 }
 
-# Undo what was written in a context: every operation of its label and of the
-# labels nested in it, reverted onto the current state — the watcher's own
+# Undo what was written in a context: every operation of its log context and of the
+# log contexts nested in it, reverted onto the current state — the watcher's own
 # writes meanwhile are left alone, and an answer that wrote nothing reverts
 # nothing (an idempotent `mf tag` often writes nothing at all).
 mf_label_back() { # <context>

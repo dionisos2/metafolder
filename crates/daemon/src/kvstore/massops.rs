@@ -82,7 +82,7 @@ impl KvTxn<'_> {
         field: &str,
         values: &[Value],
         ids: &RoaringBitmap,
-        label: i64,
+        log_context: i64,
         timestamp: i64,
         origin: Option<&str>,
         reverts: Option<i64>,
@@ -141,7 +141,7 @@ impl KvTxn<'_> {
             Kind::Replace => (Effect::Set, Params::Values(field.to_string(), values.to_vec())),
         };
         let h = Header {
-            context: label,
+            context: log_context,
             timestamp,
             origin: origin.map(str::to_string),
             effect,
@@ -248,7 +248,7 @@ impl KvTxn<'_> {
     pub(super) fn mass_delete_log(
         &self,
         ids: &RoaringBitmap,
-        label: i64,
+        log_context: i64,
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
@@ -292,7 +292,7 @@ impl KvTxn<'_> {
         }
         self.chunk_apply(super::derived::LIVE, &[], &changed, false)?;
         let h = Header {
-            context: label,
+            context: log_context,
             timestamp,
             origin: origin.map(str::to_string),
             effect: Effect::Delete,
@@ -342,7 +342,7 @@ impl KvTxn<'_> {
         &self,
         first_op: i64,
         last_op: i64,
-        label: i64,
+        log_context: i64,
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
@@ -367,7 +367,7 @@ impl KvTxn<'_> {
             field,
             std::slice::from_ref(value),
             &ids,
-            label,
+            log_context,
             timestamp,
             origin,
             Some(first_op),

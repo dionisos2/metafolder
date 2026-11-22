@@ -12,10 +12,10 @@ Usage: mf log contexts [OPTIONS]
 
 Options:
       --in <PARENT>
-          Only the labels nested in this one (default: the units of work)
+          Only the log contexts nested in this one (default: the units of work)
 
       --limit <LIMIT>
-          Show at most N labels; default 20
+          Show at most N log contexts; default 20
 
       --all
           Remove the default limit of 20

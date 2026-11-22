@@ -14,7 +14,7 @@ Commands:
   repo        Repository management (default: list)
   task        Background tasks (default: list)
   context     Log contexts: name the work under way, so what is written in it is one context
-  log         The history of operations, by label (default: list)
+  log         The history of operations, by log context (default: list)
   slow        Slow-operation log: what took seconds, and where the time went
   trash       Trash-bin: safely trash a file, or restore/prune (default: list)
   orphan      Orphans: list metarecords whose file is gone, or clear them (default: list)

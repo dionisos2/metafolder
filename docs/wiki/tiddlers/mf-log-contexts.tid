@@ -4,8 +4,8 @@ kind: reference
 summary: List the log contexts with their counts and what undid them, newest first, reading no operation
 
 ```
-> label 12  2026-11-15 14:02  field add tag:string=jazz  (10000 operations)  [undoes label 9]   ← HEAD
-  label 9   2026-11-15 13:40  field add tag:string=blue  (10000 operations)  [undone]
+> log context 12  2026-11-15 14:02  field add tag:string=jazz  (10000 operations)  [undoes log context 9]   ← HEAD
+  log context 9   2026-11-15 13:40  field add tag:string=blue  (10000 operations)  [undone]
 ```
 
 One line per log context, newest first: its own operations, how many log contexts are nested in it, and

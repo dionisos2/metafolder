@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::log::OpRow;
 use crate::rows;
-use crate::store::{LabelMeta, Log};
+use crate::store::{Log, LogContextMeta};
 
 /// The operation that created the repository's root — the log's first, written
 /// at init —, while the log holds it: what undo never takes back (doc "The
@@ -39,10 +39,10 @@ fn root_op(store: &dyn crate::store::Store) -> Result<Option<i64>> {
 pub struct LogQuery {
     /// Cap on the number of *operations* returned (the most recent ones).
     pub limit: Option<usize>,
-    /// Cap on the number of *labels* returned, counted by the operations'
+    /// Cap on the number of *log contexts* returned, counted by the operations'
     /// innermost ones — whole ones, unless `limit` cuts the oldest (then
     /// marked `partial`).
-    pub labels: Option<usize>,
+    pub log_contexts: Option<usize>,
     pub entity: Option<Uuid>,
     pub since: Option<i64>,
     pub until: Option<i64>,
@@ -55,24 +55,24 @@ pub fn listing(store: &dyn crate::store::Store, q: &LogQuery) -> Result<serde_js
     let head = log.head()?;
     let ops = select_ops(log, q, head)?;
 
-    // The labels of the operations in hand and their ancestors — never the
+    // The log contexts of the operations in hand and their ancestors — never the
     // whole table. A window of fifty operations must not pay for the log
     // behind it (doc "Performance testing").
-    let labels = labels_with_ancestors(log, ops.iter().map(|op| op.log_context_id))?;
+    let log_contexts = log_contexts_with_ancestors(log, ops.iter().map(|op| op.log_context_id))?;
 
-    // A label whose oldest operation of its own is not in the window was cut
+    // A log context whose oldest operation of its own is not in the window was cut
     // by the operation bound (only the oldest can be: the window keeps the
     // newest). Not under a metarecord filter, which leaves out most of every
-    // label on purpose. One key per label.
+    // log context on purpose. One key per log context.
     let mut oldest_shown: HashMap<i64, i64> = HashMap::new();
     for op in ops.iter().filter(|_| q.entity.is_none()) {
         let first = oldest_shown.entry(op.log_context_id).or_insert(op.id);
         *first = (*first).min(op.id);
     }
     let mut partial = HashSet::new();
-    for (&label, &shown) in &oldest_shown {
-        if log.label_first_op(label)?.is_some_and(|first| first < shown) {
-            partial.insert(label);
+    for (&log_context, &shown) in &oldest_shown {
+        if log.log_context_first_op(log_context)?.is_some_and(|first| first < shown) {
+            partial.insert(log_context);
         }
     }
 
@@ -80,13 +80,13 @@ pub fn listing(store: &dyn crate::store::Store, q: &LogQuery) -> Result<serde_js
     for op in &ops {
         op_values.push(op_json(log, op, q.include_snapshots)?);
     }
-    let mut label_values = Vec::with_capacity(labels.len());
-    for (id, meta) in &labels {
-        let mut value = label_json(*id, meta);
+    let mut log_context_values = Vec::with_capacity(log_contexts.len());
+    for (id, meta) in &log_contexts {
+        let mut value = log_context_json(*id, meta);
         if partial.contains(id) {
             value["partial"] = json!(true);
         }
-        label_values.push(value);
+        log_context_values.push(value);
     }
 
     // Repository-wide totals, so a client showing a bounded window (the GUI log
@@ -101,14 +101,14 @@ pub fn listing(store: &dyn crate::store::Store, q: &LogQuery) -> Result<serde_js
         // log holds it (doc "The undo selection").
         "root_op": root_op(store)?,
         "operations": op_values,
-        "log_contexts": label_values,
+        "log_contexts": log_context_values,
         "total_entries": total_entries,
         "total_log_contexts": total_log_contexts,
     }))
 }
 
-/// One label, in the shape every response uses (doc "Log endpoints").
-pub fn label_json(id: i64, meta: &LabelMeta) -> serde_json::Value {
+/// One log context, in the shape every response uses (doc "Log endpoints").
+pub fn log_context_json(id: i64, meta: &LogContextMeta) -> serde_json::Value {
     json!({
         "id": id,
         "name": meta.name,
@@ -118,16 +118,16 @@ pub fn label_json(id: i64, meta: &LabelMeta) -> serde_json::Value {
     })
 }
 
-/// The labels `ids` name and all their ancestors, by id — each read once.
-pub fn labels_with_ancestors(
+/// The log contexts `ids` name and all their ancestors, by id — each read once.
+pub fn log_contexts_with_ancestors(
     log: &dyn Log,
     ids: impl Iterator<Item = i64>,
-) -> Result<std::collections::BTreeMap<i64, LabelMeta>> {
+) -> Result<std::collections::BTreeMap<i64, LogContextMeta>> {
     let mut out = std::collections::BTreeMap::new();
     let mut todo: Vec<i64> = ids.collect::<HashSet<_>>().into_iter().collect();
     while !todo.is_empty() {
         let wanted: Vec<i64> = todo.drain(..).filter(|id| !out.contains_key(id)).collect();
-        for (id, meta) in log.labels(&wanted)? {
+        for (id, meta) in log.log_contexts(&wanted)? {
             if let Some(parent) = meta.parent {
                 if !out.contains_key(&parent) {
                     todo.push(parent);
@@ -184,22 +184,22 @@ fn filter_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
 /// Whether the walk so far already holds everything the request will return:
 /// either bound reached is enough, the answer being trimmed by both.
 ///
-/// A label bound alone needs one label more than it returns: the oldest one
-/// in the walk may be cut in half, and without an operation bound a label is
+/// A log context bound alone needs one log context more than it returns: the oldest one
+/// in the walk may be cut in half, and without an operation bound a log context is
 /// shown whole. With one, the operations are what is bounded — a reconcile's
-/// label holds tens of thousands — and the label it cuts is marked `partial`.
+/// log context holds tens of thousands — and the log context it cuts is marked `partial`.
 fn satisfied(q: &LogQuery, ops: &[OpRow]) -> bool {
     let by_limit = q.limit.is_some_and(|l| ops.len() >= l);
-    let by_labels = q.labels.is_some_and(|r| distinct_labels(ops) > r);
-    by_limit || by_labels
+    let by_log_contexts = q.log_contexts.is_some_and(|r| distinct_log_contexts(ops) > r);
+    by_limit || by_log_contexts
 }
 
-fn distinct_labels(ops: &[OpRow]) -> usize {
+fn distinct_log_contexts(ops: &[OpRow]) -> usize {
     ops.iter().map(|op| op.log_context_id).collect::<HashSet<_>>().len()
 }
 
 /// Trims the selection to what was asked for: the most recent `limit`
-/// operations, then the most recent `labels` labels — whole ones, but for
+/// operations, then the most recent `log_contexts` log contexts — whole ones, but for
 /// the oldest, which `limit` may have cut (and `listing` marks).
 fn bound_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
     if let Some(limit) = q.limit {
@@ -207,14 +207,14 @@ fn bound_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
             ops.drain(..ops.len() - limit);
         }
     }
-    if let Some(max) = q.labels {
-        let kept = newest_labels(ops, max);
+    if let Some(max) = q.log_contexts {
+        let kept = newest_log_contexts(ops, max);
         ops.retain(|op| kept.contains(&op.log_context_id));
     }
 }
 
-/// The ids of the `max` most recent labels present in `ops`.
-fn newest_labels(ops: &[OpRow], max: usize) -> HashSet<i64> {
+/// The ids of the `max` most recent log contexts present in `ops`.
+fn newest_log_contexts(ops: &[OpRow], max: usize) -> HashSet<i64> {
     let mut kept = HashSet::new();
     for op in ops.iter().rev() {
         if !kept.contains(&op.log_context_id) {
@@ -230,7 +230,7 @@ fn newest_labels(ops: &[OpRow], max: usize) -> HashSet<i64> {
 /// How much the backward read may take on its first attempt, or `None` when the
 /// request is unbounded.
 fn walk_budget(q: &LogQuery) -> Option<usize> {
-    match (q.limit, q.labels) {
+    match (q.limit, q.log_contexts) {
         (None, None) => None,
         (Some(l), None) => Some(l.max(1)),
         (None, Some(r)) => Some(r.saturating_mul(OPS_PER_LABEL).max(1)),
@@ -238,7 +238,7 @@ fn walk_budget(q: &LogQuery) -> Option<usize> {
     }
 }
 
-/// Operations assumed per label when a request is bounded by labels. A label
+/// Operations assumed per log context when a request is bounded by log contexts. A log context
 /// that holds more (a reconcile writes thousands) simply costs another round
 /// of the walk.
 const OPS_PER_LABEL: usize = 8;
@@ -298,22 +298,22 @@ pub fn snapshots_json(log: &dyn Log, op_id: i64) -> Result<serde_json::Value> {
     Ok(serde_json::Value::Array(out))
 }
 
-// ── Label summaries (doc "Log context summaries") ──────────────────────────────────
+// ── Log context summaries (doc "Log context summaries") ──────────────────────────────────
 
-/// Which labels `GET /repos/:repo/log/contexts` lists.
+/// Which log contexts `GET /repos/:repo/log/contexts` lists.
 #[derive(Debug, Clone, Copy)]
 pub enum Under {
-    /// The units of work: the labels that are nested in none.
+    /// The units of work: the log contexts that are nested in none.
     Roots,
-    /// The labels nested directly in one.
-    Label(i64),
+    /// The log contexts nested directly in one.
+    LogContext(i64),
 }
 
-/// One request for label summaries.
+/// One request for log context summaries.
 #[derive(Debug, Clone, Copy)]
 pub struct SummaryQuery {
     pub under: Under,
-    /// Only the labels older than this one: where the last page stopped.
+    /// Only the log contexts older than this one: where the last page stopped.
     pub before: Option<i64>,
     pub limit: usize,
 }
@@ -321,7 +321,7 @@ pub struct SummaryQuery {
 /// The most summaries one request returns.
 pub const SUMMARIES_MAX: usize = 500;
 
-/// Whether a label is standing or has been undone, whole or in part.
+/// Whether a log context is standing or has been undone, whole or in part.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Undone {
     No,
@@ -337,30 +337,34 @@ fn is_watcher_op(op: &OpRow) -> bool {
             && matches!(op.op_type.as_str(), "file_deleted" | "file_moved" | "file_modified"))
 }
 
-/// Whether `label` stands, from what the labels say of each other and nothing
+/// Whether `log_context` stands, from what the log contexts say of each other and nothing
 /// read of the operations: a revert that undid it whole (or one that undid the
-/// label it is nested in whole) makes it undone unless that revert is itself
+/// log context it is nested in whole) makes it undone unless that revert is itself
 /// undone whole — a redo — and one that undid some of its operations makes it
 /// partly undone. Not exact when partial reverts overlap: it says `partly`
 /// where it could say `fully`, never the other way.
-fn undone_state(log: &dyn Log, label: i64, memo: &mut HashMap<i64, Undone>) -> Result<Undone> {
-    if let Some(known) = memo.get(&label) {
+fn undone_state(
+    log: &dyn Log,
+    log_context: i64,
+    memo: &mut HashMap<i64, Undone>,
+) -> Result<Undone> {
+    if let Some(known) = memo.get(&log_context) {
         return Ok(*known);
     }
     // A cycle (a revert that names itself, a corrupted store) stands.
-    memo.insert(label, Undone::No);
-    let mut chain = vec![(label, true)];
-    let mut next = log.labels(&[label])?.remove(&label).and_then(|m| m.parent);
+    memo.insert(log_context, Undone::No);
+    let mut chain = vec![(log_context, true)];
+    let mut next = log.log_contexts(&[log_context])?.remove(&log_context).and_then(|m| m.parent);
     while let Some(parent) = next {
         if chain.len() > crate::log::MAX_TREE_DEPTH {
             break;
         }
         chain.push((parent, false));
-        next = log.labels(&[parent])?.remove(&parent).and_then(|m| m.parent);
+        next = log.log_contexts(&[parent])?.remove(&parent).and_then(|m| m.parent);
     }
     let mut state = Undone::No;
     for (of, own) in chain {
-        for (reverter, whole) in log.label_reverted_by(of)? {
+        for (reverter, whole) in log.log_context_reverted_by(of)? {
             if undone_state(log, reverter, memo)? == Undone::Fully {
                 continue;
             }
@@ -371,19 +375,19 @@ fn undone_state(log: &dyn Log, label: i64, memo: &mut HashMap<i64, Undone>) -> R
             }
         }
     }
-    memo.insert(label, state);
+    memo.insert(log_context, state);
     Ok(state)
 }
 
-/// Whether anything is written in `label` or under it: an empty context (a
+/// Whether anything is written in `log_context` or under it: an empty context (a
 /// command that wrote nothing, an answer left empty) is no unit of work, and
 /// is not listed — it stays until a reindex (doc "Log contexts"). Stops at the
-/// first operation found, the label's own almost always.
-fn holds_anything(log: &dyn Log, label: i64) -> Result<bool> {
-    let mut todo = vec![label];
+/// first operation found, the log context's own almost always.
+fn holds_anything(log: &dyn Log, log_context: i64) -> Result<bool> {
+    let mut todo = vec![log_context];
     let mut seen = 0;
     while let Some(id) = todo.pop() {
-        if log.label_first_op(id)?.is_some() {
+        if log.log_context_first_op(id)?.is_some() {
             return Ok(true);
         }
         seen += 1;
@@ -391,22 +395,22 @@ fn holds_anything(log: &dyn Log, label: i64) -> Result<bool> {
             // A corrupted store's cycle: listed rather than looped over.
             return Ok(true);
         }
-        todo.extend(log.label_children(id)?);
+        todo.extend(log.log_context_children(id)?);
     }
     Ok(false)
 }
 
-/// The body of `GET /repos/:repo/log/contexts`: labels, newest first, each with
+/// The body of `GET /repos/:repo/log/contexts`: log contexts, newest first, each with
 /// what the log knows of it without reading an operation — how many it holds,
 /// its first and its last, who wrote it, what it reverts and is reverted by.
-/// The cost is a few keys per label, whatever the number of operations in it.
-pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Value> {
+/// The cost is a few keys per log context, whatever the number of operations in it.
+pub fn log_context_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Value> {
     let limit = q.limit.clamp(1, SUMMARIES_MAX);
     let mut ids: Vec<i64> = Vec::new();
     let mut more = false;
     match q.under {
-        Under::Label(parent) => {
-            let mut kids = log.label_children(parent)?;
+        Under::LogContext(parent) => {
+            let mut kids = log.log_context_children(parent)?;
             kids.reverse();
             kids.retain(|id| q.before.is_none_or(|b| *id < b));
             for id in kids {
@@ -424,12 +428,12 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
             const CHUNK: usize = 256;
             let mut before = q.before;
             'scan: loop {
-                let chunk = log.label_ids_before(before, CHUNK)?;
+                let chunk = log.log_context_ids_before(before, CHUNK)?;
                 if chunk.is_empty() {
                     break;
                 }
                 before = chunk.last().copied();
-                let metas = log.labels(&chunk)?;
+                let metas = log.log_contexts(&chunk)?;
                 for id in &chunk {
                     if metas.get(id).is_some_and(|m| m.parent.is_none())
                         && holds_anything(log, *id)?
@@ -447,17 +451,17 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
             }
         }
     }
-    let metas = log.labels(&ids)?;
+    let metas = log.log_contexts(&ids)?;
     let head = log.head()?;
     let head_log_context = match head {
         Some(h) => log.op(h)?.map(|op| op.log_context_id),
         None => None,
     };
     let mut memo = HashMap::new();
-    let mut labels = Vec::with_capacity(ids.len());
+    let mut log_contexts = Vec::with_capacity(ids.len());
     for id in &ids {
         let Some(meta) = metas.get(id) else { continue };
-        let first = log.label_first_op(*id)?;
+        let first = log.log_context_first_op(*id)?;
         let first_op = match first {
             Some(f) => log.op(f)?,
             None => None,
@@ -470,12 +474,12 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
         let marks = |pairs: Vec<(i64, bool)>| -> serde_json::Value {
             pairs
                 .into_iter()
-                .map(|(label, whole)| json!({"log_context": label, "whole": whole}))
+                .map(|(log_context, whole)| json!({"log_context": log_context, "whole": whole}))
                 .collect()
         };
-        let mut value = label_json(*id, meta);
-        value["operations"] = json!(log.label_op_count(*id)?);
-        let last = log.label_last_op(*id)?;
+        let mut value = log_context_json(*id, meta);
+        value["operations"] = json!(log.log_context_op_count(*id)?);
+        let last = log.log_context_last_op(*id)?;
         value["first_op"] = json!(first);
         value["last_op"] = json!(last);
         // When it was last written in: a context is older than most of what is
@@ -486,17 +490,17 @@ pub fn label_summaries(log: &dyn Log, q: &SummaryQuery) -> Result<serde_json::Va
         });
         value["origin"] = json!(first_op.as_ref().and_then(|o| o.origin.clone()));
         value["watcher"] = json!(first_op.as_ref().is_some_and(is_watcher_op));
-        value["children"] = json!(log.label_children(*id)?.len());
-        value["reverts"] = marks(log.label_reverts(*id)?);
-        value["reverted_by"] = marks(log.label_reverted_by(*id)?);
+        value["children"] = json!(log.log_context_children(*id)?.len());
+        value["reverts"] = marks(log.log_context_reverts(*id)?);
+        value["reverted_by"] = marks(log.log_context_reverted_by(*id)?);
         value["undone"] = undone;
         value["is_head"] = json!(head_log_context == Some(*id));
-        labels.push(value);
+        log_contexts.push(value);
     }
     Ok(json!({
         "head": head,
         "head_log_context": head_log_context,
-        "log_contexts": labels,
+        "log_contexts": log_contexts,
         "next_before": if more { ids.last().copied() } else { None },
         "total_log_contexts": log.counts()?.1,
     }))

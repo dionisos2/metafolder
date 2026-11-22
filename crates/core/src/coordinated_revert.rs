@@ -206,7 +206,7 @@ pub fn decide_move(
 /// restoring the directory blob brings back the whole subtree's content at
 /// once, whichever order the cascade's ops are reverted in. For a file the
 /// watcher saw go, the entry must also hold the version the record had before
-/// the watcher's flush being undone (`entity_version_before_label`, present only on
+/// the watcher's flush being undone (`entity_version_before_log_context`, present only on
 /// inverse steps): the precise per-file correlation. `by_metarecord_only`
 /// drops that condition, for a metarecord a trashing deleted outright — the
 /// live entry holding it is unambiguous, since nothing can trash it again
@@ -233,8 +233,9 @@ pub fn decide_deleted(
     // recorded the version at the moment the file was trashed — the
     // pre-flush one. Every op of the flush therefore reaches the same
     // decision. Older daemons expose only the per-op version.
-    let version =
-        op["entity_version_before_label"].as_u64().or_else(|| op["entity_version_before"].as_u64());
+    let version = op["entity_version_before_log_context"]
+        .as_u64()
+        .or_else(|| op["entity_version_before"].as_u64());
     let pos = entries.iter().position(|e| {
         let is_top = e.metarecord.as_deref() == Some(entity)
             && (by_metarecord_only || version.is_some_and(|v| e.version == Some(v)));
@@ -375,11 +376,11 @@ pub fn revert_query(target: &Json) -> Vec<(&'static str, String)> {
             q.push(("target_op_ids", ids.join(",")));
         }
         None => {
-            let label = match &target["log_context_id"] {
+            let log_context = match &target["log_context_id"] {
                 Json::Number(n) => n.to_string(),
                 _ => "head".into(),
             };
-            q.push(("target_log_context_id", label));
+            q.push(("target_log_context_id", log_context));
             if let Some(only) = target["only"].as_str() {
                 q.push(("only", only.to_string()));
             }
@@ -406,7 +407,7 @@ pub struct RevertRequest<'r> {
 /// nothing to report per operation): asks the daemon to write it at once, and
 /// reads the plan only when it refuses because a file action is needed (409) —
 /// then [`revert`] coordinates it. The plan costs about as much as the revert
-/// on a large label, so reading it first doubled an undo touching no file.
+/// on a large log context, so reading it first doubled an undo touching no file.
 pub fn revert_unplanned(
     repo: &Repo<'_>,
     request: &RevertRequest<'_>,
@@ -431,7 +432,7 @@ pub fn revert_unplanned(
 /// otherwise through the coordinated protocol — `start` takes the lock, the
 /// file actions are performed, `commit` writes what they managed, and any error
 /// is an `abort` that leaves the log untouched. Returns the daemon's answer
-/// (`label`, `reverted_operations`, `skipped_operations`).
+/// (`log_context`, `reverted_operations`, `skipped_operations`).
 pub fn revert(
     repo: &Repo<'_>,
     request: &RevertRequest<'_>,
@@ -832,7 +833,7 @@ mod tests {
     }
 
     // An undo touching no file is one request: the plan, which costs as much
-    // as the revert itself on a large label, is not read for nothing.
+    // as the revert itself on a large log context, is not read for nothing.
     #[test]
     fn an_unplanned_revert_without_files_reads_no_plan() {
         let root = scratch("unplanned");
@@ -1045,14 +1046,14 @@ mod tests {
         let ui = Quiet::default();
 
         let mut op = deleted_op("rec-1", Some(1));
-        op["entity_version_before_label"] = json!(0);
+        op["entity_version_before_log_context"] = json!(0);
         let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, &ui, false).unwrap();
         assert!(!skip, "the pre-revision version matches the trash entry: restore, don't skip");
         assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
         assert!(entries.is_empty(), "the entry is consumed once");
 
         let mut op = deleted_op("rec-1", Some(0));
-        op["entity_version_before_label"] = json!(0);
+        op["entity_version_before_log_context"] = json!(0);
         let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, &ui, false).unwrap();
         assert!(!skip, "the record's content is restored: apply the inverse");
         std::fs::remove_dir_all(&base).ok();

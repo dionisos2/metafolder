@@ -1,10 +1,10 @@
-// log panel: the history as a tree of labels — the units of work newest
+// log panel: the history as a tree of log contexts — the units of work newest
 // first (a command, a script's run, a flush of the watcher), each gone into
-// onto the labels nested in it, down to the operations, one level at a time
+// onto the log contexts nested in it, down to the operations, one level at a time
 // like the path-ref panel, and into an operation for what it changed, field by
 // field; revert and prune (doc "log panel", doc "Log contexts"). The
-// units are the daemon's summaries of the labels (doc "Log context summaries"): no
-// operation is read until a label is gone into.
+// units are the daemon's summaries of the log contexts (doc "Log context summaries"): no
+// operation is read until a log context is gone into.
 
 import { byId, el, formatValue, openButton, pathText, qs } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
@@ -38,7 +38,7 @@ const OP_LABELS = /** @type {Record<string, string>} */ ({
 
 /**
  * @typedef {import('./tree.js').Op} Op
- * @typedef {import('./tree.js').Label} Label
+ * @typedef {import('./tree.js').LogContext} LogContext
  * @typedef {import('./tree.js').Node} Node
  * @typedef {import('./tree.js').Row} Row
  *
@@ -64,13 +64,13 @@ export async function mount(root, metafolder) {
   /** The newest operation of the log: the node holding it is marked HEAD. */
   /** @type {number|null} */
   let head = null;
-  /** The key of the row under the cursor (`label:12`, `op:34`, `watcher:7`). */
+  /** The key of the row under the cursor (`logContext:12`, `op:34`, `watcher:7`). */
   /** @type {string|null} */
   let selection = null;
   /** The keys of the nodes gone into, outermost first: the rows listed are
    *  the children of the last one (none: the units of work). @type {string[]} */
   let path = [];
-  // The watcher writes a label per flush, which can bury the user's own work;
+  // The watcher writes a log context per flush, which can bury the user's own work;
   // hiding them keeps only what the user wrote. A display filter: the fetch is
   // the same either way.
   let showWatcher = true;
@@ -79,19 +79,19 @@ export async function mount(root, metafolder) {
   let detail = null;
   /** Guards against a slow answer overwriting a newer operation's. */
   let detailGeneration = 0;
-  // The list fetches a bounded window of the newest units of work, and a label
+  // The list fetches a bounded window of the newest units of work, and a log context
   // gone into the newest of its operations, so a repository with millions of
   // them (a large initial reconcile) still loads; "Show more" grows the window.
   const LOG_PAGE = 100;
   let limit = LOG_PAGE;
-  // The most operations of one label listed when it is gone into.
+  // The most operations of one log context listed when it is gone into.
   const LEVEL_OPS = 500;
-  /** The labels the HEAD operation is under — its own and the ones it is nested
+  /** The log contexts the HEAD operation is under — its own and the ones it is nested
    *  in — whose rows are marked HEAD. @type {Set<number>} */
-  let headLabels = new Set();
+  let headLogContexts = new Set();
   /** Whether older units of work lie beyond the window. */
   let moreUnits = false;
-  /** How many operations the label gone into holds, when only the newest are
+  /** How many operations the log context gone into holds, when only the newest are
    *  listed. @type {{shown: number, of: number}|null} */
   let truncated = null;
 
@@ -108,12 +108,12 @@ export async function mount(root, metafolder) {
   const breadcrumb = byId(root, 'breadcrumb');
   const upButton = byId(root, 'up', HTMLButtonElement);
   const statusLine = byId(root, 'status-line');
-  /** How many labels the log holds, independent of the window fetched.
+  /** How many log contexts the log holds, independent of the window fetched.
    *  @type {number|null} */
   let totals = null;
 
   /** Reads the units of work (the newest `limit`), then goes back into the
-   *  labels the panel was in, so a refresh leaves it where it was. */
+   *  log contexts the panel was in, so a refresh leaves it where it was. */
   async function refresh() {
     if (!repo) {
       placeholderElement.textContent = 'No active repository.';
@@ -121,7 +121,7 @@ export async function mount(root, metafolder) {
     }
     try {
       const log = /** @type {{head?: number|null, head_log_context?: number|null,
-       *                      log_contexts?: Label[], next_before?: number|null,
+       *                      log_contexts?: LogContext[], next_before?: number|null,
        *                      total_log_contexts?: number}} */ (
         await daemon.call('GET', `/repos/${repo}/log/contexts?limit=${limit}`)
       );
@@ -129,7 +129,7 @@ export async function mount(root, metafolder) {
       totals = typeof log.total_log_contexts === 'number' ? log.total_log_contexts : null;
       moreUnits = log.next_before != null;
       truncated = null;
-      headLabels = await labelsAbove(log.head_log_context ?? null);
+      headLogContexts = await logContextsAbove(log.head_log_context ?? null);
       const before = path;
       tree = buildTree(log.log_contexts ?? []);
       // Back into what was gone into: each level read again.
@@ -139,7 +139,7 @@ export async function mount(root, metafolder) {
         const level = path.length === 0 ? tree : inside && inside.kind !== 'op' ? (inside.children ?? []) : [];
         const next = level.find((/** @type {Node} */ n) => keyOf(n) === key);
         if (!next) break;
-        if (next.kind === 'label' && next.children === null) await loadLevel(next);
+        if (next.kind === 'logContext' && next.children === null) await loadLevel(next);
         path = [...path, key];
         if (next.kind === 'op') break;
       }
@@ -155,9 +155,9 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** A label and the labels it is nested in. @param {number|null} id
+  /** A log context and the log contexts it is nested in. @param {number|null} id
    *  @returns {Promise<Set<number>>} */
-  async function labelsAbove(id) {
+  async function logContextsAbove(id) {
     /** @type {Set<number>} */
     const out = new Set();
     if (id === null || repo === null) return out;
@@ -168,21 +168,21 @@ export async function mount(root, metafolder) {
       );
       for (const ancestor of body.ancestors ?? []) out.add(ancestor.id);
     } catch {
-      // The label may have been pruned since: the units are listed all the same.
+      // The log context may have been pruned since: the units are listed all the same.
     }
     return out;
   }
 
-  /** Reads what a label holds — the labels nested in it, and the newest of its
+  /** Reads what a log context holds — the log contexts nested in it, and the newest of its
    *  own operations, without their snapshots — and puts it in its node.
    *  @param {Node} node */
   async function loadLevel(node) {
-    if (node.kind !== 'label' || repo === null) return;
+    if (node.kind !== 'logContext' || repo === null) return;
     const [nested, own] = await Promise.all([
-      /** @type {Promise<{log_contexts?: Label[]}>} */ (
+      /** @type {Promise<{log_contexts?: LogContext[]}>} */ (
         daemon.call('GET', `/repos/${repo}/log/contexts?parent=${node.id}&limit=500`)
       ),
-      node.label.operations > 0
+      node.logContext.operations > 0
         ? /** @type {Promise<{log_context?: {operation_count?: number}, operations?: Op[]}>} */ (
           daemon.call(
             'GET',
@@ -237,7 +237,7 @@ export async function mount(root, metafolder) {
   }
 
   /** How much log there is: what is on screen, and — when the fetched window is
-   *  only part of it — the labels the repository holds. */
+   *  only part of it — the log contexts the repository holds. */
   function renderStatusLine() {
     if (!repo) {
       statusLine.textContent = '';
@@ -247,7 +247,7 @@ export async function mount(root, metafolder) {
     const what = path.length === 0 ? 'unit' : 'row';
     let line = `${units} ${what}${units === 1 ? '' : 's'}${path.length === 0 ? ' of work' : ''}`;
     if (path.length === 0 && moreUnits && totals !== null) {
-      line += ` — of ${totals} labels in the repository`;
+      line += ` — of ${totals} log contexts in the repository`;
     }
     if (truncated !== null && path.length > 0) {
       line += ` — the newest ${truncated.shown} of ${truncated.of} operations`;
@@ -278,7 +278,7 @@ export async function mount(root, metafolder) {
   }
 
   /** Goes into the row `key` (the selected one by default), and says whether
-   *  it did: a label or a fold of the watcher's flushes, the cursor landing on
+   *  it did: a log context or a fold of the watcher's flushes, the cursor landing on
    *  the first thing it holds; or an operation, which shows what it changed.
    *  Nothing is below an operation. @param {string|null} [key] */
   function descend(key = selection) {
@@ -288,8 +288,8 @@ export async function mount(root, metafolder) {
     selection = visible()[0]?.key ?? null;
     render();
     if (node.kind === 'op') void loadDetail();
-    // A label is read when it is gone into: its rows come when they are here.
-    if (node.kind === 'label' && node.children === null) {
+    // A log context is read when it is gone into: its rows come when they are here.
+    if (node.kind === 'logContext' && node.children === null) {
       const at = path;
       truncated = null;
       void loadLevel(node)
@@ -330,9 +330,9 @@ export async function mount(root, metafolder) {
     const isHead =
       node.kind === 'op'
         ? node.op.id === head
-        : node.kind === 'label'
-          ? headLabels.has(node.id)
-          : node.children.some((c) => c.kind === 'label' && headLabels.has(c.id));
+        : node.kind === 'logContext'
+          ? headLogContexts.has(node.id)
+          : node.children.some((c) => c.kind === 'logContext' && headLogContexts.has(c.id));
     if (isHead) {
       badges.push(el('span', { class: 'badge head-marker' }, 'HEAD'));
     }
@@ -353,7 +353,7 @@ export async function mount(root, metafolder) {
     return badges;
   }
 
-  /** The name cell: the label's number and name, or the operation.
+  /** The name cell: the log context's number and name, or the operation.
    *  @param {Node} node */
   function nameText(node) {
     if (node.kind === 'op') {
@@ -363,7 +363,7 @@ export async function mount(root, metafolder) {
       }`;
     }
     if (node.kind === 'watcher') return `${node.children.length} flushes of the watcher`;
-    return `#${node.id} ${node.label.name}`;
+    return `#${node.id} ${node.logContext.name}`;
   }
 
   /** @param {Row} row */
@@ -373,12 +373,12 @@ export async function mount(root, metafolder) {
     if (node.kind === 'watcher') {
       return el('td', { class: 'name' }, el('span', { class: 'label' }, nameText(node)));
     }
-    const description = node.label.description;
+    const description = node.logContext.description;
     return el(
       'td',
       { class: 'name', title: description ?? '' },
       `#${node.id} `,
-      el('span', { class: 'label' }, node.label.name),
+      el('span', { class: 'label' }, node.logContext.name),
       description ? el('span', { class: 'description' }, ` — ${description}`) : null,
     );
   }
@@ -400,7 +400,7 @@ export async function mount(root, metafolder) {
         ],
         onclick: () => select(row.key),
       },
-      // A row is gone into by its button (doc "Opening a row"): a label for
+      // A row is gone into by its button (doc "Opening a row"): a log context for
       // what it holds, an operation for what it changed.
       el(
         'td',
@@ -610,12 +610,12 @@ export async function mount(root, metafolder) {
   async function prune() {
     const target = revertTarget(focusKey());
     if (target === null || repo === null) return;
-    const what = 'op_ids' in target ? `operation ${target.op_ids[0]}` : `label #${target.log_context_id}`;
+    const what = 'op_ids' in target ? `operation ${target.op_ids[0]}` : `log context #${target.log_context_id}`;
     if (!confirm(`Prune all history before ${what}? This cannot be undone.`)) return;
     try {
       const result = /** @type {{pruned_operations: number}} */ (
         await daemon.call('POST', `/repos/${repo}/log/prune`, {
-          // A label is kept whole: the cut is its oldest operation.
+          // A log context is kept whole: the cut is its oldest operation.
           target: 'op_ids' in target ? { id: target.op_ids[0] } : { log_context: target.log_context_id },
         })
       );
@@ -652,10 +652,10 @@ export async function mount(root, metafolder) {
   function describeTarget(target) {
     return 'op_ids' in target
       ? `operation${target.op_ids.length === 1 ? '' : 's'} ${target.op_ids.join(', ')}`
-      : `label #${target.log_context_id}`;
+      : `log context #${target.log_context_id}`;
   }
 
-  /** Reverts whatever is selected: a label whole — what is nested in it
+  /** Reverts whatever is selected: a log context whole — what is nested in it
    *  included — or one operation. Through `mf`: a command's run (doc "Command
    *  transactions"), or the panel's own API for a click.
    *  @param {MetafolderApi} mf */
@@ -675,7 +675,7 @@ export async function mount(root, metafolder) {
     await runRevert(mf, target, plan);
   }
 
-  /** Reverts one operation even when a label is selected: opens it down to
+  /** Reverts one operation even when a log context is selected: opens it down to
    *  its newest operation and asks for that, so "undo just this field" is
    *  reachable from the keyboard as well as by clicking the row.
    *  @param {MetafolderApi} mf */
@@ -684,7 +684,7 @@ export async function mount(root, metafolder) {
     const node = key === null ? null : findNode(key);
     if (node === null) return;
     if (node.kind === 'op') return revert(mf);
-    if (node.kind !== 'label' || node.label.operations === 0) return;
+    if (node.kind !== 'logContext' || node.logContext.operations === 0) return;
     // Its operations are read now, to name the one to revert.
     if (node.children === null) await loadLevel(node);
     const own = (node.children ?? []).flatMap((c) => (c.kind === 'op' ? [c.op] : []));
@@ -692,7 +692,7 @@ export async function mount(root, metafolder) {
     openTo(own[0]);
     if (own.length === 1) return revert(mf);
     void statusBar.message(
-      `${node.label.operations} operations: pick one and press revert again.`,
+      `${node.logContext.operations} operations: pick one and press revert again.`,
       statusMessageMs,
     );
   }
@@ -702,12 +702,12 @@ export async function mount(root, metafolder) {
     reveal(`op:${op.id}`);
   }
 
-  /** The widening counterpart: reverts the label the operation under the
+  /** The widening counterpart: reverts the log context the operation under the
    *  cursor was written in. @param {MetafolderApi} mf */
-  async function revertLabel(mf) {
+  async function revertLogContext(mf) {
     const key = focusKey();
     const node = key === null ? null : findNode(key);
-    if (node?.kind === 'op') reveal(`label:${node.op.log_context_id}`);
+    if (node?.kind === 'op') reveal(`logContext:${node.op.log_context_id}`);
     return revert(mf);
   }
 
@@ -752,7 +752,7 @@ export async function mount(root, metafolder) {
       const summary =
         result.log_context === null
           ? 'Nothing was reverted.'
-          : `Reverted ${describeTarget(target)} in label #${result.log_context} (${count} operation(s)).`;
+          : `Reverted ${describeTarget(target)} in log context #${result.log_context} (${count} operation(s)).`;
       void statusBar.message([summary, ...result.notes].join(' · '), statusMessageMs);
       await refresh();
       await mf.workspace.set('metarecords:dirty', Date.now());
@@ -792,7 +792,7 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const REVERTS = {
     op: (mf) => revertOperation(mf),
-    label: (mf) => revertLabel(mf),
+    label: (mf) => revertLogContext(mf),
   };
 
   void commands.register('log:revert', {
@@ -806,7 +806,7 @@ export async function mount(root, metafolder) {
         complete: () => Object.keys(REVERTS),
       },
     ],
-    // No scope: revert exactly what the selection is — a label, or one
+    // No scope: revert exactly what the selection is — a log context, or one
     // operation.
     handler: (mf, scope) => {
       if (scope === undefined) return revert(mf);
@@ -838,7 +838,7 @@ export async function mount(root, metafolder) {
   });
 
   void commands.register('log:prune', {
-    label: 'Log: prune history before the selected label or operation',
+    label: 'Log: prune history before the selected log context or operation',
     reveal: true,
     handler: prune,
   });
@@ -848,7 +848,7 @@ export async function mount(root, metafolder) {
   metafolder.provide({ refresh });
   // The cursor, for the generic commands (doc "Generic panel commands"): the
   // rows on screen, newest first, the selection being one of their keys. A
-  // find jumps to a label by number or name.
+  // find jumps to a log context by number or name.
   metafolder.provide({
     index: () => visible().findIndex((row) => row.key === selection),
     count: () => visible().length,
@@ -856,14 +856,14 @@ export async function mount(root, metafolder) {
       const row = visible()[index];
       if (row) select(row.key);
     },
-    // `cursor:descend` goes into a label or an operation (and so does a
-    // walk, `cursor:find log walk`, label after label).
+    // `cursor:descend` goes into a log context or an operation (and so does a
+    // walk, `cursor:find log walk`, log context after log context).
     descend: (_mf, index) => descend(visible()[index]?.key ?? null),
     entries: () =>
       visible().map(({ node }) => {
         if (node.kind === 'op') return { name: `op ${node.op.id}`, label: `op ${node.op.id}` };
         if (node.kind === 'watcher') return { name: 'watcher', label: 'flushes of the watcher' };
-        return { name: `#${node.id}`, label: `#${node.id} — ${node.label.name}` };
+        return { name: `#${node.id}`, label: `#${node.id} — ${node.logContext.name}` };
       }),
   });
 
@@ -874,7 +874,7 @@ export async function mount(root, metafolder) {
   workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredRefresh));
   workspace.onChange('active_repo', (value) => {
     repo = /** @type {string|null} */ (value ?? null);
-    // A selection is a label of the previous repository.
+    // A selection is a log context of the previous repository.
     selection = null;
     path = [];
     limit = LOG_PAGE; // reset the window for the new repository

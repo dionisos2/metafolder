@@ -6,4 +6,4 @@ summary: Served by the daemon.
 !! Reference
 
 |!Server |daemon |
-|!Handler |``list_labels`` |
+|!Handler |``list_log_contexts`` |

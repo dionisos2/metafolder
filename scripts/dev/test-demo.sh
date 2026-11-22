@@ -53,11 +53,11 @@ assert "demo: some files are rated" test "$(count 'rating>=4')" -gt 3
 assert "demo: some files carry a comment" test "$(count 'comment?')" -gt 0
 assert "demo: a wallpaper is denied an animal" test "$(count 'negative_tag #=nature/animal')" -gt 0
 
-# `mf log` lists the innermost labels, the commands; the step is the label they
+# `mf log` lists the innermost log contexts, the commands; the step is the log context they
 # are nested in, which `mf log show` names.
 assert_contains "demo: the steps are labelled for the log" \
     "$(df_mf log show HEAD 2>/dev/null)" "Comment on a few files"
-assert_not "demo: no label shows the throwaway daemon's port" \
+assert_not "demo: no log context shows the throwaway daemon's port" \
     grep -q -- "-p $DF_PORT" <<<"$(df_mf log list --all 2>/dev/null)"
 
 assert_summary

@@ -17,7 +17,7 @@ An operation is ''not'' the one when:
 * it is ''itself'' a revert — an undo or a redo; undoing it would be a redo, and treating it as a candidate would make undo a two-state oscillation;
 * it has already been undone — by a revert that still stands, resolved along the whole chain;
 * it is an `unknown` operation, which carries nothing to invert;
-* it is the creation of the repository's root, written at init (`root_op` in `GET /log`). Undo stops there; `mf log revert <label>` still reaches it. Once a prune — or the conversion to layout 11, which empties the log — took it away, nothing stops undo: the oldest operation left is a change like another (user decision, November 2026; until then the oldest operation a prune left stopped it too).
+* it is the creation of the repository's root, written at init (`root_op` in `GET /log`). Undo stops there; `mf log revert <log-context>` still reaches it. Once a prune — or the conversion to layout 11, which empties the log — took it away, nothing stops undo: the oldest operation left is a change like another (user decision, November 2026; until then the oldest operation a prune left stopped it too).
 
 Undoing the log context chosen is a revert of `{"log_context_id": L, "only": "changes"}`: the daemon
 takes the operations of L and of every log context nested in it, and keeps those that are not

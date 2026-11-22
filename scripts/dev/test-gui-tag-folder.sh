@@ -568,7 +568,7 @@ assert "up: the sibling left behind is found on the way up" [ "$(asked /a/b/z.tx
 # "Script sessions"); the letter `u` (undo) is its typed twin. The answer is undone
 # through the event log — which restores the exact rows — and the entry, open
 # once more, is what the next step query returns. Each answer writes in a
-# label of its own (doc "Log contexts"); going back reverts it.
+# log context of its own (doc "Log contexts"); going back reverts it.
 mock_reset
 setup_top
 walk_children "" file file-a file-b file-a file-b
@@ -583,10 +583,10 @@ mock_prompt '/top'
 mock_input q y u n y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "back: exits 0" [ "$code" -eq 0 ]
-assert "back: the undone answer's label was reverted" \
+assert "back: the undone answer's log context was reverted" \
     [ "$(mock_count 'log revert 2 --force --silent')" -eq 1 ]
 assert "back: and nothing else was" [ "$(mock_count 'log revert*')" -eq 1 ]
-assert "back: the run is a label" [ "$(mock_count 'context new gui-tag-folder music *')" -eq 1 ]
+assert "back: the run is a log context" [ "$(mock_count 'context new gui-tag-folder music *')" -eq 1 ]
 assert "back: the previous entry is asked again" [ "$(asked /top/a.txt)" -eq 2 ]
 assert "back: and the second answer is the one that stands" \
     [ "$(mock_count 'tag -i file-a deny music')" -eq 1 ]
@@ -825,7 +825,7 @@ assert "rest y: the entry is not tagged on its own" \
     [ "$(mock_count 'tag -i file-a *')" -eq 0 ]
 assert "rest y: the folder is closed for the rest of the run" \
     [ "$(mock_count '*AND NOT mfr_path ->* "/top" AND*')" -ge 1 ]
-assert "rest y: the answer is a label of its own" \
+assert "rest y: the answer is a log context of its own" \
     [ "$(mock_count 'context new /top/a.txt: a y')" -eq 1 ]
 assert_contains "rest y: reports done" "$out" "done tagging 'music'"
 

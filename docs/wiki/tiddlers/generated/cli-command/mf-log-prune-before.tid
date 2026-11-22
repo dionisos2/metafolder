@@ -12,7 +12,7 @@ Usage: mf log prune before [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-          A label id: the label is kept whole, its children included
+          A log context id: the log context is kept whole, its children included
 
 Options:
       --id <ID>

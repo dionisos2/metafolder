@@ -167,13 +167,13 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
             get(&format!("{url}/repos/{repo}/log?limit=50")).await?;
         }
         "log.window_revisions" => {
-            // What `mf log list` asks for: twenty labels, at most 500
-            // operations (a reconcile's label holds tens of thousands).
+            // What `mf log list` asks for: twenty log contexts, at most 500
+            // operations (a reconcile's log context holds tens of thousands).
             get(&format!("{url}/repos/{repo}/log?log_contexts=20&limit=500")).await?;
         }
         "log.label_summaries" => {
             // What the log panel's top level and `mf log contexts` ask for: the
-            // newest labels, summarised without an operation being read.
+            // newest log contexts, summarised without an operation being read.
             get(&format!("{url}/repos/{repo}/log/contexts?limit=100")).await?;
         }
         "log.undo_window" => {

@@ -5,9 +5,9 @@ summary: mf log revert <log context> (or --op) writes the inverse onto the curre
 
 ```
 mf -n music log revert plan 12          # what it would do — nothing written, no lock
-mf -n music log revert 12               # revert label 12, its children included
+mf -n music log revert 12               # revert log context 12, its children included
 mf -n music log revert --op 23          # only one of its operations (repeatable)
-mf -n music log revert                  # the label of the newest operation
+mf -n music log revert                  # the log context of the newest operation
 mf -n music log revert 12 --metadata-only
 ```
 
@@ -20,7 +20,7 @@ it (`--force` skips the question):
 
 ```
 Changed since — the revert overwrites what was written there:
-  op 23  set_field(rating)  on 5f2a1c88… — changed since by op 91 (label 40, 2024-01-16 08:04)
+  op 23  set_field(rating)  on 5f2a1c88… — changed since by op 91 (log context 40, 2024-01-16 08:04)
 ```
 
 ''Files.'' When the plan needs file actions, the CLI shows it, asks (unless `--force`),
@@ -30,7 +30,7 @@ the trash first, so no byte is lost), bringing content back from the trash, or s
 it back there. What it cannot do is simply left out of the revert, and named:
 
 ```
-Reverted label 12 in label 57 (2 operations, 1 file moved).
+Reverted log context 12 in log context 57 (2 operations, 1 file moved).
 
   op 22  set_field(rating)    5 → 3
   op 23  file_moved(mfr_path) music/new.mp3 → music/old.mp3   (mv)

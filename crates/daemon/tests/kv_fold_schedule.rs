@@ -131,7 +131,7 @@ enum Step {
     Set(Uuid, i64),
     Delete(Uuid),
     Create(Uuid),
-    /// Undoes the write of the `n`-th label taken so far.
+    /// Undoes the write of the `n`-th log context taken so far.
     Undo(usize),
     /// Deletes a folder with every record under it: a deletion of many records
     /// that takes a folder whole.
@@ -166,7 +166,7 @@ type State = (Vec<(Uuid, bool, Vec<String>)>, Vec<String>);
 
 struct Side {
     store: KvStore,
-    labels: Vec<i64>,
+    log_contexts: Vec<i64>,
     /// Writes to many records made as a write to each, as before they were
     /// one entry: the oracle of what they do to the records.
     one_by_one: bool,
@@ -194,7 +194,7 @@ impl Side {
             .unwrap();
         }
         w.commit().unwrap();
-        Side { store, labels: Vec::new(), one_by_one, uuids: uuids.to_vec(), _dir: dir }
+        Side { store, log_contexts: Vec::new(), one_by_one, uuids: uuids.to_vec(), _dir: dir }
     }
 
     /// Plays `step`; whether it was written (an undo may be refused). An
@@ -202,7 +202,7 @@ impl Side {
     /// was.
     fn play(&mut self, step: &Step, abort: bool) -> Result<(), String> {
         let mut w = Writer::begin(&mut self.store, Some("step".into())).unwrap();
-        let label = w.log_context_id();
+        let log_context = w.log_context_id();
         let ids = |w: &Writer, uuids: &[Uuid]| w.dense_ids(uuids).unwrap();
         let one_by_one = self.one_by_one;
         let done: anyhow::Result<()> = (|| {
@@ -302,7 +302,7 @@ impl Side {
                     }
                 }
                 Step::Undo(n) => {
-                    let ops = revert::label_ops(w.store(), self.labels[*n])?;
+                    let ops = revert::log_context_ops(w.store(), self.log_contexts[*n])?;
                     revert::apply(&mut w, &ops)?;
                 }
                 Step::DeleteFolder(f) => {
@@ -332,7 +332,7 @@ impl Side {
             _ if abort => Err("aborted".into()),
             Ok(()) => {
                 w.commit().map_err(|e| format!("{e:#}"))?;
-                self.labels.push(label);
+                self.log_contexts.push(log_context);
                 Ok(())
             }
             Err(e) => Err(format!("{e:#}")),
@@ -369,7 +369,7 @@ impl Side {
     }
 }
 
-fn draw(rng: &mut Rng, uuids: &[Uuid], labels: usize) -> Step {
+fn draw(rng: &mut Rng, uuids: &[Uuid], log_contexts: usize) -> Step {
     let one = uuids[rng.below(uuids.len())];
     let many = {
         let k = 16 + rng.below(uuids.len() - 16);
@@ -377,7 +377,7 @@ fn draw(rng: &mut Rng, uuids: &[Uuid], labels: usize) -> Step {
     };
     let tag = TAGS[rng.below(TAGS.len())];
     // Writes to one record often, so that some are newer than the entries a
-    // write to many left; undos of the newest label most, which the one-pass
+    // write to many left; undos of the newest log context most, which the one-pass
     // paths of an undo require.
     let folder = uuids[rng.below(FOLDERS)];
     let file = uuids[FOLDERS + rng.below(uuids.len() - FOLDERS)];
@@ -401,8 +401,8 @@ fn draw(rng: &mut Rng, uuids: &[Uuid], labels: usize) -> Step {
         9 => Step::Set(one, rng.below(3) as i64),
         10 => Step::Delete(one),
         11 => Step::Create(one),
-        _ if labels > 0 && rng.below(2) == 0 => Step::Undo(labels - 1),
-        _ if labels > 0 => Step::Undo(labels - 1 - rng.below(labels.min(4))),
+        _ if log_contexts > 0 && rng.below(2) == 0 => Step::Undo(log_contexts - 1),
+        _ if log_contexts > 0 => Step::Undo(log_contexts - 1 - rng.below(log_contexts.min(4))),
         _ => Step::Create(one),
     }
 }
@@ -418,7 +418,7 @@ fn run_case(seed: u64, steps: usize) {
     let mut played = Vec::new();
     let queries = queries(&uuids);
     for at in 0..steps {
-        let step = draw(&mut rng, &uuids, whole.labels.len());
+        let step = draw(&mut rng, &uuids, whole.log_contexts.len());
         played.push(step.clone());
         let abort = rng.below(8) == 0;
         let (a, b, c) =

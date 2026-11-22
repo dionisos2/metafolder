@@ -106,7 +106,7 @@ repository to where it was before the answer, and ask again. Each answer writes 
 log context of its own ([[Log contexts]]), and going back reverts it:
 
 ```
-RUN_LABEL=$(mf_label_begin "my-script $TAG")      # once: the run is one label
+RUN_LABEL=$(mf_label_begin "my-script $TAG")      # once: the run is one log context
 export METAFOLDER_LOG_CONTEXT=$RUN_LABEL
 ...
 answer=$(mf_label_begin "$path: y")               # inside the run's

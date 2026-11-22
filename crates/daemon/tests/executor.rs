@@ -87,7 +87,7 @@ fn revision_count(repo: &RepoState) -> i64 {
     metafolder_daemon::store::Log::counts(&*repo.conn.lock().unwrap()).unwrap().1
 }
 
-/// The label of the newest operation (HEAD's), and that operation's origin.
+/// The log context of the newest operation (HEAD's), and that operation's origin.
 fn newest_revision(store: &dyn metafolder_daemon::store::Store) -> (i64, Option<String>) {
     let head = store.op(store.head().unwrap().unwrap()).unwrap().unwrap();
     (head.log_context_id, head.origin)
@@ -1696,7 +1696,7 @@ fn test_a_watcher_revision_records_its_origin() {
     let conn = repo.conn.lock().unwrap();
     // The write holding the arrival — the newest one.
     let (rev_id, origin) = newest_revision(&*conn);
-    let types: Vec<String> = metafolder_daemon::store::Log::label_ops(&*conn, rev_id)
+    let types: Vec<String> = metafolder_daemon::store::Log::log_context_ops(&*conn, rev_id)
         .unwrap()
         .into_iter()
         .map(|op| op.op_type)
@@ -1720,12 +1720,12 @@ fn test_a_watcher_revision_records_its_origin() {
     assert_eq!(origin, None, "an ordinary write is nobody's but the writer's");
 }
 
-/// Each flush opens a label of its own under the watcher's (doc "Labels and
-/// contexts"), which no client may write under: a client cannot pass its
+/// Each flush opens a log context of its own under the watcher's (doc "Log contexts"),
+/// which no client may write under: a client cannot pass its
 /// writes off as the daemon's.
 #[test]
-fn test_a_flush_writes_under_the_watchers_label_and_nobody_else_can() {
-    use metafolder_daemon::log::{NewLabel, Retention, WriteContext};
+fn test_a_flush_writes_under_the_watchers_log_context_and_nobody_else_can() {
+    use metafolder_daemon::log::{NewLogContext, Retention, WriteContext};
     use metafolder_daemon::store::Log;
     let (repo, root, root_uuid) = setup("watcher_label");
     for name in ["a.txt", "b.txt"] {
@@ -1735,16 +1735,20 @@ fn test_a_flush_writes_under_the_watchers_label_and_nobody_else_can() {
     }
 
     let mut conn = repo.conn.lock().unwrap();
-    let watcher = conn.watcher_label().unwrap().expect("the watcher's label");
-    let flushes = conn.label_children(watcher).unwrap();
-    assert_eq!(flushes.len(), 2, "one label per flush");
+    let watcher = conn.watcher_log_context().unwrap().expect("the watcher's log context");
+    let flushes = conn.log_context_children(watcher).unwrap();
+    assert_eq!(flushes.len(), 2, "one log context per flush");
     let (head_log_context, _) = newest_revision(&*conn);
     assert_eq!(flushes[1], head_log_context);
 
     for context in [
         WriteContext::In(watcher),
         WriteContext::In(flushes[0]),
-        WriteContext::New(NewLabel { name: "x".into(), description: None, parent: Some(watcher) }),
+        WriteContext::New(NewLogContext {
+            name: "x".into(),
+            description: None,
+            parent: Some(watcher),
+        }),
     ] {
         let refused = Writer::begin_in(&mut *conn, context.clone(), Retention::UNLIMITED);
         assert!(refused.is_err(), "{context:?} was let through");

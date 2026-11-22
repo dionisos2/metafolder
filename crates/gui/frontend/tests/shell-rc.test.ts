@@ -29,7 +29,7 @@ test('a typed line is run as typed, a program opened on a file is not', async ()
   await dispatch('file:open-with vlc');
 
   expect(runShellCalls()).toEqual([
-    { wsId: 'ws-1', commandLine: 'echo hi', label: null, typed: true },
-    { wsId: 'ws-1', commandLine: "vlc '/music/a.flac'", label: null, typed: false },
+    { wsId: 'ws-1', commandLine: 'echo hi', logContext: null, typed: true },
+    { wsId: 'ws-1', commandLine: "vlc '/music/a.flac'", logContext: null, typed: false },
   ]);
 });

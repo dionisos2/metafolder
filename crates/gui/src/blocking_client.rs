@@ -44,14 +44,14 @@ impl BlockingClient {
             LogContext::Create { key, repo, body, .. } => {
                 // Through `request`: a work context gone meanwhile is
                 // forgotten there, and the context is created outside it.
-                let labels = format!("/repos/{}/contexts", repo.as_simple());
-                let created = match self.request("POST", &labels, Some(&body)) {
+                let log_contexts = format!("/repos/{}/contexts", repo.as_simple());
+                let created = match self.request("POST", &log_contexts, Some(&body)) {
                     Ok(created) => created,
-                    Err(_) if crate::work_context::label_for(path).is_none() => {
+                    Err(_) if crate::work_context::log_context_for(path).is_none() => {
                         let LogContext::Create { body, .. } = log_context_for(method, path) else {
                             return Ok(None);
                         };
-                        self.request("POST", &labels, Some(&body))?
+                        self.request("POST", &log_contexts, Some(&body))?
                     }
                     Err(e) => return Err(e),
                 };
@@ -90,8 +90,8 @@ impl DaemonClient for BlockingClient {
         if let Some(token) = &self.token {
             req = req.header("Authorization", format!("Bearer {token}"));
         }
-        if let Some(label) = self.log_context(method, path)? {
-            req = req.header(metafolder_core::context::LOG_CONTEXT_HEADER, label.to_string());
+        if let Some(log_context) = self.log_context(method, path)? {
+            req = req.header(metafolder_core::context::LOG_CONTEXT_HEADER, log_context.to_string());
         }
         let result = match body {
             Some(json) => req.send_json(json),
@@ -108,7 +108,7 @@ impl DaemonClient for BlockingClient {
         if response.status().is_success() {
             return Ok(body);
         }
-        // The work context's label was pruned meanwhile: nothing was
+        // The work context's log context was pruned meanwhile: nothing was
         // written, and the request goes again outside the context.
         if crate::work_context::forget_if_gone(path, code, &body) {
             return self.request(method, path, body_in);

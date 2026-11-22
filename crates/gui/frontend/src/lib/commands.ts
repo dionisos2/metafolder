@@ -338,17 +338,17 @@ function fileOps(ws: string, context: ExecContext): FileOps {
 export async function runShell(
   commandLine: string,
   {
-    label,
+    logContext,
     typed = false,
     ws = focusedWs(),
-  }: { label?: string; typed?: boolean; ws?: string | null } = {},
+  }: { logContext?: string; typed?: boolean; ws?: string | null } = {},
 ): Promise<void> {
   if (!ws) return;
   try {
     await invoke("run_shell", {
       wsId: ws,
       commandLine,
-      label: label ?? null,
+      logContext: logContext ?? null,
       typed,
     });
   } catch (error) {

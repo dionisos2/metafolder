@@ -1,4 +1,4 @@
-//! The event log (doc "Event log"): reading it, its labels, and pruning. The log is a sequence: nothing navigates over it (doc "The
+//! The event log (doc "Event log"): reading it, its log contexts, and pruning. The log is a sequence: nothing navigates over it (doc "The
 //! operation log").
 
 use super::*;
@@ -19,28 +19,30 @@ pub(super) fn snapshots_json(
     Ok(crate::log_view::snapshots_json(conn, op_id)?)
 }
 
-/// A label with its ancestors, innermost first (`GET /contexts/:id`).
-fn label_json(log: &dyn crate::store::Log, id: i64) -> Result<serde_json::Value, ApiError> {
-    let mut labels = log.labels(&[id])?;
-    let meta = labels.remove(&id).ok_or_else(|| ApiError::not_found(format!("no label {id}")))?;
-    let mut value = crate::log_view::label_json(id, &meta);
+/// A log context with its ancestors, innermost first (`GET /contexts/:id`).
+fn log_context_json(log: &dyn crate::store::Log, id: i64) -> Result<serde_json::Value, ApiError> {
+    let mut log_contexts = log.log_contexts(&[id])?;
+    let meta = log_contexts
+        .remove(&id)
+        .ok_or_else(|| ApiError::not_found(format!("no log context {id}")))?;
+    let mut value = crate::log_view::log_context_json(id, &meta);
     let mut ancestors = Vec::new();
     let mut next = meta.parent;
     while let Some(parent) = next {
-        let Some(m) = log.labels(&[parent])?.remove(&parent) else { break };
-        ancestors.push(crate::log_view::label_json(parent, &m));
+        let Some(m) = log.log_contexts(&[parent])?.remove(&parent) else { break };
+        ancestors.push(crate::log_view::log_context_json(parent, &m));
         next = m.parent;
         if ancestors.len() > crate::log::MAX_TREE_DEPTH {
             break;
         }
     }
     value["ancestors"] = json!(ancestors);
-    value["children"] = json!(log.label_children(id)?);
+    value["children"] = json!(log.log_context_children(id)?);
     Ok(value)
 }
 
 #[derive(Deserialize)]
-pub(super) struct NewLabelBody {
+pub(super) struct NewLogContextBody {
     name: String,
     #[serde(default)]
     description: Option<String>,
@@ -48,18 +50,18 @@ pub(super) struct NewLabelBody {
     parent: Option<i64>,
 }
 
-/// `POST /repos/:repo/contexts`: opens a label — a context the client's writes
-/// will name (doc "Log contexts"). Its parent defaults to the label the
+/// `POST /repos/:repo/contexts`: opens a log context — a context the client's writes
+/// will name (doc "Log contexts"). Its parent defaults to the log context the
 /// request is made in; one that does not exist, or the watcher's, is a `400`.
-pub(super) async fn create_label(
+pub(super) async fn create_log_context(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
-    payload: Result<Json<NewLabelBody>, JsonRejection>,
+    payload: Result<Json<NewLogContextBody>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     if body.name.trim().is_empty() {
-        return Err(ApiError::bad_request("a label needs a name"));
+        return Err(ApiError::bad_request("a log context needs a name"));
     }
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
@@ -70,39 +72,39 @@ pub(super) async fn create_label(
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let tx = crate::store::Begin::begin_write(&mut *conn)?;
         if let Some(parent) = parent {
-            crate::log::check_client_label(&*tx, parent)?;
+            crate::log::check_client_log_context(&*tx, parent)?;
         }
-        let id = tx.create_label(&crate::store::LabelMeta {
+        let id = tx.create_log_context(&crate::store::LogContextMeta {
             name: body.name,
             description: body.description,
             parent,
             created: crate::log::now_ms(),
         })?;
         tx.commit()?;
-        Ok(Json(label_json(&*conn, id)?))
+        Ok(Json(log_context_json(&*conn, id)?))
     })
     .await
 }
 
-/// `GET /repos/:repo/contexts/:id`: a label, its ancestors and its children.
-pub(super) async fn get_label(
+/// `GET /repos/:repo/contexts/:id`: a log context, its ancestors and its children.
+pub(super) async fn get_log_context(
     State(state): State<Arc<AppState>>,
     Path((repo, id)): Path<(String, i64)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        Ok(Json(label_json(&*conn, id)?))
+        Ok(Json(log_context_json(&*conn, id)?))
     })
     .await
 }
 
 #[derive(Deserialize)]
 pub(super) struct LogParams {
-    /// Cap on the number of *labels* returned (whole ones), for a client
-    /// that displays a history by label rather than by operation.
+    /// Cap on the number of *log contexts* returned (whole ones), for a client
+    /// that displays a history by log context rather than by operation.
     #[serde(default, rename = "log_contexts")]
-    labels: Option<usize>,
+    log_contexts: Option<usize>,
     #[serde(default)]
     metarecord_uuid: Option<String>,
     #[serde(default)]
@@ -123,7 +125,7 @@ pub(super) async fn get_log(
     let repo_uuid = parse_uuid(&repo)?;
     let query = crate::log_view::LogQuery {
         limit: params.limit,
-        labels: params.labels,
+        log_contexts: params.log_contexts,
         entity: params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?,
         since: params.since,
         until: params.until,
@@ -192,11 +194,11 @@ pub(super) async fn get_log_since(
     .await
 }
 
-/// Which operations of a label `GET /log/contexts/:id` details: a window
-/// (`offset`/`limit`) or one operation by id (`op`). A label can hold every
+/// Which operations of a log context `GET /log/contexts/:id` details: a window
+/// (`offset`/`limit`) or one operation by id (`op`). A log context can hold every
 /// operation of a reconcile, and each carries its snapshots.
 #[derive(Deserialize)]
-pub(super) struct LabelParams {
+pub(super) struct LogContextParams {
     #[serde(default)]
     offset: Option<usize>,
     #[serde(default)]
@@ -213,12 +215,12 @@ pub(super) struct LabelParams {
     snapshots: Option<u8>,
 }
 
-/// `GET /log/contexts/:id` (or `head`, the label of the newest operation): a
-/// label and its own operations, with their snapshots.
-pub(super) async fn get_label_detail(
+/// `GET /log/contexts/:id` (or `head`, the log context of the newest operation): a
+/// log context and its own operations, with their snapshots.
+pub(super) async fn get_log_context_detail(
     State(state): State<Arc<AppState>>,
     Path((repo, id)): Path<(String, String)>,
-    Query(params): Query<LabelParams>,
+    Query(params): Query<LogContextParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
@@ -230,21 +232,22 @@ pub(super) async fn get_label_detail(
                 .ok_or_else(|| ApiError::internal("HEAD operation vanished"))?
                 .log_context_id
         } else {
-            id.parse().map_err(|_| ApiError::bad_request(format!("invalid label id '{id}'")))?
+            id.parse()
+                .map_err(|_| ApiError::bad_request(format!("invalid log context id '{id}'")))?
         };
 
-        let mut label = label_json(&*conn, id)?;
+        let mut log_context = log_context_json(&*conn, id)?;
         // The ids, not the operations: a count and a window need no more, and
         // an entry's operations are made up only for the ones shown.
-        let all = crate::store::Log::label_op_ids(&*conn, id)?;
-        // HEAD and the count are the whole label's, whatever the window.
-        label["is_head"] = json!(all.iter().any(|op| Some(*op) == head));
-        label["operation_count"] = json!(all.len());
+        let all = crate::store::Log::log_context_op_ids(&*conn, id)?;
+        // HEAD and the count are the whole log context's, whatever the window.
+        log_context["is_head"] = json!(all.iter().any(|op| Some(*op) == head));
+        log_context["operation_count"] = json!(all.len());
         let selected: Vec<i64> = match params.op {
             Some(op_id) => {
                 if !all.contains(&op_id) {
                     return Err(ApiError::not_found(format!(
-                        "operation {op_id} is not in label {id}"
+                        "operation {op_id} is not in log context {id}"
                     )));
                 }
                 vec![op_id]
@@ -270,14 +273,14 @@ pub(super) async fn get_label_detail(
                 .ok_or_else(|| ApiError::internal(format!("operation {op_id} vanished")))?;
             ops.push(op_json(&conn, &op, snapshots)?);
         }
-        Ok(Json(json!({"log_context": label, "operations": ops})))
+        Ok(Json(json!({"log_context": log_context, "operations": ops})))
     })
     .await
 }
 
 #[derive(Deserialize)]
-pub(super) struct LabelListParams {
-    /// `none` (the default): the units of work; a label id: the labels
+pub(super) struct LogContextListParams {
+    /// `none` (the default): the units of work; a log context id: the log contexts
     /// nested in it.
     #[serde(default)]
     parent: Option<String>,
@@ -287,18 +290,18 @@ pub(super) struct LabelListParams {
     limit: Option<usize>,
 }
 
-/// `GET /repos/:repo/log/contexts`: label summaries, newest first (doc "Label
-/// summaries") — what a client showing the log by label reads, the
-/// operations of a label being read only when it goes into one.
-pub(super) async fn list_labels(
+/// `GET /repos/:repo/log/contexts`: log context summaries, newest first (doc "Log context
+/// summaries") — what a client showing the log by log context reads, the
+/// operations of a log context being read only when it goes into one.
+pub(super) async fn list_log_contexts(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
-    Query(params): Query<LabelListParams>,
+    Query(params): Query<LogContextListParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let under = match params.parent.as_deref() {
         None | Some("none") => crate::log_view::Under::Roots,
-        Some(id) => crate::log_view::Under::Label(
+        Some(id) => crate::log_view::Under::LogContext(
             id.parse().map_err(|_| ApiError::bad_request(format!("invalid parent '{id}'")))?,
         ),
     };
@@ -309,7 +312,7 @@ pub(super) async fn list_labels(
     };
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        Ok(Json(crate::log_view::label_summaries(&*conn, &query)?))
+        Ok(Json(crate::log_view::log_context_summaries(&*conn, &query)?))
     })
     .await
 }
@@ -322,15 +325,15 @@ pub(super) struct TargetBody {
     #[serde(default)]
     timestamp: Option<i64>,
     #[serde(default, rename = "log_context")]
-    label: Option<i64>,
+    log_context: Option<i64>,
 }
 
 impl TargetBody {
     fn into_target(self) -> Result<crate::log::Target, ApiError> {
-        match (self.id, self.timestamp, self.label) {
+        match (self.id, self.timestamp, self.log_context) {
             (Some(id), None, None) => Ok(crate::log::Target::Id(id)),
             (None, Some(ts), None) => Ok(crate::log::Target::Timestamp(ts)),
-            (None, None, Some(label)) => Ok(crate::log::Target::Label(label)),
+            (None, None, Some(log_context)) => Ok(crate::log::Target::LogContext(log_context)),
             _ => Err(ApiError::bad_request(
                 "target must be exactly one of {id}, {timestamp}, {log_context}",
             )),

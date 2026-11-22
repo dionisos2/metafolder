@@ -51,10 +51,10 @@ fn write_then_undo(
     let mut w = Writer::begin(store, None).unwrap();
     w.set_mass_threshold(threshold);
     write(&mut w);
-    let label = w.log_context_id();
+    let log_context = w.log_context_id();
     w.commit().unwrap();
     move |store: &mut KvStore| {
-        let ops = revert::label_ops(store, label).unwrap();
+        let ops = revert::log_context_ops(store, log_context).unwrap();
         let mut w = Writer::begin(store, None).unwrap();
         revert::apply(&mut w, &ops).unwrap();
         w.commit().unwrap();

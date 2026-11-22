@@ -37,8 +37,8 @@ pub(crate) fn next_task_id() -> String {
 }
 
 /// [`run_to_completion`], the subprocess passed `context` as
-/// `METAFOLDER_LOG_CONTEXT`: every `mf` it starts writes in that label (doc
-/// "Labels and contexts"). `root` is the workspace repository's root, where
+/// `METAFOLDER_LOG_CONTEXT`: every `mf` it starts writes in that log context (doc
+/// "Log contexts"). `root` is the workspace repository's root, where
 /// a line runs with nothing selected ([`working_dir`]).
 pub async fn run_in(
     gui: Arc<GuiState>,
@@ -309,18 +309,18 @@ async fn forward(
     }
 }
 
-/// `label`: run it in a label of its own, so what a script writes is one
+/// `log_context`: run it in a log context of its own, so what a script writes is one
 /// piece of work in the log — opened in the workspace's active repository,
 /// inside the work context in force there (the proxy sends it), and passed on
 /// as `METAFOLDER_LOG_CONTEXT`. A plain `!` line is passed the work context alone:
-/// each `mf` it runs is a command with a label of its own anyway. `typed`: a
+/// each `mf` it runs is a command with a log context of its own anyway. `typed`: a
 /// line the user typed, which runs in the workspace's persistent shell.
 #[tauri::command]
 pub fn run_shell(
     app: tauri::State<'_, Arc<crate::commands::App>>,
     ws_id: String,
     command_line: String,
-    label: Option<String>,
+    log_context: Option<String>,
     typed: bool,
 ) -> Result<(), String> {
     let gui = app.gui.clone();
@@ -332,7 +332,7 @@ pub fn run_shell(
     // "shell panel").
     let rc = typed.then(|| rc_path(&app.settings.shell_rc));
     tauri::async_runtime::spawn(async move {
-        let context = match label {
+        let context = match log_context {
             Some(name) => open_context(&gui, &daemon, &ws_id, &name).await,
             None => plain_line_context(&gui, &ws_id),
         };
@@ -372,12 +372,12 @@ pub fn shell_interrupt(app: tauri::State<'_, Arc<crate::commands::App>>, ws_id: 
 
 /// The context a plain `!` line runs in: the work context in force on the
 /// workspace's repository (doc "The GUI's work context"), if any — each `mf`
-/// it runs then opens its command's label inside it.
+/// it runs then opens its command's log context inside it.
 fn plain_line_context(gui: &GuiState, ws_id: &str) -> Option<metafolder_core::context::Context> {
     crate::work_context::context_of(&gui.active_repo(ws_id).ok()?)
 }
 
-/// Opens a label named `name` in the workspace's active repository: the
+/// Opens a log context named `name` in the workspace's active repository: the
 /// context a script runs in. `None` — and the script runs as it would have —
 /// when there is no repository or the daemon refuses.
 async fn open_context(
@@ -390,8 +390,11 @@ async fn open_context(
     let body = serde_json::json!({"name": name});
     let response =
         daemon.request("POST", &format!("/repos/{repo}/contexts"), Some(body)).await.ok()?;
-    let label = response.body["id"].as_i64().filter(|_| response.status < 300)?;
-    Some(metafolder_core::context::Context { repo: uuid::Uuid::parse_str(&repo).ok()?, label })
+    let log_context = response.body["id"].as_i64().filter(|_| response.status < 300)?;
+    Some(metafolder_core::context::Context {
+        repo: uuid::Uuid::parse_str(&repo).ok()?,
+        log_context,
+    })
 }
 
 /// The two ways the user ends a run (doc "Script sessions").
@@ -481,7 +484,7 @@ mod tests {
     #[tokio::test]
     async fn test_a_run_is_given_its_context_and_only_it() {
         let gui = gui();
-        let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), label: 7 };
+        let context = metafolder_core::context::Context { repo: uuid::Uuid::nil(), log_context: 7 };
         let line = "echo \"in:${METAFOLDER_LOG_CONTEXT:-none}\"";
         run_in(gui.clone(), "ws-1".into(), line.into(), Some(context), None).await.unwrap();
         run_in(gui.clone(), "ws-1".into(), line.into(), None, None).await.unwrap();
@@ -522,7 +525,7 @@ mod tests {
         crate::work_context::activate(&repo.simple().to_string(), context, "/nowhere".into());
         assert_eq!(
             plain_line_context(&gui, "ws-1"),
-            Some(metafolder_core::context::Context { repo, label: 9 })
+            Some(metafolder_core::context::Context { repo, log_context: 9 })
         );
         crate::work_context::forget(&repo.simple().to_string());
     }

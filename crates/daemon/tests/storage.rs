@@ -24,7 +24,7 @@ fn create(conn: &mut KvStore, fields: Vec<Field>) -> metafolder_core::metarecord
 fn revert_last_revision(conn: &mut KvStore) {
     let head = conn.head().unwrap().unwrap();
     let rev = conn.op(head).unwrap().unwrap().log_context_id;
-    let ops = conn.label_ops(rev).unwrap();
+    let ops = conn.log_context_ops(rev).unwrap();
     let mut w = Writer::begin(conn, None).unwrap();
     metafolder_daemon::revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
@@ -423,7 +423,7 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
     let op = ops_of_type(&conn, "set_field").pop().expect("a set_field operation");
     assert_eq!(conn.snapshots(op.id).unwrap().len(), 2);
     assert_eq!(
-        conn.version_before_label(op.log_context_id, m.uuid).unwrap(),
+        conn.version_before_log_context(op.log_context_id, m.uuid).unwrap(),
         Some(m.version),
         "the state the op moved away from"
     );
@@ -542,7 +542,7 @@ fn test_multiple_ops_in_one_revision_chain() {
     w.set_field(m.uuid, "c", Value::Int(3)).unwrap();
     w.commit().unwrap();
 
-    // The three operations share one label, with consecutive ids.
+    // The three operations share one log context, with consecutive ids.
     let ops = ops_of_type(&conn, "set_field");
     assert_eq!(ops.len(), 3);
     let rev = ops[0].log_context_id;
@@ -550,8 +550,8 @@ fn test_multiple_ops_in_one_revision_chain() {
     assert_eq!(ops[1].id, ops[0].id + 1);
     assert_eq!(ops[2].id, ops[1].id + 1);
 
-    let label = conn.labels(&[rev]).unwrap().remove(&rev).map(|m| m.name);
-    assert_eq!(label.as_deref(), Some("batch"));
+    let log_context = conn.log_contexts(&[rev]).unwrap().remove(&rev).map(|m| m.name);
+    assert_eq!(log_context.as_deref(), Some("batch"));
     assert_eq!(conn.head().unwrap(), Some(ops[2].id));
 
     // The version describes the state the three ops left behind.
@@ -953,9 +953,9 @@ fn test_a_value_put_back_restores_the_version() {
 }
 
 #[test]
-fn test_the_version_before_a_label_is_computed_back_from_the_log() {
+fn test_the_version_before_a_log_context_is_computed_back_from_the_log() {
     // The log records no version (doc "Log storage"): the one a metarecord
-    // had before a label is its content now, with every operation on it
+    // had before a log context is its content now, with every operation on it
     // since undone — whatever was written to it afterwards.
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("keep", Value::Int(0))]);
@@ -963,24 +963,24 @@ fn test_the_version_before_a_label_is_computed_back_from_the_log() {
     let before = conn.version(m.uuid).unwrap().unwrap();
 
     set_field(&mut conn, m.uuid, "a", Value::Int(2));
-    let label =
+    let log_context =
         ops_of_type(&conn, "set_field").pop().expect("a set_field operation").log_context_id;
-    assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
+    assert_eq!(conn.version_before_log_context(log_context, m.uuid).unwrap(), Some(before));
 
     set_field(&mut conn, m.uuid, "a", Value::Int(3));
     set_field(&mut conn, m.uuid, "b", Value::String("later".into()));
-    assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
+    assert_eq!(conn.version_before_log_context(log_context, m.uuid).unwrap(), Some(before));
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.delete_metarecord(m.uuid).unwrap();
     w.commit().unwrap();
-    assert_eq!(conn.version_before_label(label, m.uuid).unwrap(), Some(before));
+    assert_eq!(conn.version_before_log_context(log_context, m.uuid).unwrap(), Some(before));
 
-    // A metarecord the label created had none; one it did not touch neither.
+    // A metarecord the log context created had none; one it did not touch neither.
     let created =
         ops_of_type(&conn, "create_metarecord").pop().expect("the creation").log_context_id;
-    assert_eq!(conn.version_before_label(created, m.uuid).unwrap(), None);
-    assert_eq!(conn.version_before_label(label, Uuid::new_v4()).unwrap(), None);
+    assert_eq!(conn.version_before_log_context(created, m.uuid).unwrap(), None);
+    assert_eq!(conn.version_before_log_context(log_context, Uuid::new_v4()).unwrap(), None);
 }
 
 #[test]

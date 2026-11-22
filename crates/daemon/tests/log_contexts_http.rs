@@ -1,5 +1,5 @@
-//! Labels and contexts over HTTP (doc "Log contexts"): creating a
-//! label, reading it with its ancestors, writing inside one through the
+//! Log contexts and contexts over HTTP (doc "Log contexts"): creating a
+//! log context, reading it with its ancestors, writing inside one through the
 //! `X-Metafolder-Log-Context` header, and a write with no context opening its own.
 
 use std::sync::Arc;
@@ -21,11 +21,11 @@ async fn send(
     method: &str,
     uri: &str,
     body: Option<Value>,
-    label: Option<&str>,
+    log_context: Option<&str>,
 ) -> (StatusCode, Value) {
     let mut builder = Request::builder().method(method).uri(uri);
-    if let Some(label) = label {
-        builder = builder.header("x-metafolder-log-context", label);
+    if let Some(log_context) = log_context {
+        builder = builder.header("x-metafolder-log-context", log_context);
     }
     let request = match body {
         Some(v) => builder
@@ -54,17 +54,23 @@ async fn setup(prefix: &str) -> (Router, String, TempDir) {
     (app, repo, root)
 }
 
-async fn new_label(app: &Router, repo: &str, body: Value) -> i64 {
-    let (status, label) =
+async fn new_log_context(app: &Router, repo: &str, body: Value) -> i64 {
+    let (status, log_context) =
         send(app, "POST", &format!("/repos/{repo}/contexts"), Some(body), None).await;
-    assert_eq!(status, StatusCode::OK, "label creation failed: {label}");
-    label["id"].as_i64().expect("a label id")
+    assert_eq!(status, StatusCode::OK, "log context creation failed: {log_context}");
+    log_context["id"].as_i64().expect("a log context id")
 }
 
-async fn create(app: &Router, repo: &str, label: Option<&str>) -> (StatusCode, Value) {
+async fn create(app: &Router, repo: &str, log_context: Option<&str>) -> (StatusCode, Value) {
     let fields = json!([{"name": "a", "value": {"type": "int", "value": 1}}]);
-    send(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields})), label)
-        .await
+    send(
+        app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": fields})),
+        log_context,
+    )
+    .await
 }
 
 async fn newest_op(app: &Router, repo: &str) -> Value {
@@ -74,19 +80,20 @@ async fn newest_op(app: &Router, repo: &str) -> Value {
 }
 
 #[tokio::test]
-async fn a_label_is_read_back_with_its_ancestors() {
+async fn a_log_context_is_read_back_with_its_ancestors() {
     let (app, repo, _root) = setup("ancestors").await;
-    let run = new_label(&app, &repo, json!({"name": "tag run", "description": "all photos"})).await;
-    let answer = new_label(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
+    let run =
+        new_log_context(&app, &repo, json!({"name": "tag run", "description": "all photos"})).await;
+    let answer = new_log_context(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
 
-    let (status, label) =
+    let (status, log_context) =
         send(&app, "GET", &format!("/repos/{repo}/contexts/{answer}"), None, None).await;
-    assert_eq!(status, StatusCode::OK, "{label}");
-    assert_eq!(label["name"], "answer 1");
-    assert_eq!(label["parent"], run);
-    assert!(label["created"].as_i64().is_some(), "{label}");
-    let ancestors = label["ancestors"].as_array().unwrap();
-    assert_eq!(ancestors.len(), 1, "{label}");
+    assert_eq!(status, StatusCode::OK, "{log_context}");
+    assert_eq!(log_context["name"], "answer 1");
+    assert_eq!(log_context["parent"], run);
+    assert!(log_context["created"].as_i64().is_some(), "{log_context}");
+    let ancestors = log_context["ancestors"].as_array().unwrap();
+    assert_eq!(ancestors.len(), 1, "{log_context}");
     assert_eq!(ancestors[0]["id"], run);
     assert_eq!(ancestors[0]["description"], "all photos");
 
@@ -95,7 +102,7 @@ async fn a_label_is_read_back_with_its_ancestors() {
 }
 
 #[tokio::test]
-async fn a_label_under_an_unknown_parent_is_refused() {
+async fn a_log_context_under_an_unknown_parent_is_refused() {
     let (app, repo, _root) = setup("unknown_parent").await;
     let (status, body) = send(
         &app,
@@ -109,36 +116,37 @@ async fn a_label_under_an_unknown_parent_is_refused() {
 }
 
 #[tokio::test]
-async fn a_write_inside_a_context_carries_its_label() {
+async fn a_write_inside_a_context_carries_its_log_context() {
     let (app, repo, _root) = setup("context").await;
-    let run = new_label(&app, &repo, json!({"name": "tag run"})).await;
-    let answer = new_label(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
+    let run = new_log_context(&app, &repo, json!({"name": "tag run"})).await;
+    let answer = new_log_context(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
 
     let (status, body) = create(&app, &repo, Some(&answer.to_string())).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let op = newest_op(&app, &repo).await;
     assert_eq!(op["log_context_id"], answer, "{op}");
 
-    // The listing names the label and every ancestor of it.
+    // The listing names the log context and every ancestor of it.
     let (_, log) = send(&app, "GET", &format!("/repos/{repo}/log?limit=1"), None, None).await;
-    let labels = log["log_contexts"].as_array().unwrap();
-    let ids: Vec<i64> = labels.iter().map(|l| l["id"].as_i64().unwrap()).collect();
+    let log_contexts = log["log_contexts"].as_array().unwrap();
+    let ids: Vec<i64> = log_contexts.iter().map(|l| l["id"].as_i64().unwrap()).collect();
     assert!(ids.contains(&answer) && ids.contains(&run), "{log}");
 }
 
 #[tokio::test]
-async fn a_write_without_a_context_opens_its_own_label() {
+async fn a_write_without_a_context_opens_its_own_log_context() {
     let (app, repo, _root) = setup("own").await;
     create(&app, &repo, None).await;
     let first = newest_op(&app, &repo).await;
     create(&app, &repo, None).await;
     let second = newest_op(&app, &repo).await;
-    assert_ne!(first["log_context_id"], second["log_context_id"], "one label per request");
+    assert_ne!(first["log_context_id"], second["log_context_id"], "one log context per request");
 
     let id = second["log_context_id"].as_i64().unwrap();
-    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/contexts/{id}"), None, None).await;
-    assert!(!label["name"].as_str().unwrap().is_empty(), "{label}");
-    assert_eq!(label["parent"], Value::Null);
+    let (_, log_context) =
+        send(&app, "GET", &format!("/repos/{repo}/contexts/{id}"), None, None).await;
+    assert!(!log_context["name"].as_str().unwrap().is_empty(), "{log_context}");
+    assert_eq!(log_context["parent"], Value::Null);
 }
 
 #[tokio::test]
@@ -153,14 +161,14 @@ async fn a_write_inside_an_unknown_context_is_refused_and_writes_nothing() {
 }
 
 #[tokio::test]
-async fn a_label_detail_lists_its_operations() {
+async fn a_log_context_detail_lists_its_operations() {
     let (app, repo, _root) = setup("detail").await;
-    let label = new_label(&app, &repo, json!({"name": "two writes"})).await;
-    create(&app, &repo, Some(&label.to_string())).await;
-    create(&app, &repo, Some(&label.to_string())).await;
+    let log_context = new_log_context(&app, &repo, json!({"name": "two writes"})).await;
+    create(&app, &repo, Some(&log_context.to_string())).await;
+    create(&app, &repo, Some(&log_context.to_string())).await;
 
     let (status, detail) =
-        send(&app, "GET", &format!("/repos/{repo}/log/contexts/{label}"), None, None).await;
+        send(&app, "GET", &format!("/repos/{repo}/log/contexts/{log_context}"), None, None).await;
     assert_eq!(status, StatusCode::OK, "{detail}");
     assert_eq!(detail["log_context"]["name"], "two writes");
     assert_eq!(detail["log_context"]["operation_count"], 2);
@@ -169,17 +177,17 @@ async fn a_label_detail_lists_its_operations() {
     let (status, head) =
         send(&app, "GET", &format!("/repos/{repo}/log/contexts/head"), None, None).await;
     assert_eq!(status, StatusCode::OK, "{head}");
-    assert_eq!(head["log_context"]["id"], label);
+    assert_eq!(head["log_context"]["id"], log_context);
 }
 
-/// Reverting a label reverts what was written inside it, child labels
+/// Reverting a log context reverts what was written inside it, child log contexts
 /// included: a run is undone whole.
 #[tokio::test]
-async fn reverting_a_label_reverts_its_children_too() {
+async fn reverting_a_log_context_reverts_its_children_too() {
     let (app, repo, _root) = setup("revert").await;
-    let run = new_label(&app, &repo, json!({"name": "run"})).await;
-    let one = new_label(&app, &repo, json!({"name": "one", "parent": run})).await;
-    let two = new_label(&app, &repo, json!({"name": "two", "parent": run})).await;
+    let run = new_log_context(&app, &repo, json!({"name": "run"})).await;
+    let one = new_log_context(&app, &repo, json!({"name": "one", "parent": run})).await;
+    let two = new_log_context(&app, &repo, json!({"name": "two", "parent": run})).await;
     let (_, a) = create(&app, &repo, Some(&one.to_string())).await;
     let (_, b) = create(&app, &repo, Some(&two.to_string())).await;
 
@@ -202,11 +210,11 @@ async fn reverting_a_label_reverts_its_children_too() {
 }
 
 #[tokio::test]
-async fn prune_keeps_a_label_whole() {
+async fn prune_keeps_a_log_context_whole() {
     let (app, repo, _root) = setup("prune").await;
     create(&app, &repo, None).await;
     let pruned = newest_op(&app, &repo).await["log_context_id"].as_i64().unwrap();
-    let kept = new_label(&app, &repo, json!({"name": "kept"})).await;
+    let kept = new_log_context(&app, &repo, json!({"name": "kept"})).await;
     create(&app, &repo, Some(&kept.to_string())).await;
     create(&app, &repo, Some(&kept.to_string())).await;
 
@@ -225,13 +233,13 @@ async fn prune_keeps_a_label_whole() {
     assert!(ops.iter().all(|op| op["log_context_id"] == kept), "{log}");
     // A prune removes operations, never contexts: the emptied one stays
     // until a reindex (doc "Log contexts").
-    assert_eq!(body["pruned_labels"], Value::Null, "{body}");
+    assert_eq!(body["pruned_log_contexts"], Value::Null, "{body}");
     let (status, _) =
         send(&app, "GET", &format!("/repos/{repo}/contexts/{pruned}"), None, None).await;
     assert_eq!(status, StatusCode::OK);
 }
 
-/// `0` is no context: the write opens a label of its own, as with no header.
+/// `0` is no context: the write opens a log context of its own, as with no header.
 #[tokio::test]
 async fn a_context_of_zero_is_no_context() {
     let (app, repo, _root) = setup("zero").await;
@@ -240,26 +248,27 @@ async fn a_context_of_zero_is_no_context() {
     let op = newest_op(&app, &repo).await;
     let id = op["log_context_id"].as_i64().unwrap();
     assert!(id >= 1, "{op}");
-    let (_, label) = send(&app, "GET", &format!("/repos/{repo}/contexts/{id}"), None, None).await;
-    assert_eq!(label["parent"], Value::Null, "{label}");
+    let (_, log_context) =
+        send(&app, "GET", &format!("/repos/{repo}/contexts/{id}"), None, None).await;
+    assert_eq!(log_context["parent"], Value::Null, "{log_context}");
 }
 
 /// Ids start at 1, `0` meaning "no context".
 #[tokio::test]
-async fn no_label_has_the_id_zero() {
+async fn no_log_context_has_the_id_zero() {
     let (app, repo, _root) = setup("from_one").await;
-    let first = new_label(&app, &repo, json!({"name": "first"})).await;
+    let first = new_log_context(&app, &repo, json!({"name": "first"})).await;
     assert!(first >= 1, "{first}");
     let (status, _) = send(&app, "GET", &format!("/repos/{repo}/contexts/0"), None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 /// The command headers are gone: a request naming one writes in the
-/// context it names, or in one of its own — never in a label found by a key.
+/// context it names, or in one of its own — never in a log context found by a key.
 #[tokio::test]
-async fn a_command_key_opens_no_label() {
+async fn a_command_key_opens_no_log_context() {
     let (app, repo, _root) = setup("no_command").await;
-    let run = new_label(&app, &repo, json!({"name": "run"})).await;
+    let run = new_log_context(&app, &repo, json!({"name": "run"})).await;
     let fields = json!({"fields": [{"name": "a", "value": {"type": "int", "value": 1}}]});
     for _ in 0..2 {
         let request = Request::builder()
@@ -278,13 +287,13 @@ async fn a_command_key_opens_no_label() {
     assert!(ops.iter().all(|op| op["log_context_id"] == run), "{log}");
 }
 
-/// Reverting a label nothing was written in reverts nothing — what a script
-/// going back over an answer that wrote nothing asks for. An unknown label is
+/// Reverting a log context nothing was written in reverts nothing — what a script
+/// going back over an answer that wrote nothing asks for. An unknown log context is
 /// still a `404`.
 #[tokio::test]
-async fn reverting_an_empty_label_reverts_nothing() {
+async fn reverting_an_empty_log_context_reverts_nothing() {
     let (app, repo, _root) = setup("revert_empty").await;
-    let empty = new_label(&app, &repo, json!({"name": "answer 3"})).await;
+    let empty = new_log_context(&app, &repo, json!({"name": "answer 3"})).await;
     let (status, body) = send(
         &app,
         "POST",
@@ -317,16 +326,16 @@ async fn reverting_an_empty_label_reverts_nothing() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-// ── Undo and redo of a label (doc "Undo and redo by log context") ─────────────────
+// ── Undo and redo of a log context (doc "Undo and redo by log context") ─────────────────
 
-/// Sets field `a` of `uuid` to `n`, inside `label`.
-async fn set_a(app: &Router, repo: &str, uuid: &str, n: i64, label: i64) {
+/// Sets field `a` of `uuid` to `n`, inside `log_context`.
+async fn set_a(app: &Router, repo: &str, uuid: &str, n: i64, log_context: i64) {
     let (status, body) = send(
         app,
         "PUT",
         &format!("/repos/{repo}/metarecords/{uuid}/fields/a"),
         Some(json!({"value": {"type": "int", "value": n}})),
-        Some(&label.to_string()),
+        Some(&log_context.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -355,16 +364,17 @@ async fn revert(app: &Router, repo: &str, target: Value) -> Value {
 /// Undoing a run takes back what still stands of it — not an answer already
 /// taken back, and not the going back itself, which would put that answer back.
 #[tokio::test]
-async fn undoing_a_label_takes_back_only_its_standing_changes() {
+async fn undoing_a_log_context_takes_back_only_its_standing_changes() {
     let (app, repo, _root) = setup("undo_label").await;
     let (_, record) = create(&app, &repo, None).await;
     let uuid = record["uuid"].as_str().unwrap().to_string();
-    let run = new_label(&app, &repo, json!({"name": "run"})).await;
-    let first = new_label(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
+    let run = new_log_context(&app, &repo, json!({"name": "run"})).await;
+    let first = new_log_context(&app, &repo, json!({"name": "answer 1", "parent": run})).await;
     set_a(&app, &repo, &uuid, 2, first).await;
     // Going back over answer 1, inside the run: an undo of it.
     revert(&app, &repo, json!({"log_context_id": first})).await;
-    let second = new_label(&app, &repo, json!({"name": "answer 1 again", "parent": run})).await;
+    let second =
+        new_log_context(&app, &repo, json!({"name": "answer 1 again", "parent": run})).await;
     set_a(&app, &repo, &uuid, 3, second).await;
     assert_eq!(field_a(&app, &repo, &uuid).await, 3);
 
@@ -384,8 +394,9 @@ async fn undoing_a_label_takes_back_only_its_standing_changes() {
     assert_eq!(field_a(&app, &repo, &uuid).await, 1, "back to before the run");
 
     // Its redo takes the undo back: the run's standing undos, that is.
-    let undo_label = undo["log_context"].as_i64().unwrap();
-    let redo = revert(&app, &repo, json!({"log_context_id": undo_label, "only": "undos"})).await;
+    let undo_log_context = undo["log_context"].as_i64().unwrap();
+    let redo =
+        revert(&app, &repo, json!({"log_context_id": undo_log_context, "only": "undos"})).await;
     assert_eq!(redo["reverted_operations"].as_array().unwrap().len(), 1, "{redo}");
     assert_eq!(field_a(&app, &repo, &uuid).await, 3);
 

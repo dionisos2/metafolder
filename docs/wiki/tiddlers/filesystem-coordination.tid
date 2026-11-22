@@ -20,7 +20,7 @@ by its `origin = trash`, but its undo is an ordinary-looking
 holds'', not by an id recorded on the operation: an undo consumes the entry and a redo
 makes a new one, so a recorded id would name something gone. Only one live entry can hold
 a metarecord. For `file_deleted`/`file_modified` the entry is matched by metarecord and
-''the version before the watcher's flush'' (`entity_version_before_label`: the
+''the version before the watcher's flush'' (`entity_version_before_log_context`: the
 version the metarecord had before its first operation in the flush's log context, computed
 back from the log, which records no version — [[Log storage]]).
 

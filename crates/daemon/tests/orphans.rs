@@ -392,7 +392,7 @@ fn test_mark_flags_stale_paths_and_already_deleted_records() {
 
 /// Re-running writes nothing when nothing changed, and takes the marker back
 /// when the file is there again — the marker is the last run's answer, not a
-/// permanent label.
+/// permanent log context.
 #[test]
 fn test_mark_is_idempotent_and_takes_the_marker_back() {
     let (repo, root) = setup("mark-again");

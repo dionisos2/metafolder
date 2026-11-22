@@ -151,9 +151,9 @@ pub async fn settle_on(app: &Router, repo: &str, expected: &[&str]) -> Vec<Strin
 
 /// Runs a full reconcile to its end and returns its result (`created`,
 /// `moved`, …).
-pub async fn reconcile(app: &Router, repo: &str, label: &str) -> Value {
+pub async fn reconcile(app: &Router, repo: &str, log_context: &str) -> Value {
     let (status, body) = request(app, "POST", &format!("/repos/{repo}/reconcile"), None).await;
-    assert_eq!(status, StatusCode::ACCEPTED, "[{label}] reconcile start failed: {body}");
+    assert_eq!(status, StatusCode::ACCEPTED, "[{log_context}] reconcile start failed: {body}");
     let task_id = body["task_id"].as_str().unwrap().to_string();
     let mut task = Value::Null;
     for _ in 0..400 {
@@ -164,29 +164,29 @@ pub async fn reconcile(app: &Router, repo: &str, label: &str) -> Value {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    assert_eq!(task["status"], "done", "[{label}] reconcile did not finish: {task}");
+    assert_eq!(task["status"], "done", "[{log_context}] reconcile did not finish: {task}");
     task["result"].clone()
 }
 
 /// The oracle: a full reconcile after a settled watcher must be a no-op.
-/// `label` names the step, so a failure says which operation the two disagree
+/// `log_context` names the step, so a failure says which operation the two disagree
 /// about.
-pub async fn reconcile_agrees(app: &Router, repo: &str, label: &str) {
+pub async fn reconcile_agrees(app: &Router, repo: &str, log_context: &str) {
     let before = tracked_paths(app, repo).await;
-    let result = reconcile(app, repo, label).await;
+    let result = reconcile(app, repo, log_context).await;
     assert_eq!(
         result["created"], 0,
-        "[{label}] the watcher missed {} file(s) a reconcile had to create — tracked: {before:?}",
+        "[{log_context}] the watcher missed {} file(s) a reconcile had to create — tracked: {before:?}",
         result["created"],
     );
     assert_eq!(
         result["moved"], 0,
-        "[{label}] the watcher left {} file(s) at a stale path — tracked: {before:?}",
+        "[{log_context}] the watcher left {} file(s) at a stale path — tracked: {before:?}",
         result["moved"],
     );
 
     let after = tracked_paths(app, repo).await;
-    assert_eq!(after, before, "[{label}] the reconcile changed the tracked paths");
+    assert_eq!(after, before, "[{log_context}] the reconcile changed the tracked paths");
 }
 
 /// Metarecords whose `mfr_path` is `Nothing` — orphans. Deleting a file leaves

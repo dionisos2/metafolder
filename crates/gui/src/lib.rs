@@ -162,8 +162,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
         ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),
         ("ignore:set", "Replace the target directory's ignore set with a preset", true),
-        ("log:undo", "Undo a label of the newest change you made (asked when there are several)", true),
-        ("log:redo", "Take back a label of the newest undo (asked when there are several)", true),
+        ("log:undo", "Undo a log context of the newest change you made (asked when there are several)", true),
+        ("log:redo", "Take back a log context of the newest undo (asked when there are several)", true),
         (
             "log:rollback",
             "Go back to a time: revert the changes you made since (not the watcher's)",

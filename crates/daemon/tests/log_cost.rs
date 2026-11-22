@@ -74,7 +74,7 @@ fn bounded_log_read_costs_the_same_on_a_log_sixteen_times_longer() {
 
 #[test]
 fn a_log_read_bounded_by_revisions_costs_the_same_on_a_longer_log() {
-    let q = LogQuery { labels: Some(20), ..LogQuery::default() };
+    let q = LogQuery { log_contexts: Some(20), ..LogQuery::default() };
     let (mut small, _s) = repo_with_log(SHORT_LOG);
     let (mut big, _b) = repo_with_log(LONG_LOG);
     let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
@@ -84,7 +84,7 @@ fn a_log_read_bounded_by_revisions_costs_the_same_on_a_longer_log() {
 #[test]
 fn a_revision_bound_returns_whole_revisions_newest_first() {
     let (kv, _dir) = repo_with_log(40);
-    let q = LogQuery { labels: Some(5), ..LogQuery::default() };
+    let q = LogQuery { log_contexts: Some(5), ..LogQuery::default() };
     let body = listing(&kv, &q).unwrap();
     let revisions = body["log_contexts"].as_array().unwrap();
     assert_eq!(revisions.len(), 5, "asked for 5 revisions, got {}", revisions.len());
@@ -118,7 +118,7 @@ fn repo_after_reconcile(big: usize, small: usize) -> (KvStore, TempDir) {
 /// reconcile's write holds tens of thousands, and reading it whole to show
 /// its line cost 0.7 s and 400 MB on a 50 000-file repository.
 fn revisions_and_ops(revisions: usize, limit: usize) -> LogQuery {
-    LogQuery { labels: Some(revisions), limit: Some(limit), ..LogQuery::default() }
+    LogQuery { log_contexts: Some(revisions), limit: Some(limit), ..LogQuery::default() }
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn a_revision_window_is_bounded_by_operations_too() {
     assert_eq!(ops.len(), 100, "at most the operations asked for");
     let revisions = body["log_contexts"].as_array().unwrap();
     assert_eq!(revisions.len(), 6, "the five edits, and the reconcile in part");
-    // The reconcile is the oldest label shown, and the one cut: it says so
+    // The reconcile is the oldest log context shown, and the one cut: it says so
     // (counting what it holds in all would read it whole).
     let reconcile = &revisions[0];
     assert_eq!(reconcile["partial"], true, "{reconcile}");
@@ -240,18 +240,18 @@ fn undo_cost(n: usize) -> (u64, u64) {
         .map(|i| w.create_metarecord(vec![Field::new("rank", Value::Int(i as i64))]).unwrap().uuid)
         .collect();
     w.commit().unwrap();
-    let (label, write) = reads_of(&mut kv, |kv| {
+    let (log_context, write) = reads_of(&mut kv, |kv| {
         let mut w = Writer::begin(kv, Some("tag".into())).unwrap();
         for &u in &uuids {
             w.append_field(u, "tag", Value::String("x".into())).unwrap();
         }
-        let label = w.log_context_id();
+        let log_context = w.log_context_id();
         w.commit().unwrap();
-        label
+        log_context
     });
-    // What `POST /revert` with `{"log_context_id": label, "only": "changes"}` does.
+    // What `POST /revert` with `{"log_context_id": log_context, "only": "changes"}` does.
     let (_, undo) = reads_of(&mut kv, |kv| {
-        let ops = revert::label_ops(kv, label).unwrap();
+        let ops = revert::log_context_ops(kv, log_context).unwrap();
         let ops = revert::narrow(kv, ops, revert::Only::Changes).unwrap();
         for op in &ops {
             assert!(revert::fs_action(kv, op).unwrap().is_none());
@@ -264,7 +264,7 @@ fn undo_cost(n: usize) -> (u64, u64) {
 }
 
 /// Undoing a write costs the write it makes — a deletion for an append — and
-/// what the log says of each operation it undoes: the label's entry and the
+/// what the log says of each operation it undoes: the log context's entry and the
 /// operation (2 keys), its reverts (1), and the one snapshot its inverse needs
 /// (2 for a one-row append), plus a few keys once. Reading the side of the
 /// snapshot it does not need cost one key an operation more: 13 an operation

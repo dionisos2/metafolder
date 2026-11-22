@@ -21,30 +21,33 @@ pub const ACTIVITY_HEADER: &str = "x-metafolder-activity";
 pub const ACTIVITY_ENV: &str = "METAFOLDER_ACTIVITY";
 
 /// The environment variable a context is passed on in ([`Context`]): the
-/// label every `mf` started meanwhile writes in. Leaving the context is not
+/// log context every `mf` started meanwhile writes in. Leaving the context is not
 /// passing it on.
 pub const LOG_CONTEXT_ENV: &str = "METAFOLDER_LOG_CONTEXT";
 
-/// A context as it is passed on: a label, and the repository it belongs to —
-/// a label id means nothing in another repository, so a client sends it only
-/// with a request to that one. Spelt `<repo uuid>:<label id>`.
+/// A context as it is passed on: a log context, and the repository it belongs to —
+/// a log context id means nothing in another repository, so a client sends it only
+/// with a request to that one. Spelt `<repo uuid>:<log_context id>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Context {
     pub repo: uuid::Uuid,
-    pub label: i64,
+    pub log_context: i64,
 }
 
 impl Context {
-    /// Reads `<repo uuid>:<label id>`; `None` when it is not that.
+    /// Reads `<repo uuid>:<log_context id>`; `None` when it is not that.
     pub fn parse(text: &str) -> Option<Self> {
-        let (repo, label) = text.trim().split_once(':')?;
-        Some(Self { repo: uuid::Uuid::parse_str(repo).ok()?, label: label.parse().ok()? })
+        let (repo, log_context) = text.trim().split_once(':')?;
+        Some(Self {
+            repo: uuid::Uuid::parse_str(repo).ok()?,
+            log_context: log_context.parse().ok()?,
+        })
     }
 
-    /// The label to send with a request to `path`: this one when the path is
+    /// The log context to send with a request to `path`: this one when the path is
     /// one of its repository's (`/repos/<uuid>/…`).
-    pub fn label_for(&self, path: &str) -> Option<i64> {
-        (repo_of(path)? == self.repo).then_some(self.label)
+    pub fn log_context_for(&self, path: &str) -> Option<i64> {
+        (repo_of(path)? == self.repo).then_some(self.log_context)
     }
 }
 
@@ -56,7 +59,7 @@ pub fn repo_of(path: &str) -> Option<uuid::Uuid> {
 
 impl std::fmt::Display for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.repo.as_simple(), self.label)
+        write!(f, "{}:{}", self.repo.as_simple(), self.log_context)
     }
 }
 
@@ -140,18 +143,18 @@ mod tests {
     #[test]
     fn a_context_names_its_repository() {
         let repo = uuid::Uuid::new_v4();
-        let context = Context { repo, label: 12 };
+        let context = Context { repo, log_context: 12 };
         assert_eq!(Context::parse(&context.to_string()), Some(context));
         assert_eq!(Context::parse(&format!("{}:12", repo.hyphenated())), Some(context));
         assert_eq!(Context::parse("12"), None);
         assert_eq!(Context::parse("x:12"), None);
         assert_eq!(
-            context.label_for(&format!("/repos/{}/metarecords", repo.as_simple())),
+            context.log_context_for(&format!("/repos/{}/metarecords", repo.as_simple())),
             Some(12)
         );
-        assert_eq!(context.label_for(&format!("/repos/{}", repo.hyphenated())), Some(12));
-        assert_eq!(context.label_for(&format!("/repos/{}/log", uuid::Uuid::new_v4())), None);
-        assert_eq!(context.label_for("/repos"), None);
+        assert_eq!(context.log_context_for(&format!("/repos/{}", repo.hyphenated())), Some(12));
+        assert_eq!(context.log_context_for(&format!("/repos/{}/log", uuid::Uuid::new_v4())), None);
+        assert_eq!(context.log_context_for("/repos"), None);
     }
 
     #[test]

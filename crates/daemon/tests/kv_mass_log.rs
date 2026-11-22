@@ -119,13 +119,13 @@ fn a_mass_remove_reads_as_a_deletion_per_record() {
     }
 }
 
-/// Writes under a label of its own; the label.
+/// Writes under a log context of its own; the log context.
 fn labelled<T>(store: &mut KvStore, f: impl FnOnce(&mut Writer) -> T) -> (i64, T) {
     let mut w = Writer::begin(store, Some("mass".into())).unwrap();
-    let label = w.log_context_id();
+    let log_context = w.log_context_id();
     let out = f(&mut w);
     w.commit().unwrap();
-    (label, out)
+    (log_context, out)
 }
 
 fn state(store: &KvStore, uuids: &[Uuid]) -> Vec<Vec<Value>> {
@@ -148,7 +148,7 @@ fn undoing_a_mass_write_gives_the_records_back() {
     let uuids = records(&mut store, 80);
     let start = state(&store, &uuids);
     for remove in [false, true] {
-        let (label, _) = labelled(&mut store, |w| {
+        let (log_context, _) = labelled(&mut store, |w| {
             if remove {
                 w.mass_remove("tag", &s("blue"), &uuids).unwrap()
             } else {
@@ -156,7 +156,7 @@ fn undoing_a_mass_write_gives_the_records_back() {
             }
         });
         assert_ne!(state(&store, &uuids), start);
-        let ops = revert::label_ops(&store, label).unwrap();
+        let ops = revert::log_context_ops(&store, log_context).unwrap();
         assert_eq!(ops.len(), if remove { 40 } else { 80 });
         let mut w = Writer::begin(&mut store, None).unwrap();
         revert::apply(&mut w, &ops).unwrap();
@@ -191,7 +191,7 @@ fn a_record_s_operations_include_the_mass_ones_that_named_it() {
 fn the_log_is_read_whole_through_its_other_doors() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 20);
-    let (label, _) = labelled(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
+    let (log_context, _) = labelled(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
     write(&mut store, |w| w.set_field(uuids[0], "rank", Value::Int(1)).unwrap());
     let all = store.all_ops().unwrap();
     let head = store.head().unwrap().unwrap();
@@ -202,18 +202,18 @@ fn the_log_is_read_whole_through_its_other_doors() {
         back.iter().map(|o| o.id).collect::<Vec<_>>(),
         (head - 4..=head).rev().collect::<Vec<_>>()
     );
-    let inside = all.iter().find(|o| o.log_context_id == label).unwrap().id + 5;
+    let inside = all.iter().find(|o| o.log_context_id == log_context).unwrap().id + 5;
     let back = store.ops_back(inside, Some(3)).unwrap();
     assert_eq!(back.iter().map(|o| o.id).collect::<Vec<_>>(), [inside, inside - 1, inside - 2]);
     // After an id inside it.
     assert_eq!(store.ops_after(inside).unwrap().iter().map(|o| o.id).next(), Some(inside + 1));
     assert_eq!(store.ops_after_count(inside, 1000).unwrap(), head - inside);
     assert_eq!(store.ops_after_count(inside, 3).unwrap(), 3);
-    // A label's operations, its first.
-    assert_eq!(store.label_ops(label).unwrap().len(), 20);
+    // A log context's operations, its first.
+    assert_eq!(store.log_context_ops(log_context).unwrap().len(), 20);
     assert_eq!(
-        store.label_first_op(label).unwrap(),
-        Some(all.iter().find(|o| o.log_context_id == label).unwrap().id)
+        store.log_context_first_op(log_context).unwrap(),
+        Some(all.iter().find(|o| o.log_context_id == log_context).unwrap().id)
     );
     // The time travel lands on the entry's last id.
     let ts = store.op(inside).unwrap().unwrap().timestamp;
@@ -226,15 +226,15 @@ fn the_log_is_read_whole_through_its_other_doors() {
 fn pruning_keeps_an_entry_that_holds_its_target_whole() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 30);
-    let (label, _) = labelled(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
-    let ops = store.label_ops(label).unwrap();
+    let (log_context, _) = labelled(&mut store, |w| w.mass_add("tag", s("jazz"), &uuids).unwrap());
+    let ops = store.log_context_ops(log_context).unwrap();
     let target = ops[10].id;
     let before = store.counts().unwrap().0;
     let pruned = metafolder_daemon::log::prune(&mut store, target).unwrap();
     assert_eq!(pruned, 30, "the creations, and nothing of the entry");
     assert_eq!(store.counts().unwrap().0, before - 1, "the creations, one entry");
     assert_eq!(store.first_op().unwrap(), Some(ops[0].id));
-    let rest = store.label_ops(label).unwrap();
+    let rest = store.log_context_ops(log_context).unwrap();
     assert_eq!(rest.len(), 30);
     assert_eq!(store.op(target).unwrap().unwrap().entity_uuid, ops[10].entity_uuid);
     // The kept ones read as before.
@@ -248,19 +248,19 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     let uuids = records(&mut store, 30);
     let keep = Retention { watcher_ops: 0, user_ops: 5 };
     let mut w = Writer::begin_with_retention(&mut store, Some("mass".into()), keep).unwrap();
-    let label = w.log_context_id();
+    let log_context = w.log_context_id();
     w.mass_add("tag", s("jazz"), &uuids).unwrap();
     w.commit().unwrap();
-    assert_eq!(store.label_ops(label).unwrap().len(), 30);
+    assert_eq!(store.log_context_ops(log_context).unwrap().len(), 30);
     for i in 0..(5 + Retention::slack(5) as usize + 2) {
         let mut w = Writer::begin_with_retention(&mut store, None, keep).unwrap();
         w.set_field(uuids[0], "rank", Value::Int(i as i64)).unwrap();
         w.commit().unwrap();
     }
-    assert!(store.label_ops(label).unwrap().is_empty(), "the entry went whole");
+    assert!(store.log_context_ops(log_context).unwrap().is_empty(), "the entry went whole");
     let all = store.all_ops().unwrap();
     assert_eq!(all.len() as i64, store.counts().unwrap().0, "one operation per entry left");
-    assert!(all.iter().all(|o| o.log_context_id != label));
+    assert!(all.iter().all(|o| o.log_context_id != log_context));
 }
 
 /// What a write by id reads is the same whatever the number of records, but
@@ -380,7 +380,7 @@ fn what_a_replacement_replaced_survives_the_writes_that_came_after() {
     let ids = store.dense_ids(&uuids).unwrap();
     let head = store.head().unwrap().unwrap();
     let start = state(&store, &uuids);
-    let (label, _) = labelled(&mut store, |w| {
+    let (log_context, _) = labelled(&mut store, |w| {
         w.mass_set_ids("tag", vec![s("x")], &ids).unwrap();
     });
     // After it: by hand, in bulk, another replacement, a deletion.
@@ -388,7 +388,7 @@ fn what_a_replacement_replaced_survives_the_writes_that_came_after() {
     write(&mut store, |w| w.mass_add("tag", s("later"), &uuids[..15]).unwrap());
     write(&mut store, |w| w.mass_set("tag", vec![s("z")], &uuids[..5]).unwrap());
     write(&mut store, |w| w.delete_metarecord(uuids[2]).unwrap());
-    let ops = store.label_ops(label).unwrap();
+    let ops = store.log_context_ops(log_context).unwrap();
     assert_eq!(ops.len(), 30);
     for op in &ops {
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
@@ -439,7 +439,7 @@ fn a_replacement_knows_what_the_same_write_put_before_it() {
     let uuids = records(&mut store, 200);
     let ids = store.dense_ids(&uuids[..120]).unwrap();
     let head = store.head().unwrap().unwrap();
-    let (label, _) = labelled(&mut store, |w| {
+    let (log_context, _) = labelled(&mut store, |w| {
         // A posting made in this write, one record changed by hand, a value
         // that is nothing, then the replacement.
         w.mass_add("tag", s("jazz"), &uuids).unwrap();
@@ -448,7 +448,7 @@ fn a_replacement_knows_what_the_same_write_put_before_it() {
         w.mass_set_ids("tag", vec![s("z")], &ids).unwrap();
     });
     let _ = head;
-    let ops = store.label_ops(label).unwrap();
+    let ops = store.log_context_ops(log_context).unwrap();
     let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_field").collect();
     // The log keeps no state a write left: the replacement by "z" is the
     // newest of the replacements, after the ten that wrote nothing.
@@ -531,8 +531,9 @@ fn a_replacement_of_long_texts_is_undone_whole() {
             .collect()
     };
     let start = notes(&store);
-    let (label, _) = labelled(&mut store, |w| w.mass_set("note", vec![s("same")], &uuids).unwrap());
-    let ops = revert::label_ops(&store, label).unwrap();
+    let (log_context, _) =
+        labelled(&mut store, |w| w.mass_set("note", vec![s("same")], &uuids).unwrap());
+    let ops = revert::log_context_ops(&store, log_context).unwrap();
     assert_eq!(ops.len(), 30);
     for (op, before) in ops.iter().zip(&start) {
         let held: Vec<Value> =
@@ -559,13 +560,14 @@ fn the_entries_after_an_operation_are_read_once_for_a_whole_plan() {
         let (mut store, _dir) = open();
         let uuids = records(&mut store, 400);
         let ids = store.dense_ids(&uuids).unwrap();
-        let (label, _) = labelled(&mut store, |w| w.mass_add_ids("tag", s("x"), &ids).unwrap());
+        let (log_context, _) =
+            labelled(&mut store, |w| w.mass_add_ids("tag", s("x"), &ids).unwrap());
         for j in 0..later {
             write(&mut store, |w| w.mass_add_ids("tag", s(&format!("y{j}")), &ids).unwrap());
         }
         // What the writes left pending is not what is measured.
         store.fold().unwrap();
-        let ops = revert::label_ops(&store, label).unwrap();
+        let ops = revert::log_context_ops(&store, log_context).unwrap();
         assert_eq!(ops.len(), 400);
         let before = store.reads();
         for op in &ops {

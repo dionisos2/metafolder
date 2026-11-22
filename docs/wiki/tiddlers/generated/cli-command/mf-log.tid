@@ -1,23 +1,23 @@
 title: $:/mf/gen/CLI command/mf log
 catalog: CLI command
 target: mf log
-summary: The history of operations, by label (default: list)
+summary: The history of operations, by log context (default: list)
 
 !! Reference
 
 ```
-The history of operations, by label (default: list)
+The history of operations, by log context (default: list)
 
 Usage: mf log [COMMAND]
 
 Commands:
-  list      Display the history, by label
+  list      Display the history, by log context
   contexts  List the log contexts with their counts and what undid them, newest first, reading no operation
   head      Print the id of the newest operation
-  show      Show full details of one label (a label id, or HEAD for the newest operation's)
-  undo      Undo a label of your newest change still standing (none named: list them)
-  redo      Take back the undos of a label of the newest undo still standing (none named: list them)
-  revert    Undo a label — what was written inside it — or an operation, by writing its inverse
+  show      Show full details of one log context (a log context id, or HEAD for the newest operation's)
+  undo      Undo a log context of your newest change still standing (none named: list them)
+  redo      Take back the undos of a log context of the newest undo still standing (none named: list them)
+  revert    Undo a log context — what was written inside it — or an operation, by writing its inverse
   rollback  Go back to a time: revert your changes since then (not the watcher's)
   prune     Permanently remove operations from the history (irreversible)
   help      Print this message or the help of the given subcommand(s)

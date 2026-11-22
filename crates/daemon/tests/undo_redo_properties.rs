@@ -3,7 +3,7 @@
 //! oscillate"), held to the state of the repository rather than to a value
 //! predicted per case:
 //!
-//! * undoing a label again and again changes nothing after the first time;
+//! * undoing a log context again and again changes nothing after the first time;
 //! * redoing it again and again changes nothing after the first time;
 //! * an undo followed by its own undo gives back the state between them;
 //!
@@ -168,8 +168,8 @@ impl Fix {
         self.ok("GET", "/log", None).await["head"].as_i64().unwrap()
     }
 
-    /// The label of the newest operation.
-    async fn newest_label(&self) -> i64 {
+    /// The log context of the newest operation.
+    async fn newest_log_context(&self) -> i64 {
         let log = self.ok("GET", "/log", None).await;
         let head = log["head"].as_i64().unwrap();
         log["operations"]
@@ -234,14 +234,14 @@ impl Fix {
         self.ok("POST", "/revert", Some(json!({"target": target}))).await
     }
 
-    /// An undo of `label`, as the clients write it.
-    async fn undo(&self, label: i64) -> Value {
-        self.revert(json!({"log_context_id": label, "only": "changes"})).await
+    /// An undo of `log_context`, as the clients write it.
+    async fn undo(&self, log_context: i64) -> Value {
+        self.revert(json!({"log_context_id": log_context, "only": "changes"})).await
     }
 
-    /// A redo of the undo written in `label`.
-    async fn redo(&self, label: i64) -> Value {
-        self.revert(json!({"log_context_id": label, "only": "undos"})).await
+    /// A redo of the undo written in `log_context`.
+    async fn redo(&self, log_context: i64) -> Value {
+        self.revert(json!({"log_context_id": log_context, "only": "undos"})).await
     }
 }
 
@@ -281,7 +281,7 @@ impl Write {
         matches!(self, Write::DeleteOne | Write::MassDelete)
     }
 
-    /// Does the write; the label it was written in.
+    /// Does the write; the log context it was written in.
     async fn apply(self, fx: &Fix) -> i64 {
         let many = fx.uuids.len() - 2;
         let one = |i: usize| format!("/metarecords/{}", fx.uuids[i]);
@@ -352,7 +352,7 @@ impl Write {
                 fx.ok("POST", "/query/delete", Some(json!({"query": fx.among(0..many)}))).await;
             }
         }
-        fx.newest_label().await
+        fx.newest_log_context().await
     }
 }
 
@@ -439,16 +439,16 @@ async fn undoing_again(write: Write) {
             for mask in 0..4u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, fold mask {mask}");
                 let fx = tpl.instance().await;
-                let label = write.apply(&fx).await;
+                let log_context = write.apply(&fx).await;
                 maintain(&fx, mask & 1 == 1, false).await;
                 between.apply(&fx, write).await;
-                let first = fx.undo(label).await;
+                let first = fx.undo(log_context).await;
                 assert!(!nothing_written(&first), "{case}: the undo wrote nothing: {first}");
                 maintain(&fx, mask & 2 == 2, false).await;
                 let undone = fx.snapshot().await;
                 let head = fx.head().await;
                 for again in 0..3 {
-                    let out = fx.undo(label).await;
+                    let out = fx.undo(log_context).await;
                     assert!(nothing_written(&out), "{case}, undo {again}: {out}");
                     assert_eq!(fx.head().await, head, "{case}: the log moved");
                     assert_eq!(
@@ -485,13 +485,14 @@ async fn redoing_again(write: Write) {
             for mask in 0..4u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, fold mask {mask}");
                 let fx = tpl.instance().await;
-                let label = write.apply(&fx).await;
+                let log_context = write.apply(&fx).await;
                 between.apply(&fx, write).await;
                 let written = fx.snapshot().await;
-                let undo = fx.undo(label).await;
-                let undo_label = undo["log_context"].as_i64().expect("the undo has a label");
+                let undo = fx.undo(log_context).await;
+                let undo_log_context =
+                    undo["log_context"].as_i64().expect("the undo has a log context");
                 maintain(&fx, mask & 1 == 1, false).await;
-                let first = fx.redo(undo_label).await;
+                let first = fx.redo(undo_log_context).await;
                 assert!(!nothing_written(&first), "{case}: the redo wrote nothing: {first}");
                 maintain(&fx, mask & 2 == 2, false).await;
                 assert_eq!(
@@ -501,7 +502,7 @@ async fn redoing_again(write: Write) {
                 );
                 let head = fx.head().await;
                 for again in 0..3 {
-                    let out = fx.redo(undo_label).await;
+                    let out = fx.redo(undo_log_context).await;
                     assert!(nothing_written(&out), "{case}, redo {again}: {out}");
                     assert_eq!(fx.head().await, head, "{case}: the log moved");
                     assert_eq!(
@@ -510,9 +511,9 @@ async fn redoing_again(write: Write) {
                         "{case}: redo {again} changed the state"
                     );
                 }
-                // The redo's own label is not an undo of a change: redoing it is nothing.
-                let redo_label = first["log_context"].as_i64().unwrap();
-                let out = fx.redo(redo_label).await;
+                // The redo's own log context is not an undo of a change: redoing it is nothing.
+                let redo_log_context = first["log_context"].as_i64().unwrap();
+                let out = fx.redo(redo_log_context).await;
                 assert!(nothing_written(&out), "{case}: a redo of a redo wrote: {out}");
                 fx.check(&case).await;
             }
@@ -536,7 +537,7 @@ each_write! { redoing_again:
 // ── Undoing an undo gives the state back ────────────────────────────────────
 
 /// Three rounds of undo, then the undo undone — by a redo the first time, by
-/// an explicit revert of the undo's label the second — with the store folded
+/// an explicit revert of the undo's log context the second — with the store folded
 /// or reindexed in between: the state alternates between two values and no
 /// more.
 async fn undo_of_undo(write: Write) {
@@ -546,14 +547,14 @@ async fn undo_of_undo(write: Write) {
             for mask in 0..8u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, mask {mask:03b}");
                 let fx = tpl.instance().await;
-                let label = write.apply(&fx).await;
+                let log_context = write.apply(&fx).await;
                 maintain(&fx, mask & 1 == 1, mask & 4 == 4).await;
                 between.apply(&fx, write).await;
                 let written = fx.snapshot().await;
                 let mut undone = None;
                 for round in 0..3 {
-                    let undo = fx.undo(label).await;
-                    let undo_label = undo["log_context"]
+                    let undo = fx.undo(log_context).await;
+                    let undo_log_context = undo["log_context"]
                         .as_i64()
                         .unwrap_or_else(|| panic!("{case}, round {round}: nothing undone: {undo}"));
                     maintain(&fx, mask & 2 == 2, false).await;
@@ -565,9 +566,9 @@ async fn undo_of_undo(write: Write) {
                         "{case}, round {round}: not the state of the first undo"
                     );
                     let back = if round == 1 {
-                        fx.revert(json!({"log_context_id": undo_label})).await
+                        fx.revert(json!({"log_context_id": undo_log_context})).await
                     } else {
-                        fx.redo(undo_label).await
+                        fx.redo(undo_log_context).await
                     };
                     assert!(
                         !nothing_written(&back),
@@ -634,11 +635,11 @@ async fn older_write(write: Write) {
             let fx = tpl.instance().await;
             let never = tpl.instance().await;
             later_writes(&never).await;
-            let label = write.apply(&fx).await;
+            let log_context = write.apply(&fx).await;
             maintain(&fx, mask & 1 == 1, false).await;
             later_writes(&fx).await;
             let both = fx.snapshot().await;
-            let undo = fx.undo(label).await;
+            let undo = fx.undo(log_context).await;
             maintain(&fx, mask & 2 == 2, false).await;
             assert_eq!(
                 fx.content().await,
@@ -647,7 +648,7 @@ async fn older_write(write: Write) {
             );
             let head = fx.head().await;
             for again in 0..2 {
-                assert!(nothing_written(&fx.undo(label).await), "{case}, undo {again}");
+                assert!(nothing_written(&fx.undo(log_context).await), "{case}, undo {again}");
                 assert_eq!(fx.head().await, head, "{case}: the log moved");
             }
             fx.redo(undo["log_context"].as_i64().unwrap()).await;
@@ -656,7 +657,7 @@ async fn older_write(write: Write) {
                 both,
                 "{case}: the redo does not give both writes back"
             );
-            fx.undo(label).await;
+            fx.undo(log_context).await;
             assert_eq!(fx.content().await, never.content().await, "{case}: the second undo");
             fx.check(&case).await;
         }

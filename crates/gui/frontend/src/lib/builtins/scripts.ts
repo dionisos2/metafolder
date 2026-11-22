@@ -75,10 +75,10 @@ async function resolveScriptPath(choice: string): Promise<string | null> {
  *  as a `!` command does. */
 async function runScript(path: string, context: ExecContext): Promise<void> {
   await surfacePanel(context, "shell");
-  // A script's writes are one label in the log, its commands' nested in it
+  // A script's writes are one log context in the log, its commands' nested in it
   // (doc "Log contexts").
   await runShell(`bash ${shellQuote(path)}`, {
-    label: `script ${path.split("/").pop() ?? path}`,
+    logContext: `script ${path.split("/").pop() ?? path}`,
     ws: context.ws,
   });
 }

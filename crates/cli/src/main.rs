@@ -57,7 +57,7 @@ enum Command {
         #[command(subcommand)]
         command: ContextCommand,
     },
-    /// The history of operations, by label (default: list)
+    /// The history of operations, by log context (default: list)
     Log {
         #[command(subcommand)]
         command: Option<LogCommand>,
@@ -568,15 +568,15 @@ enum ContextCommand {
 
 #[derive(Subcommand)]
 enum LogCommand {
-    /// Display the history, by label
+    /// Display the history, by log context
     List {
-        /// Expand each label to show its individual operations
+        /// Expand each log context to show its individual operations
         #[arg(long)]
         ops: bool,
         /// Only operations that affected this metarecord
         #[arg(long)]
         metarecord: Option<String>,
-        /// Show at most N labels (or operations with --ops); default 20
+        /// Show at most N log contexts (or operations with --ops); default 20
         #[arg(long = "limit")]
         limit: Option<usize>,
         /// Only operations written at or after T (ISO-8601, or @<unix-ms>)
@@ -591,10 +591,10 @@ enum LogCommand {
     },
     /// List the log contexts with their counts and what undid them, newest first, reading no operation
     Contexts {
-        /// Only the labels nested in this one (default: the units of work)
+        /// Only the log contexts nested in this one (default: the units of work)
         #[arg(long = "in")]
         parent: Option<i64>,
-        /// Show at most N labels; default 20
+        /// Show at most N log contexts; default 20
         #[arg(long = "limit")]
         limit: Option<usize>,
         /// Remove the default limit of 20
@@ -603,16 +603,16 @@ enum LogCommand {
     },
     /// Print the id of the newest operation
     Head,
-    /// Show full details of one label (a label id, or HEAD for the newest operation's)
+    /// Show full details of one log context (a log context id, or HEAD for the newest operation's)
     Show {
         target: String,
         /// Print the raw JSON response body
         #[arg(long)]
         raw: bool,
     },
-    /// Undo a label of your newest change still standing (none named: list them)
+    /// Undo a log context of your newest change still standing (none named: list them)
     Undo {
-        /// [plan] [LABEL]: "plan" previews; without a label, the candidates are listed
+        /// [plan] [LOG_CONTEXT]: "plan" previews; without a log context, the candidates are listed
         #[arg(num_args = 0..=2)]
         args: Vec<String>,
         /// Leave out the operations needing a filesystem action
@@ -631,9 +631,9 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
-    /// Take back the undos of a label of the newest undo still standing (none named: list them)
+    /// Take back the undos of a log context of the newest undo still standing (none named: list them)
     Redo {
-        /// [plan] [LABEL]: "plan" previews; without a label, the candidates are listed
+        /// [plan] [LOG_CONTEXT]: "plan" previews; without a log context, the candidates are listed
         #[arg(num_args = 0..=2)]
         args: Vec<String>,
         /// Leave out the operations needing a filesystem action
@@ -652,9 +652,9 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
-    /// Undo a label — what was written inside it — or an operation, by writing its inverse
+    /// Undo a log context — what was written inside it — or an operation, by writing its inverse
     Revert {
-        /// "plan" to preview, optionally a label id; or a label id.
+        /// "plan" to preview, optionally a log context id; or a log context id.
         #[arg(num_args = 0..=2)]
         args: Vec<String>,
         /// Revert this operation only (repeatable)
@@ -1387,10 +1387,10 @@ enum GuiWorkspaceCommand {
     Rm { id: String },
 }
 
-/// A prune target: a label id, --id, or --timestamp.
+/// A prune target: a log context id, --id, or --timestamp.
 #[derive(clap::Args)]
 struct TargetOpts {
-    /// A label id: the label is kept whole, its children included
+    /// A log context id: the log context is kept whole, its children included
     target: Option<i64>,
     /// Target operation by id
     #[arg(long)]
@@ -1403,7 +1403,7 @@ struct TargetOpts {
 impl TargetOpts {
     fn into_args(self) -> metafolder_cli::log::TargetArgs {
         metafolder_cli::log::TargetArgs {
-            label: self.target,
+            log_context: self.target,
             id: self.id,
             timestamp: self.timestamp,
         }
@@ -1504,7 +1504,7 @@ fn command_context() -> Result<metafolder_cli::client::Command, String> {
         Ok(value) if !value.trim().is_empty() && value.trim() != "0" => {
             Some(Context::parse(&value).ok_or_else(|| {
                 format!(
-                    "{}='{value}' is not a context (<repo uuid>:<label id>, as `mf context new` \
+                    "{}='{value}' is not a context (<repo uuid>:<log context id>, as `mf context new` \
                      prints it)",
                     context::LOG_CONTEXT_ENV
                 )
@@ -1513,8 +1513,8 @@ fn command_context() -> Result<metafolder_cli::client::Command, String> {
         _ => None,
     };
     Ok(metafolder_cli::client::Command::new(
-        metafolder_cli::label::command_line(&args),
-        metafolder_cli::label::query_of(&args).map(|q| format!("query: {q}")),
+        metafolder_cli::log_context::command_line(&args),
+        metafolder_cli::log_context::query_of(&args).map(|q| format!("query: {q}")),
         context,
     ))
 }
@@ -1588,11 +1588,11 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         }
         Command::Context { command } => match command {
             ContextCommand::New { name, description } => {
-                metafolder_cli::label::begin(ctx, &name, description.as_deref())
+                metafolder_cli::log_context::begin(ctx, &name, description.as_deref())
             }
-            ContextCommand::Parent => metafolder_cli::label::parent(ctx),
+            ContextCommand::Parent => metafolder_cli::log_context::parent(ctx),
             ContextCommand::Show { context } => {
-                metafolder_cli::label::show(ctx, context.as_deref())
+                metafolder_cli::log_context::show(ctx, context.as_deref())
             }
         },
         Command::Log { command } => dispatch_log(ctx, command),
@@ -1866,7 +1866,7 @@ fn dispatch_ignore(ctx: &Ctx, command: Option<IgnoreCommand>) -> CmdResult {
 /// The lone optional positional of `mf log undo` / `mf log redo`: the literal
 /// `plan`, or nothing. They take no target — finding one is the whole job — so
 /// anything else is a usage error rather than a silently ignored word.
-/// `[plan] [LABEL]`: whether to preview, and the label named.
+/// `[plan] [LABEL]`: whether to preview, and the log context named.
 fn undo_arguments(
     args: &[String],
 ) -> Result<(bool, Option<i64>), metafolder_cli::client::CliError> {
@@ -1874,18 +1874,20 @@ fn undo_arguments(
         Some((first, rest)) if first == "plan" => (true, rest),
         _ => (false, args),
     };
-    let label = match rest {
+    let log_context = match rest {
         [] => None,
-        [label] => Some(label.parse::<i64>().map_err(|_| {
-            metafolder_cli::client::CliError::Usage(format!("'{label}' is not a label id"))
+        [log_context] => Some(log_context.parse::<i64>().map_err(|_| {
+            metafolder_cli::client::CliError::Usage(format!(
+                "'{log_context}' is not a log context id"
+            ))
         })?),
         _ => {
             return Err(metafolder_cli::client::CliError::Usage(
-                "give at most 'plan' and one label id".into(),
+                "give at most 'plan' and one log context id".into(),
             ))
         }
     };
-    Ok((plan, label))
+    Ok((plan, log_context))
 }
 
 /// The two `move_file` policies, with the defaults of `mf log undo`, `redo` and `revert`.
@@ -1914,7 +1916,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             log::log(ctx, &log::LogArgs { ops, metarecord, limit, since, until, all })
         }
         Some(LogCommand::Contexts { parent, limit, all }) => {
-            log::log_labels(ctx, &log::LabelsArgs { parent, limit, all })
+            log::log_log_contexts(ctx, &log::LogContextsArgs { parent, limit, all })
         }
         Some(LogCommand::Head) => log::log_head(ctx),
         Some(LogCommand::Show { target, raw }) => log::log_show(ctx, &target, raw),
@@ -1926,10 +1928,10 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             force,
             silent,
         }) => {
-            let (plan_only, label) = undo_arguments(&args)?;
+            let (plan_only, log_context) = undo_arguments(&args)?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
             let opts = log::UndoOpts { metadata_only, force, silent };
-            log::undo_run(ctx, false, plan_only, label, policies, opts)
+            log::undo_run(ctx, false, plan_only, log_context, policies, opts)
         }
         Some(LogCommand::Redo {
             args,
@@ -1939,10 +1941,10 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             force,
             silent,
         }) => {
-            let (plan_only, label) = undo_arguments(&args)?;
+            let (plan_only, log_context) = undo_arguments(&args)?;
             let policies = move_policies(on_move_available, on_move_unavailable)?;
             let opts = log::UndoOpts { metadata_only, force, silent };
-            log::undo_run(ctx, true, plan_only, label, policies, opts)
+            log::undo_run(ctx, true, plan_only, log_context, policies, opts)
         }
         Some(LogCommand::Revert {
             args,
@@ -1953,22 +1955,22 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             force,
             silent,
         }) => {
-            let (is_plan, label) = match args.split_first() {
+            let (is_plan, log_context) = match args.split_first() {
                 Some((first, rest)) if first == "plan" => (true, rest.first().cloned()),
                 Some((first, _)) => (false, Some(first.clone())),
                 None => (false, None),
             };
-            let log_context_id = match label {
+            let log_context_id = match log_context {
                 Some(l) => Some(l.parse::<i64>().map_err(|_| {
                     metafolder_cli::client::CliError::Usage(format!(
-                        "'{l}' is not a label id; targets are a label id, or --op <id>"
+                        "'{l}' is not a log context id; targets are a log context id, or --op <id>"
                     ))
                 })?),
                 None => None,
             };
             if log_context_id.is_some() && !op.is_empty() {
                 return Err(metafolder_cli::client::CliError::Usage(
-                    "give a label id or --op, not both".into(),
+                    "give a log context id or --op, not both".into(),
                 ));
             }
             let target = log::RevertTarget { log_context_id, op_ids: op, ..Default::default() };
@@ -2024,7 +2026,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             PruneCommand::Before { target, force, silent } => {
                 if target.is_empty() {
                     Err(metafolder_cli::client::CliError::Usage(
-                        "mf log prune before requires a target (<label>, --id, or --timestamp)"
+                        "mf log prune before requires a target (<log context>, --id, or --timestamp)"
                             .into(),
                     ))
                 } else {

@@ -119,7 +119,7 @@ pub(crate) enum LogContext {
 /// GUI's work context").
 pub(crate) fn log_context_for(method: &str, path: &str) -> LogContext {
     use metafolder_core::context;
-    let work = crate::work_context::label_for(path);
+    let work = crate::work_context::log_context_for(path);
     let Some(repo) = context::repo_of(path) else { return LogContext::Send(work) };
     let run = RUN.try_with(Clone::clone).ok().flatten();
     let guard = RUNS.lock_recover();
@@ -365,7 +365,7 @@ impl DaemonProxy {
                 return self.send(method, path, body, Some(token), timing, context).await;
             }
         }
-        // The work context's label was pruned meanwhile: the daemon wrote
+        // The work context's log context was pruned meanwhile: the daemon wrote
         // nothing, the context is closed, and the request goes again outside it.
         if crate::work_context::forget_if_gone(path, response.status, &response.body) {
             let context = match self.log_context(method, path).await? {
@@ -392,14 +392,15 @@ impl DaemonProxy {
                 LogContext::Send(context) => return Ok(Ok(context)),
                 LogContext::Create { key, repo, body, parent } => (key, repo, body, parent),
             };
-            let labels = format!("/repos/{}/contexts", repo.as_simple());
-            let created = Box::pin(self.request_inner("POST", &labels, Some(body), None)).await?;
+            let log_contexts = format!("/repos/{}/contexts", repo.as_simple());
+            let created =
+                Box::pin(self.request_inner("POST", &log_contexts, Some(body), None)).await?;
             if let Some(id) = created.body["id"].as_i64().filter(|_| created.status < 300) {
                 return Ok(Ok(Some(context_created(&key, repo, id))));
             }
             // Its parent, the work context, was closed as gone meanwhile:
             // once more, outside it.
-            if attempts == 1 && crate::work_context::label_for(path) != parent {
+            if attempts == 1 && crate::work_context::log_context_for(path) != parent {
                 continue;
             }
             return Ok(Err(created));
@@ -457,9 +458,9 @@ impl DaemonProxy {
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
-        if let Some(label) = log_context {
-            request =
-                request.header(metafolder_core::context::LOG_CONTEXT_HEADER, label.to_string());
+        if let Some(log_context) = log_context {
+            request = request
+                .header(metafolder_core::context::LOG_CONTEXT_HEADER, log_context.to_string());
         }
         if NOT_ACTIVITY.try_with(|v| *v).unwrap_or(false) {
             request = request.header(metafolder_core::context::ACTIVITY_HEADER, "off");

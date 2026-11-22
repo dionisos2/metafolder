@@ -186,9 +186,9 @@ pub struct RevertLock {
     /// The operations `start` fixed. `commit` may only narrow this set, never
     /// widen it.
     pub ops: Vec<i64>,
-    /// The label the revert undoes whole, when its target was one (doc "Label
+    /// The log context the revert undoes whole, when its target was one (doc "Log context
     /// summaries").
-    pub label: Option<i64>,
+    pub log_context: Option<i64>,
 }
 
 /// The pair stores a repository hosts close with it (doc "The sync database").
@@ -1042,7 +1042,7 @@ impl RepoState {
             // the flush reports whatever step stays current.
             let watchdog = Watchdog::start(&who, SLOW_EVENT);
             // The step names alone ("resolve path") do not say which event is
-            // stuck; the current event labels them.
+            // stuck; the current event log contexts them.
             let current = std::cell::RefCell::new(String::new());
             let stats =
                 crate::executor::flush_pending_reported(self, &|progress| match progress {

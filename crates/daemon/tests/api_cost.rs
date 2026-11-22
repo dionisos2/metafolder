@@ -36,10 +36,10 @@ struct Repo {
     _root: TempDir,
 }
 
-fn build(label: &str, dirs: usize, files: usize, revisions: usize) -> (TempDir, Uuid) {
-    let root = TempDir::new(&format!("api-cost-{label}"));
+fn build(log_context: &str, dirs: usize, files: usize, revisions: usize) -> (TempDir, Uuid) {
+    let root = TempDir::new(&format!("api-cost-{log_context}"));
     common::seed_config(&root);
-    let opened = repo::init_repository(root.path(), None, Some(label), false).unwrap();
+    let opened = repo::init_repository(root.path(), None, Some(log_context), false).unwrap();
     let store = opened.metafolder_dir.join(repo::INTERNAL_DIR).join(repo::KV_DIR);
     let uuid = opened.config.repo_uuid;
     drop(opened.conn);
@@ -105,8 +105,8 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Json>) -> (
     (status, serde_json::from_slice(&bytes).unwrap_or(Json::Null))
 }
 
-async fn load(label: &str, scale: usize) -> Repo {
-    let (root, repo) = build(label, 25 * scale, 200 * scale, 200 * scale);
+async fn load(log_context: &str, scale: usize) -> Repo {
+    let (root, repo) = build(log_context, 25 * scale, 200 * scale, 200 * scale);
     let state = Arc::new(AppState::new(common::settings()));
     let app = routes::build(state.clone());
     let (status, body) =

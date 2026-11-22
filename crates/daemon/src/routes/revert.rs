@@ -4,7 +4,7 @@
 use super::*;
 use std::collections::HashSet;
 
-/// The set of operations to revert: a label's — its children's included —,
+/// The set of operations to revert: a log context's — its children's included —,
 /// an explicit list, or what going back to a time takes.
 #[derive(Deserialize)]
 pub(super) struct RevertTarget {
@@ -41,14 +41,14 @@ pub(super) struct RevertPlanParams {
     only: Option<String>,
 }
 
-/// The label a `log_context_id` of a target names: a number, or `"head"`, the label
+/// The log context a `log_context_id` of a target names: a number, or `"head"`, the log context
 /// of the newest operation.
-fn label_of_target(
+fn log_context_of_target(
     conn: &dyn crate::store::Store,
     head: Option<i64>,
-    label: &serde_json::Value,
+    log_context: &serde_json::Value,
 ) -> Result<i64, ApiError> {
-    match label {
+    match log_context {
         serde_json::Value::String(s) if s == "head" => {
             let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
             Ok(conn
@@ -63,16 +63,18 @@ fn label_of_target(
     }
 }
 
-/// The label a target reverts whole — the one a `log_context_id` names, and no
-/// other kind of target — which the revert's own label says it undid (doc
-/// "Label summaries").
-fn whole_label_of(
+/// The log context a target reverts whole — the one a `log_context_id` names, and no
+/// other kind of target — which the revert's own log context says it undid (doc
+/// "Log context summaries").
+fn whole_log_context_of(
     conn: &dyn crate::store::Store,
     head: Option<i64>,
     target: &RevertTarget,
 ) -> Result<Option<i64>, ApiError> {
     match (&target.log_context_id, &target.op_ids, target.since) {
-        (Some(label), None, None) => Ok(Some(label_of_target(conn, head, label)?)),
+        (Some(log_context), None, None) => {
+            Ok(Some(log_context_of_target(conn, head, log_context)?))
+        }
         _ => Ok(None),
     }
 }
@@ -103,17 +105,17 @@ fn resolve_revert_target(
         return Ok(crate::revert::since(conn, cut)?);
     }
     let ops = match (&target.log_context_id, &target.op_ids) {
-        (Some(label), None) => {
-            let log_context_id = label_of_target(conn, head, label)?;
-            // A label nothing was written in reverts nothing; one that does not
+        (Some(log_context), None) => {
+            let log_context_id = log_context_of_target(conn, head, log_context)?;
+            // A log context nothing was written in reverts nothing; one that does not
             // exist (or was dropped with its last operation) is a 404.
-            if conn.labels(&[log_context_id])?.is_empty() {
+            if conn.log_contexts(&[log_context_id])?.is_empty() {
                 return Err(ApiError::not_found(format!(
-                    "no label {log_context_id}: it never existed, or what it held was pruned or \
+                    "no log context {log_context_id}: it never existed, or what it held was pruned or \
                      trimmed away"
                 )));
             }
-            let ops = crate::revert::label_ops(conn, log_context_id)?;
+            let ops = crate::revert::log_context_ops(conn, log_context_id)?;
             match target.only.as_deref() {
                 None => ops,
                 Some(only) => {
@@ -153,19 +155,22 @@ fn resolve_revert_target(
     Ok(ops)
 }
 
-/// The name of the label a revert opens when the request names none.
+/// The name of the log context a revert opens when the request names none.
 fn revert_name(target: &RevertTarget) -> String {
     if let Some(t) = target.since {
         return format!("rollback to {}", metafolder_core::date::iso8601_from_ms(t));
     }
     match (&target.log_context_id, &target.op_ids) {
-        (Some(label), _) => {
+        (Some(log_context), _) => {
             let what = match target.only.as_deref() {
                 Some("changes") => "undo",
                 Some("undos") => "redo",
                 _ => "revert",
             };
-            format!("{what} of label {}", label.as_str().unwrap_or(&label.to_string()))
+            format!(
+                "{what} of log context {}",
+                log_context.as_str().unwrap_or(&log_context.to_string())
+            )
         }
         (_, Some(ids)) => revert_name_of(ids),
         _ => "revert".to_string(),
@@ -246,10 +251,10 @@ fn revert_plan_json(
         });
         if matches!(action, Some(crate::revert::FsAction::RestoreContent)) {
             // The trash correlation key: the version the record held before
-            // the whole label — one flush of the watcher — which is the only
+            // the whole log context — one flush of the watcher — which is the only
             // one anything outside it observed (doc "Trash, undo and redo").
-            if let Some(v) = conn.version_before_label(op.log_context_id, op.entity_uuid)? {
-                entry["entity_version_before_label"] = json!(v);
+            if let Some(v) = conn.version_before_log_context(op.log_context_id, op.entity_uuid)? {
+                entry["entity_version_before_log_context"] = json!(v);
             }
         }
         operations.push(entry);
@@ -315,7 +320,7 @@ pub(super) async fn revert(
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::store::Log::head(&*conn)?;
         let mut effective = resolve_revert_target(&conn, head, &body.target)?;
-        let whole = whole_label_of(&conn, head, &body.target)?;
+        let whole = whole_log_context_of(&conn, head, &body.target)?;
         let mut skipped = Vec::new();
         // Which operations need a file action: asked of the log once, since a
         // trashing's is read through its `reverts_op_id` chain.
@@ -356,10 +361,10 @@ pub(super) async fn revert(
         let mut writer = repo_state.writer(&mut conn, context)?;
         let applied: Vec<i64> = effective.iter().map(|o| o.id).collect();
         crate::revert::apply(&mut writer, &effective)?;
-        // Said on the new label: the whole label undone, unless some of its
+        // Said on the new log context: the whole log context undone, unless some of its
         // operations were left out.
         if let (Some(whole), true) = (whole, skipped.is_empty()) {
-            writer.note_label_reverts(whole, true)?;
+            writer.note_log_context_reverts(whole, true)?;
         }
         let log_context_id = writer.log_context_id();
         let effects = writer.effects();
@@ -433,8 +438,8 @@ pub(super) async fn revert_start(
             let cache = repo_state.tree();
             revert_plan_json(&conn, &effective, Some((&cache, &repo_state.config.root)))?
         };
-        let label = whole_label_of(&conn, head, &body.target)?;
-        *lock = Some(RevertLock { ops: effective.iter().map(|o| o.id).collect(), label });
+        let log_context = whole_log_context_of(&conn, head, &body.target)?;
+        *lock = Some(RevertLock { ops: effective.iter().map(|o| o.id).collect(), log_context });
         Ok(Json(plan))
     })
     .await
@@ -463,7 +468,7 @@ pub(super) async fn revert_commit(
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let (locked, whole): (Vec<i64>, Option<i64>) =
             match repo_state.revert_lock.lock_recover().as_ref() {
-                Some(RevertLock { ops, label }) => (ops.clone(), *label),
+                Some(RevertLock { ops, log_context }) => (ops.clone(), *log_context),
                 None => {
                     return Err(ApiError::conflict(
                         "no revert in progress; call revert/start first",
@@ -493,7 +498,7 @@ pub(super) async fn revert_commit(
                 .revert_writer(&mut conn, request_context().named(revert_name_of(&locked)))?;
             crate::revert::apply(&mut writer, &kept)?;
             if let (Some(whole), true) = (whole, kept.len() == locked.len()) {
-                writer.note_label_reverts(whole, true)?;
+                writer.note_log_context_reverts(whole, true)?;
             }
             let log_context_id = writer.log_context_id();
             let effects = writer.effects();

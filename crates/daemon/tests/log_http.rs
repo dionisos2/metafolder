@@ -1,5 +1,5 @@
 //! HTTP-level tests for the event log endpoints (doc "Event log"): history
-//! reading, labels, pruning, the change feed.
+//! reading, log contexts, pruning, the change feed.
 
 use std::sync::Arc;
 
@@ -161,13 +161,13 @@ async fn test_log_reports_repository_wide_totals() {
 }
 
 #[tokio::test]
-async fn test_label_detail() {
+async fn test_log_context_detail() {
     let (app, repo, root) = setup("rev").await;
     let entry =
         create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}])).await;
     let _ = entry;
 
-    // "head" targets the label of the newest operation.
+    // "head" targets the log context of the newest operation.
     let (status, detail) =
         request(&app, "GET", &format!("/repos/{repo}/log/contexts/head"), None).await;
     assert_eq!(status, StatusCode::OK, "got: {detail}");
@@ -176,7 +176,7 @@ async fn test_label_detail() {
     assert_eq!(ops.len(), 1);
     assert!(ops[0]["snapshots_before"].is_array(), "snapshots always included here");
 
-    // 404 on a missing label.
+    // 404 on a missing log context.
     let (status, _) =
         request(&app, "GET", &format!("/repos/{repo}/log/contexts/99999"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);

@@ -131,8 +131,8 @@ assert "root-no: a top-level file is denied" has_neg "$TOP" rootno
 assert "root-no: a nested file is denied" has_neg "$INNER" rootno
 
 # ── gui-tag-folder going back, against the real daemon ──────────────────────
-# Each answer writes in a label of its own inside the run's (doc "Labels and
-# contexts"); going back reverts that label, and only it.
+# Each answer writes in a log context of its own inside the run's (doc "Log contexts");
+# going back reverts that log context, and only it.
 hy_reset
 hy_prompt /
 hy_input q m y u n y       # scope; root mixed; sub yes; BACK; sub no; top yes

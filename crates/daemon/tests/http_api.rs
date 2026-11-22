@@ -521,7 +521,7 @@ async fn test_a_replace_is_undone_as_one_write() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let (_, after) = request(&app, "GET", &format!("/repos/{repo}/log?limit=1000"), None).await;
-    let labels = |log: &Value| {
+    let log_contexts = |log: &Value| {
         let mut ids: Vec<i64> = log["operations"]
             .as_array()
             .unwrap()
@@ -532,7 +532,11 @@ async fn test_a_replace_is_undone_as_one_write() {
         ids.dedup();
         ids.len()
     };
-    assert_eq!(labels(&after), labels(&before) + 1, "a replace is one write, under one label");
+    assert_eq!(
+        log_contexts(&after),
+        log_contexts(&before) + 1,
+        "a replace is one write, under one log context"
+    );
 }
 
 #[tokio::test]

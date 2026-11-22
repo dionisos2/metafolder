@@ -1,18 +1,17 @@
-// log panel tree: the labels of the log, one level at a time, as the daemon
-// summarises them (doc "log panel", doc "Log context summaries", doc "Labels and
-// contexts").
+// log panel tree: the log contexts of the log, one level at a time, as the daemon
+// summarises them (doc "log panel", doc "Log context summaries", doc "Log contexts").
 //
 // A row of the top level is a unit of work: for an operation of yours, its
-// outermost label — a script's run, a command —; for one of the watcher, its
-// flush. Going into a unit lists the labels nested in it and its own
+// outermost log context — a script's run, a command —; for one of the watcher, its
+// flush. Going into a unit lists the log contexts nested in it and its own
 // operations, and so on down to an operation, and into an operation for what it
 // changed: the panel shows one level at a time, like the path-ref panel (doc
 // "Opening a row"). Consecutive flushes of the watcher fold into one row, or
 // they would drown the rest. Everything is newest first.
 //
-// No operation is read to list a label: a unit is its summary (how many
+// No operation is read to list a log context: a unit is its summary (how many
 // operations it holds, who wrote it, what it undid and what undid it), and the
-// operations and the labels nested in a unit are read when it is gone into —
+// operations and the log contexts nested in a unit are read when it is gone into —
 // `withChildren` puts them in its node. Pure: the panel hands it what the
 // daemon answered and renders what it builds.
 
@@ -26,20 +25,20 @@ const WATCHER_OP_TYPES = ['file_deleted', 'file_moved', 'file_modified'];
  *            reverts_op_id?: number|null, timestamp?: number,
  *            field_name?: string|null, entity_uuid?: string|null}} Op
  *
- * One label, as `GET /log/contexts` summarises it.
+ * One log context, as `GET /log/contexts` summarises it.
  * @typedef {{id: number, name: string, description?: string|null,
  *            parent: number|null, created: number, updated?: number|null,
  *            operations: number, first_op?: number|null, last_op?: number|null,
  *            watcher?: boolean, children?: number, is_head?: boolean,
  *            reverts?: {log_context: number, whole: boolean}[],
  *            reverted_by?: {log_context: number, whole: boolean}[],
- *            undone?: 'fully'|'partly'|null}} Label
+ *            undone?: 'fully'|'partly'|null}} LogContext
  *
- * A node of the tree. A label: its summary and, once it has been gone into,
- * what it holds (`children`: its labels and its own operations, newest first;
- * `null` before). An operation (`undone`: that of the label it is in, when
+ * A node of the tree. A log context: its summary and, once it has been gone into,
+ * what it holds (`children`: its log contexts and its own operations, newest first;
+ * `null` before). An operation (`undone`: that of the log context it is in, when
  * that is undone whole). A fold of the watcher's flushes.
- * @typedef {{kind: 'label', id: number, label: Label, children: Node[]|null,
+ * @typedef {{kind: 'logContext', id: number, logContext: LogContext, children: Node[]|null,
  *            newest: number, watcher: boolean}
  *         | {kind: 'op', op: Op, newest: number, undone: 'fully'|null}
  *         | {kind: 'watcher', id: number, children: Node[], operations: number,
@@ -65,26 +64,26 @@ export function keyOf(node) {
 }
 
 /** The node of a labelled summary, not gone into yet.
- *  @param {Label} label @returns {Extract<Node, {kind: 'label'}>} */
-export function labelNode(label) {
+ *  @param {LogContext} logContext @returns {Extract<Node, {kind: 'logContext'}>} */
+export function logContextNode(logContext) {
   return {
-    kind: 'label',
-    id: label.id,
-    label,
+    kind: 'logContext',
+    id: logContext.id,
+    logContext,
     children: null,
-    newest: label.last_op ?? label.id,
-    watcher: label.watcher === true,
+    newest: logContext.last_op ?? logContext.id,
+    watcher: logContext.watcher === true,
   };
 }
 
 /**
  * The top level: the units of work, newest first as listed, the consecutive
  * flushes of the watcher folded into one row.
- * @param {Label[]} units
+ * @param {LogContext[]} units
  * @returns {Node[]}
  */
 export function buildTree(units) {
-  const nodes = units.map(labelNode);
+  const nodes = units.map(logContextNode);
   /** @type {Node[]} */
   const out = [];
   for (let i = 0; i < nodes.length; i++) {
@@ -99,7 +98,7 @@ export function buildTree(units) {
       kind: 'watcher',
       id: run[0].id,
       children: run,
-      operations: run.reduce((n, u) => n + (u.kind === 'label' ? u.label.operations : 0), 0),
+      operations: run.reduce((n, u) => n + (u.kind === 'logContext' ? u.logContext.operations : 0), 0),
       newest: run[0].newest,
     });
     i = j;
@@ -108,17 +107,17 @@ export function buildTree(units) {
 }
 
 /**
- * Puts in a label's node what it holds: the labels nested in it and its own
+ * Puts in a log context's node what it holds: the log contexts nested in it and its own
  * operations (`ops`, the newest of them), newest first.
- * @param {Node} node a label's @param {Label[]} nested @param {Op[]} ops
+ * @param {Node} node a log context's @param {LogContext[]} nested @param {Op[]} ops
  * @returns {Node}
  */
 export function withChildren(node, nested, ops) {
-  if (node.kind !== 'label') return node;
-  const under = node.label.undone === 'fully' ? 'fully' : null;
+  if (node.kind !== 'logContext') return node;
+  const under = node.logContext.undone === 'fully' ? 'fully' : null;
   /** @type {Node[]} */
   const children = [
-    ...nested.map(labelNode),
+    ...nested.map(logContextNode),
     ...ops.map((op) => /** @type {Node} */ ({ kind: 'op', op, newest: op.id, undone: under })),
   ];
   children.sort((a, b) => b.newest - a.newest);
@@ -164,7 +163,7 @@ export function rowsAt(tree, path, showWatcher) {
       (n) =>
         showWatcher ||
         along.length > 0 ||
-        !(n.kind === 'watcher' || (n.kind === 'label' && n.watcher)),
+        !(n.kind === 'watcher' || (n.kind === 'logContext' && n.watcher)),
     )
     .map((n) => ({ key: keyOf(n), node: n }));
 }
@@ -191,10 +190,10 @@ export function pathTo(tree, key) {
 }
 
 /**
- * What a node is: the daemon's, an undo (of which labels), undone (fully or
- * partly, by which labels) — read off the summary of a label, which the daemon
- * worked out from the labels' marks (a redo stands the change back up), and an
- * operation takes it from the label it is in when that is undone whole.
+ * What a node is: the daemon's, an undo (of which log contexts), undone (fully or
+ * partly, by which log contexts) — read off the summary of a log context, which the daemon
+ * worked out from the log contexts' marks (a redo stands the change back up), and an
+ * operation takes it from the log context it is in when that is undone whole.
  * @param {Node} node
  * @returns {{watcher: boolean, undoOf: number[], undone: 'fully'|'partly'|null,
  *           undoneBy: number[]}}
@@ -204,7 +203,7 @@ export function marksOf(node) {
     return { watcher: isWatcherOp(node.op), undoOf: [], undone: node.undone, undoneBy: [] };
   }
   if (node.kind === 'watcher') return { watcher: true, undoOf: [], undone: null, undoneBy: [] };
-  const l = node.label;
+  const l = node.logContext;
   return {
     watcher: l.watcher === true,
     undoOf: (l.reverts ?? []).map((r) => r.log_context),
@@ -214,13 +213,13 @@ export function marksOf(node) {
 }
 
 /**
- * How many operations a row says: a label's own, a fold's flushes'; none for an
+ * How many operations a row says: a log context's own, a fold's flushes'; none for an
  * operation.
  * @param {Node} node
  */
 export function countOf(node) {
   if (node.kind === 'op') return null;
-  return node.kind === 'watcher' ? node.operations : node.label.operations;
+  return node.kind === 'watcher' ? node.operations : node.logContext.operations;
 }
 
 /**
@@ -231,11 +230,11 @@ export function countOf(node) {
 export function timeOf(node) {
   if (node.kind === 'op') return node.op.timestamp ?? 0;
   if (node.kind === 'watcher') return Math.max(0, ...node.children.map(timeOf));
-  return node.label.updated ?? node.label.created ?? 0;
+  return node.logContext.updated ?? node.logContext.created ?? 0;
 }
 
 /**
- * The `POST /revert` target of a selected row: a label whole (its children
+ * The `POST /revert` target of a selected row: a log context whole (its children
  * included), one operation alone; nothing for a fold of the watcher's flushes.
  * @param {string|null} key
  * @returns {{log_context_id: number}|{op_ids: number[]}|null}
@@ -244,7 +243,7 @@ export function revertTarget(key) {
   if (!key) return null;
   const [kind, raw] = key.split(':');
   const id = Number(raw);
-  if (kind === 'label') return { log_context_id: id };
+  if (kind === 'logContext') return { log_context_id: id };
   if (kind === 'op') return { op_ids: [id] };
   return null;
 }

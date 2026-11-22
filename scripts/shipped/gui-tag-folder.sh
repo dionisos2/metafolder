@@ -420,15 +420,15 @@ WARNED_SKIP=0
 CURRENT=""       # the current folder — THE PATH IS THE STACK: going up is
                  # trimming one component, so the walk holds nothing else.
 
-# One frame per answer, pushed before it is applied: the label its writes go in
+# One frame per answer, pushed before it is applied: the log context its writes go in
 # (so they can be undone exactly), where the walk stood, and the sizes of the
 # two lists an answer can grow. Going back pops one and restores all of it —
-# the writes by reverting their label, which puts back the exact field rows and
+# the writes by reverting their log context, which puts back the exact field rows and
 # versions, the rest by assignment. Undoing the write is what re-opens the
 # entry: it comes back into the query on its own.
 BACK_STACK=()
 
-# The run is one label, each answer one inside it (doc "Log contexts"):
+# The run is one log context, each answer one inside it (doc "Log contexts"):
 # the log shows the run whole, and an answer is what going back reverts.
 RUN_LABEL=$(mf_label_begin "gui-tag-folder $TAG" "${SCOPE:-every metarecord}")
 [ -z "$RUN_LABEL" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LABEL"
@@ -437,7 +437,7 @@ mf_gui_read_root # each preview is the root + the path tree_path resolved
 
 while :; do
     [ -z "$STOP" ] || break
-    # Back in the run's context: an answer's label holds that answer only.
+    # Back in the run's context: an answer's log context holds that answer only.
     [ -z "$RUN_LABEL" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LABEL"
 
     kind="dir"

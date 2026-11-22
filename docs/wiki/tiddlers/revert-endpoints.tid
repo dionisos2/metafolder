@@ -24,7 +24,7 @@ ordinary change still standing — a redo ([[Undo and redo by log context]]). An
 the revert is applied onto the current state ([[Reverting onto the current state]]).
 
 The revert writes in the request's context like any write: the log context named in
-`X-Metafolder-Log-Context`, or one of its own named after the target (`revert of label 12`,
+`X-Metafolder-Log-Context`, or one of its own named after the target (`revert of log context 12`,
 `revert of operation 7`, `rollback to 2026-11-08T09:00:00Z`) — so the log says what an undo undid ([[Log endpoints]]).
 
 !! The plan
@@ -43,11 +43,11 @@ The revert writes in the request's context like any write: the log context named
 
 !! POST /revert
 
-`{"target", "skip_filesystem"?}` → `{"label", "head",
+`{"target", "skip_filesystem"?}` → `{"log_context", "head",
 "reverted_operations", "skipped_operations": [{"op_id", "reason"}]}`. `skip_filesystem`
 leaves out the operations needing a file action instead of refusing — it never means
 "write the metadata anyway": a revert never records a change it knows untrue of the
-disk. With nothing left to apply it writes nothing (`label: null`). `label` is the log context
+disk. With nothing left to apply it writes nothing (`log_context: null`). `log_context` is the log context
 the revert wrote in.
 
 |!Status |!When |

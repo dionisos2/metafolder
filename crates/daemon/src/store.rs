@@ -158,65 +158,65 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::all_ops($conn)
             }
-            fn labels(&self, ids: &[i64]) -> Result<HashMap<i64, LabelMeta>> {
+            fn log_contexts(&self, ids: &[i64]) -> Result<HashMap<i64, LogContextMeta>> {
                 let $me = self;
-                Log::labels($conn, ids)
+                Log::log_contexts($conn, ids)
             }
             fn counts(&self) -> Result<(i64, i64)> {
                 let $me = self;
                 Log::counts($conn)
             }
-            fn label_ops(&self, label: i64) -> Result<Vec<OpRow>> {
+            fn log_context_ops(&self, log_context: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
-                Log::label_ops($conn, label)
+                Log::log_context_ops($conn, log_context)
             }
-            fn label_first_op(&self, label: i64) -> Result<Option<i64>> {
+            fn log_context_first_op(&self, log_context: i64) -> Result<Option<i64>> {
                 let $me = self;
-                Log::label_first_op($conn, label)
+                Log::log_context_first_op($conn, log_context)
             }
-            fn label_children(&self, label: i64) -> Result<Vec<i64>> {
+            fn log_context_children(&self, log_context: i64) -> Result<Vec<i64>> {
                 let $me = self;
-                Log::label_children($conn, label)
+                Log::log_context_children($conn, log_context)
             }
-            fn label_op_count(&self, label: i64) -> Result<i64> {
+            fn log_context_op_count(&self, log_context: i64) -> Result<i64> {
                 let $me = self;
-                Log::label_op_count($conn, label)
+                Log::log_context_op_count($conn, log_context)
             }
-            fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
+            fn log_context_op_ids(&self, log_context: i64) -> Result<Vec<i64>> {
                 let $me = self;
-                Log::label_op_ids($conn, label)
+                Log::log_context_op_ids($conn, log_context)
             }
-            fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
+            fn log_context_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
                 let $me = self;
-                Log::label_ids_before($conn, before, max)
+                Log::log_context_ids_before($conn, before, max)
             }
-            fn label_last_op(&self, label: i64) -> Result<Option<i64>> {
+            fn log_context_last_op(&self, log_context: i64) -> Result<Option<i64>> {
                 let $me = self;
-                Log::label_last_op($conn, label)
+                Log::log_context_last_op($conn, log_context)
             }
-            fn label_reverts(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+            fn log_context_reverts(&self, log_context: i64) -> Result<Vec<(i64, bool)>> {
                 let $me = self;
-                Log::label_reverts($conn, label)
+                Log::log_context_reverts($conn, log_context)
             }
-            fn label_reverted_by(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+            fn log_context_reverted_by(&self, log_context: i64) -> Result<Vec<(i64, bool)>> {
                 let $me = self;
-                Log::label_reverted_by($conn, label)
+                Log::log_context_reverted_by($conn, log_context)
             }
             fn reverters(&self, op: i64) -> Result<Vec<i64>> {
                 let $me = self;
                 Log::reverters($conn, op)
             }
-            fn watcher_label(&self) -> Result<Option<i64>> {
+            fn watcher_log_context(&self) -> Result<Option<i64>> {
                 let $me = self;
-                Log::watcher_label($conn)
+                Log::watcher_log_context($conn)
             }
             fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 Log::entity_ops_after($conn, entity, after)
             }
-            fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>> {
+            fn version_before_log_context(&self, log_context: i64, entity: Uuid) -> Result<Option<u64>> {
                 let $me = self;
-                Log::version_before_label($conn, label, entity)
+                Log::version_before_log_context($conn, log_context, entity)
             }
             fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
@@ -430,48 +430,48 @@ pub trait Log {
     fn ops_back(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>>;
     /// Every operation, oldest first.
     fn all_ops(&self) -> Result<Vec<OpRow>>;
-    /// The given labels; ids that name none are left out.
-    fn labels(&self, ids: &[i64]) -> Result<HashMap<i64, LabelMeta>>;
-    /// How many operations and labels the log holds.
+    /// The given log contexts; ids that name none are left out.
+    fn log_contexts(&self, ids: &[i64]) -> Result<HashMap<i64, LogContextMeta>>;
+    /// How many operations and log contexts the log holds.
     fn counts(&self) -> Result<(i64, i64)>;
-    /// A label's own operations — not its children's — oldest first.
-    fn label_ops(&self, label: i64) -> Result<Vec<OpRow>>;
-    /// A label's oldest operation of its own, `None` when it has none.
-    fn label_first_op(&self, label: i64) -> Result<Option<i64>>;
-    /// A label's children, oldest first.
-    fn label_children(&self, label: i64) -> Result<Vec<i64>>;
-    /// How many operations a label holds of its own, counted without reading
+    /// A log context's own operations — not its children's — oldest first.
+    fn log_context_ops(&self, log_context: i64) -> Result<Vec<OpRow>>;
+    /// A log context's oldest operation of its own, `None` when it has none.
+    fn log_context_first_op(&self, log_context: i64) -> Result<Option<i64>>;
+    /// A log context's children, oldest first.
+    fn log_context_children(&self, log_context: i64) -> Result<Vec<i64>>;
+    /// How many operations a log context holds of its own, counted without reading
     /// them (an entry of many targets counts for all of its own).
-    fn label_op_count(&self, label: i64) -> Result<i64>;
-    /// The ids of a label's own operations, oldest first, without reading
+    fn log_context_op_count(&self, log_context: i64) -> Result<i64>;
+    /// The ids of a log context's own operations, oldest first, without reading
     /// them (an entry's are the ids between its first and its last).
-    fn label_op_ids(&self, label: i64) -> Result<Vec<i64>>;
-    /// The ids of the labels older than `before` (all when none), newest
+    fn log_context_op_ids(&self, log_context: i64) -> Result<Vec<i64>>;
+    /// The ids of the log contexts older than `before` (all when none), newest
     /// first, at most `max`.
-    fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>>;
-    /// A label's newest operation of its own, `None` when it has none.
-    fn label_last_op(&self, label: i64) -> Result<Option<i64>>;
-    /// The labels `label` reverts, each with whether the whole label (its
+    fn log_context_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>>;
+    /// A log context's newest operation of its own, `None` when it has none.
+    fn log_context_last_op(&self, log_context: i64) -> Result<Option<i64>>;
+    /// The log contexts `log_context` reverts, each with whether the whole log context (its
     /// children included) was reverted, or only some of its operations (doc
-    /// "Label summaries").
-    fn label_reverts(&self, label: i64) -> Result<Vec<(i64, bool)>>;
-    /// The labels that revert `label`, as [`Self::label_reverts`] says them.
-    fn label_reverted_by(&self, label: i64) -> Result<Vec<(i64, bool)>>;
+    /// "Log context summaries").
+    fn log_context_reverts(&self, log_context: i64) -> Result<Vec<(i64, bool)>>;
+    /// The log contexts that revert `log_context`, as [`Self::log_context_reverts`] says them.
+    fn log_context_reverted_by(&self, log_context: i64) -> Result<Vec<(i64, bool)>>;
     /// The operations that reverted `op` (their `reverts_op_id` is `op`),
     /// oldest first.
     fn reverters(&self, op: i64) -> Result<Vec<i64>>;
-    /// The label the watcher's flushes are opened under, once there is one
+    /// The log context the watcher's flushes are opened under, once there is one
     /// (doc "Log contexts").
-    fn watcher_label(&self) -> Result<Option<i64>>;
+    fn watcher_log_context(&self) -> Result<Option<i64>>;
     /// An entity's operations newer than `after`, oldest first.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>>;
-    /// The version `entity` had when label `label` began (a trash entry
+    /// The version `entity` had when log context `log_context` began (a trash entry
     /// records the version from outside the watcher's flush, so a revert
-    /// matches on this one); `None` when the label created it, or did not
+    /// matches on this one); `None` when the log context created it, or did not
     /// touch it. The log records no version: this is the entity's content
-    /// now with every operation on it since the label's first undone, on the
+    /// now with every operation on it since the log context's first undone, on the
     /// version itself — a sum of row terms (doc "Metarecord version").
-    fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>>;
+    fn version_before_log_context(&self, log_context: i64, entity: Uuid) -> Result<Option<u64>>;
     /// The operations newer than `op`, oldest first (the change feed).
     fn ops_after(&self, op: i64) -> Result<Vec<OpRow>>;
     /// How many operations are newer than `op`, counted no further than
@@ -482,13 +482,13 @@ pub trait Log {
     fn last_op_at_or_before(&self, timestamp_ms: i64) -> Result<Option<i64>>;
 }
 
-/// A label (doc "Log contexts"): a name and a description for what
+/// A log context (doc "Log contexts"): a name and a description for what
 /// the operations under it — and under its children — belong to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LabelMeta {
+pub struct LogContextMeta {
     pub name: String,
     pub description: Option<String>,
-    /// The label this one is nested in, `None` for a root.
+    /// The log context this one is nested in, `None` for a root.
     pub parent: Option<i64>,
     /// Unix milliseconds.
     pub created: i64,
@@ -499,17 +499,19 @@ pub trait Store: Rows + Log {}
 
 impl<T: Rows + Log + ?Sized> Store for T {}
 
-/// [`Log::version_before_label`], for any store: the entity's rows now, and
-/// each of its operations since the label's first, newest first, undone on
+/// [`Log::version_before_log_context`], for any store: the entity's rows now, and
+/// each of its operations since the log context's first, newest first, undone on
 /// them as a revert would — then the version of what that leaves (doc "Log
 /// storage"). The log keeps no version. A metarecord with no rows — one
 /// deleted then — has the version of no rows.
-pub fn version_before_label<S: Rows + Log + ?Sized>(
+pub fn version_before_log_context<S: Rows + Log + ?Sized>(
     store: &S,
-    label: i64,
+    log_context: i64,
     entity: Uuid,
 ) -> Result<Option<u64>> {
-    let Some(first) = store.label_ops(label)?.into_iter().find(|o| o.entity_uuid == entity) else {
+    let Some(first) =
+        store.log_context_ops(log_context)?.into_iter().find(|o| o.entity_uuid == entity)
+    else {
         return Ok(None);
     };
     if first.op_type == "create_metarecord" {
@@ -608,7 +610,7 @@ pub trait WriteTxn: Store {
         _field: &str,
         _values: &[Value],
         _ids: &roaring::RoaringBitmap,
-        _label: i64,
+        _log_context: i64,
         _timestamp: i64,
         _origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
@@ -621,7 +623,7 @@ pub trait WriteTxn: Store {
     fn mass_delete(
         &self,
         _ids: &roaring::RoaringBitmap,
-        _label: i64,
+        _log_context: i64,
         _timestamp: i64,
         _origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
@@ -635,7 +637,7 @@ pub trait WriteTxn: Store {
         &self,
         _first_op: i64,
         _last_op: i64,
-        _label: i64,
+        _log_context: i64,
         _timestamp: i64,
         _origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
@@ -680,21 +682,21 @@ pub trait WriteTxn: Store {
     /// Deletes a metarecord's rows — all of them, or those of one name.
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()>;
 
-    /// A new label; its id. Its parent, when it has one, is there.
-    fn create_label(&self, meta: &LabelMeta) -> Result<i64>;
-    /// Removes a label that holds nothing (no operation, no child).
-    fn drop_label(&self, id: i64) -> Result<()>;
-    /// Notes that `reverter`'s operations revert `reverted`'s: the whole label
-    /// when `tree`, some of its operations otherwise. Said again, a whole label
+    /// A new log context; its id. Its parent, when it has one, is there.
+    fn create_log_context(&self, meta: &LogContextMeta) -> Result<i64>;
+    /// Removes a log context that holds nothing (no operation, no child).
+    fn drop_log_context(&self, id: i64) -> Result<()>;
+    /// Notes that `reverter`'s operations revert `reverted`'s: the whole log context
+    /// when `tree`, some of its operations otherwise. Said again, a whole log context
     /// stays whole.
-    fn note_label_reverts(&self, _reverter: i64, _reverted: i64, _tree: bool) -> Result<()> {
+    fn note_log_context_reverts(&self, _reverter: i64, _reverted: i64, _tree: bool) -> Result<()> {
         Ok(())
     }
-    /// Records the label the watcher's flushes are opened under.
-    fn set_watcher_label(&self, id: i64) -> Result<()>;
-    /// Appends `ops` under `label`, written at `timestamp`; returns the id
+    /// Records the log context the watcher's flushes are opened under.
+    fn set_watcher_log_context(&self, id: i64) -> Result<()>;
+    /// Appends `ops` under `log_context`, written at `timestamp`; returns the id
     /// the last one got. Ids are never reused.
-    fn append_ops(&self, label: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64>;
+    fn append_ops(&self, log_context: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64>;
     /// Records the newest operation (the change feed's cursor).
     fn set_head(&self, op: Option<i64>) -> Result<()>;
     /// Drops the history `retention` no longer keeps, never an operation
@@ -704,9 +706,9 @@ pub trait WriteTxn: Store {
     /// Removes every metarecord.
     fn clear_metarecords(&self) -> Result<()>;
     /// Deletes the entries of the log all of whose operations are among
-    /// `ids` (an entry goes whole, doc "Log storage"), and the labels they
+    /// `ids` (an entry goes whole, doc "Log storage"), and the log contexts they
     /// leave empty — no operation, no child — but the watcher's: how many
-    /// operations, and how many labels.
+    /// operations, and how many log contexts.
     fn delete_ops(&self, ids: &[i64]) -> Result<usize>;
 
     fn commit(self: Box<Self>) -> Result<()>;

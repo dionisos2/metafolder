@@ -1,4 +1,4 @@
-// `log:undo` / `log:redo` by label (doc "Undo and redo by log context"): a label
+// `log:undo` / `log:redo` by log context (doc "Undo and redo by log context"): a log context
 // named is undone; none named and one candidate, it is undone at once.
 
 import { describe, expect, test, vi } from 'vitest';
@@ -20,10 +20,10 @@ vi.mock('../src/lib/ipc', () => ({
 const navigations = () => tauri.filter((c) => c.cmd === 'log_navigate').map((c) => c.args);
 
 describe('log:undo', () => {
-  test('a label named is undone, without asking for the candidates', async () => {
+  test('a log context named is undone, without asking for the candidates', async () => {
     tauri.length = 0;
     await dispatch('log:undo 12', { ws: 'ws-1', slot: 'left' });
-    expect(navigations()).toEqual([{ wsId: 'ws-1', redo: false, label: 12 }]);
+    expect(navigations()).toEqual([{ wsId: 'ws-1', redo: false, logContext: 12 }]);
     expect(tauri.some((c) => c.cmd === 'log_candidates')).toBe(false);
   });
 
@@ -31,10 +31,10 @@ describe('log:undo', () => {
     tauri.length = 0;
     candidates.splice(0, candidates.length, { id: 7, name: 'mf metarecord add' });
     await dispatch('log:redo', { ws: 'ws-1', slot: 'left' });
-    expect(navigations()).toEqual([{ wsId: 'ws-1', redo: true, label: null }]);
+    expect(navigations()).toEqual([{ wsId: 'ws-1', redo: true, logContext: null }]);
   });
 
-  test('something that is not a label is said, and nothing is undone', async () => {
+  test('something that is not a log context is said, and nothing is undone', async () => {
     tauri.length = 0;
     await dispatch('log:undo abc', { ws: 'ws-1', slot: 'left' });
     expect(navigations()).toEqual([]);

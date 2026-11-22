@@ -1,24 +1,24 @@
 title: $:/mf/gen/CLI command/mf log list
 catalog: CLI command
 target: mf log list
-summary: Display the history, by label
+summary: Display the history, by log context
 
 !! Reference
 
 ```
-Display the history, by label
+Display the history, by log context
 
 Usage: mf log list [OPTIONS]
 
 Options:
       --ops
-          Expand each label to show its individual operations
+          Expand each log context to show its individual operations
 
       --metarecord <METARECORD>
           Only operations that affected this metarecord
 
       --limit <LIMIT>
-          Show at most N labels (or operations with --ops); default 20
+          Show at most N log contexts (or operations with --ops); default 20
 
       --since <SINCE>
           Only operations written at or after T (ISO-8601, or @<unix-ms>)

@@ -22,9 +22,9 @@ pub use metafolder_core::coordinated_revert::{MovePolicies, Policy};
 /// A prune target as the three daemon body forms.
 #[derive(Clone)]
 pub struct TargetArgs {
-    /// Positional label id (`mf log prune before <label>`): the label is
+    /// Positional log context id (`mf log prune before <log_context>`): the log context is
     /// kept whole.
-    pub label: Option<i64>,
+    pub log_context: Option<i64>,
     pub id: Option<i64>,
     /// `--timestamp` accepts ISO-8601 (bare), or `@<unix-ms>` for raw ms.
     pub timestamp: Option<String>,
@@ -33,13 +33,13 @@ pub struct TargetArgs {
 impl TargetArgs {
     /// Builds the daemon `{"target": ...}` body: exactly one form.
     fn into_body(self) -> Result<Json, CliError> {
-        let target = match (self.id, self.timestamp, self.label) {
+        let target = match (self.id, self.timestamp, self.log_context) {
             (Some(id), None, None) => json!({"id": id}),
             (None, Some(ts), None) => json!({"timestamp": parse_timestamp(&ts)?}),
-            (None, None, Some(label)) => json!({"log_context": label}),
+            (None, None, Some(log_context)) => json!({"log_context": log_context}),
             _ => {
                 return Err(CliError::Usage(
-                    "give exactly one of <label>, --id, or --timestamp".into(),
+                    "give exactly one of <log context>, --id, or --timestamp".into(),
                 ))
             }
         };
@@ -65,27 +65,27 @@ fn selection(ctx: &Ctx, base: &str, redo: bool) -> Result<Option<undo::Selection
 }
 
 /// `mf log undo [plan] [LABEL]` / `mf log redo …` (doc "Undo and redo by
-/// label"). Without a label, the labels the newest change still standing (the
+/// log context"). Without a log context, the log contexts the newest change still standing (the
 /// newest undo, for redo) was written in are listed, innermost first: undo
-/// takes back exactly the label named, never more or less than meant. With
+/// takes back exactly the log context named, never more or less than meant. With
 /// one, its changes still standing (its undos) are reverted.
 pub fn undo_run(
     ctx: &Ctx,
     redo: bool,
     plan_only: bool,
-    label: Option<i64>,
+    log_context: Option<i64>,
     policies: MovePolicies,
     opts: UndoOpts,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let (verb, what) =
         if redo { ("redo", "the newest undo") } else { ("undo", "your newest change") };
-    let Some(label) = label else {
+    let Some(log_context) = log_context else {
         match selection(ctx, &base, redo)? {
             None => println!("Nothing to {verb}."),
             Some(selection) => {
                 println!(
-                    "{what} still standing is in these labels — name one: mf log {verb} <label>"
+                    "{what} still standing is in these log contexts — name one: mf log {verb} <log context>"
                 );
                 for line in selection.describe() {
                     println!("  {line}");
@@ -95,7 +95,7 @@ pub fn undo_run(
         return Ok(0);
     };
     let target = RevertTarget {
-        log_context_id: Some(label),
+        log_context_id: Some(log_context),
         only: Some(if redo { "undos" } else { "changes" }),
         ..Default::default()
     };
@@ -194,19 +194,19 @@ pub struct LogArgs {
     pub all: bool,
 }
 
-/// The number of labels (or, with `--ops`, of operations) a listing shows
+/// The number of log contexts (or, with `--ops`, of operations) a listing shows
 /// when none was asked for.
 const DEFAULT_LOG_WINDOW: usize = 20;
 
-/// The operations a listing by label reads at most. A label holds anything
+/// The operations a listing by log context reads at most. A log context holds anything
 /// from one operation to a whole reconcile's tens of thousands; the oldest
-/// label the cap cuts is shown as such.
+/// log context the cap cuts is shown as such.
 const LOG_OP_CAP: usize = 500;
 
 /// The query string `mf log list` sends.
 ///
 /// The bound matters: the listing displays a window, and asking the daemon for
-/// the whole log to show twenty labels of it makes every listing cost the
+/// the whole log to show twenty log contexts of it makes every listing cost the
 /// size of the log (doc "Reading the log costs the window"). `--all` is the
 /// deliberate exception.
 fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
@@ -222,7 +222,7 @@ fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
     }
     if !args.all {
         let window = args.limit.unwrap_or(DEFAULT_LOG_WINDOW);
-        // `--ops` counts operations, the default counts labels — each asks for
+        // `--ops` counts operations, the default counts log contexts — each asks for
         // exactly what it displays.
         if args.ops {
             query.push(("limit", window.to_string()));
@@ -242,23 +242,23 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     let head = resp["head"].as_i64();
     let ops: Vec<&Json> =
         resp["operations"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
-    let mut label_meta: std::collections::HashMap<i64, (i64, String)> =
+    let mut log_context_meta: std::collections::HashMap<i64, (i64, String)> =
         std::collections::HashMap::new();
-    // The labels the operation cap cut.
+    // The log contexts the operation cap cut.
     let mut partial: std::collections::HashSet<i64> = std::collections::HashSet::new();
-    for label in resp["log_contexts"].as_array().into_iter().flatten() {
-        if let Some(id) = label["id"].as_i64() {
-            let created = label["created"].as_i64().unwrap_or(0);
-            let name = label["name"].as_str().unwrap_or("").to_string();
-            label_meta.insert(id, (created, name));
-            if label["partial"].as_bool() == Some(true) {
+    for log_context in resp["log_contexts"].as_array().into_iter().flatten() {
+        if let Some(id) = log_context["id"].as_i64() {
+            let created = log_context["created"].as_i64().unwrap_or(0);
+            let name = log_context["name"].as_str().unwrap_or("").to_string();
+            log_context_meta.insert(id, (created, name));
+            if log_context["partial"].as_bool() == Some(true) {
                 partial.insert(id);
             }
         }
     }
 
-    // Group operations by their (innermost) label, most recent first, ordering
-    // labels by their highest operation id.
+    // Group operations by their (innermost) log context, most recent first, ordering
+    // log contexts by their highest operation id.
     let mut groups: Vec<(i64, Vec<&Json>)> = Vec::new();
     for op in &ops {
         let log_context_id = op["log_context_id"].as_i64().unwrap_or(0);
@@ -271,7 +271,7 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         std::cmp::Reverse(list.iter().filter_map(|o| o["id"].as_i64()).max().unwrap_or(0))
     });
 
-    // The HEAD label is the one holding the HEAD operation.
+    // The HEAD log context is the one holding the HEAD operation.
     let head_log_context = head
         .and_then(|h| ops.iter().find(|o| o["id"].as_i64() == Some(h)))
         .and_then(|o| o["log_context_id"].as_i64());
@@ -284,21 +284,21 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     }
 
     let mut shown_ops = 0usize;
-    let mut shown_labels = 0usize;
+    let mut shown_log_contexts = 0usize;
     for (log_context_id, list) in &groups {
-        // Operations within a label are displayed newest first.
+        // Operations within a log context are displayed newest first.
         let mut ops_sorted = list.clone();
         ops_sorted.sort_by_key(|o| std::cmp::Reverse(o["id"].as_i64().unwrap_or(0)));
 
         let is_head = Some(*log_context_id) == head_log_context;
-        // A label opened for one write is as old as its operations; a context
+        // A log context opened for one write is as old as its operations; a context
         // is older than most of them, and the newest says when it was used.
         let ts = ops_sorted.first().and_then(|o| o["timestamp"].as_i64()).unwrap_or_else(|| {
-            label_meta.get(log_context_id).map(|(created, _)| *created).unwrap_or(0)
+            log_context_meta.get(log_context_id).map(|(created, _)| *created).unwrap_or(0)
         });
-        let name = label_meta.get(log_context_id).map(|(_, n)| n.as_str()).unwrap_or("");
+        let name = log_context_meta.get(log_context_id).map(|(_, n)| n.as_str()).unwrap_or("");
         let marker = if is_head { ">" } else { " " };
-        let mut line = format!("{marker} label {log_context_id}  {}  {name}", fmt_minute(ts));
+        let mut line = format!("{marker} log context {log_context_id}  {}  {name}", fmt_minute(ts));
         if ops_sorted.len() > 1 {
             line.push_str(&format!("  ({})", op_breakdown(&ops_sorted)));
         }
@@ -309,7 +309,7 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
             line.push_str("   \u{2190} HEAD");
         }
         println!("{line}");
-        shown_labels += 1;
+        shown_log_contexts += 1;
 
         if args.ops {
             for op in &ops_sorted {
@@ -322,7 +322,7 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
                 }
             }
         } else if let Some(n) = limit {
-            if shown_labels >= n {
+            if shown_log_contexts >= n {
                 return Ok(0);
             }
         }
@@ -332,16 +332,16 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
 
 /// What `mf log contexts` lists.
 #[derive(Default)]
-pub struct LabelsArgs {
+pub struct LogContextsArgs {
     pub parent: Option<i64>,
     pub limit: Option<usize>,
     pub all: bool,
 }
 
-/// `mf log contexts` — the labels, newest first, as the daemon summarises them
-/// (doc "Log context summaries"): the operations of a label are not read, so a
+/// `mf log contexts` — the log contexts, newest first, as the daemon summarises them
+/// (doc "Log context summaries"): the operations of a log context are not read, so a
 /// write to ten thousand records costs one line.
-pub fn log_labels(ctx: &Ctx, args: &LabelsArgs) -> Result<i32, CliError> {
+pub fn log_log_contexts(ctx: &Ctx, args: &LogContextsArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let wanted = if args.all { usize::MAX } else { args.limit.unwrap_or(DEFAULT_LOG_WINDOW) };
     let mut shown = 0usize;
@@ -356,19 +356,19 @@ pub fn log_labels(ctx: &Ctx, args: &LabelsArgs) -> Result<i32, CliError> {
             query.push(("before", before.to_string()));
         }
         let resp = ctx.client.get(&format!("{base}/log/contexts"), &query)?;
-        let labels = resp["log_contexts"].as_array().cloned().unwrap_or_default();
-        if shown == 0 && labels.is_empty() {
+        let log_contexts = resp["log_contexts"].as_array().cloned().unwrap_or_default();
+        if shown == 0 && log_contexts.is_empty() {
             println!("(empty history)");
             return Ok(0);
         }
-        for label in &labels {
-            println!("{}", fmt_label_line(label));
+        for log_context in &log_contexts {
+            println!("{}", fmt_log_context_line(log_context));
             shown += 1;
         }
         match resp["next_before"].as_i64() {
             Some(next) if shown < wanted => before = Some(next),
             Some(_) => {
-                println!("(more labels: --limit N, or --all)");
+                println!("(more log contexts: --limit N, or --all)");
                 return Ok(0);
             }
             None => return Ok(0),
@@ -376,36 +376,36 @@ pub fn log_labels(ctx: &Ctx, args: &LabelsArgs) -> Result<i32, CliError> {
     }
 }
 
-/// `> label 12  2026-11-15 14:02  name  (12 operations, 3 nested)  [undone]`.
-fn fmt_label_line(label: &Json) -> String {
-    let id = label["id"].as_i64().unwrap_or(0);
-    let when = label["updated"].as_i64().or(label["created"].as_i64()).unwrap_or(0);
-    let marker = if label["is_head"].as_bool() == Some(true) { ">" } else { " " };
-    let ops = label["operations"].as_i64().unwrap_or(0);
-    let nested = label["children"].as_i64().unwrap_or(0);
+/// `> log_context 12  2026-11-15 14:02  name  (12 operations, 3 nested)  [undone]`.
+fn fmt_log_context_line(log_context: &Json) -> String {
+    let id = log_context["id"].as_i64().unwrap_or(0);
+    let when = log_context["updated"].as_i64().or(log_context["created"].as_i64()).unwrap_or(0);
+    let marker = if log_context["is_head"].as_bool() == Some(true) { ">" } else { " " };
+    let ops = log_context["operations"].as_i64().unwrap_or(0);
+    let nested = log_context["children"].as_i64().unwrap_or(0);
     let mut counts = format!("{ops} operation{}", if ops == 1 { "" } else { "s" });
     if nested > 0 {
         counts.push_str(&format!(", {nested} nested"));
     }
     let mut line = format!(
-        "{marker} label {id}  {}  {}  ({counts})",
+        "{marker} log context {id}  {}  {}  ({counts})",
         fmt_minute(when),
-        label["name"].as_str().unwrap_or("")
+        log_context["name"].as_str().unwrap_or("")
     );
-    match label["undone"].as_str() {
+    match log_context["undone"].as_str() {
         Some("fully") => line.push_str("  [undone]"),
         Some("partly") => line.push_str("  [partly undone]"),
         _ => {}
     }
-    for reverted in label["reverts"].as_array().into_iter().flatten() {
+    for reverted in log_context["reverts"].as_array().into_iter().flatten() {
         let of = reverted["log_context"].as_i64().unwrap_or(0);
         if reverted["whole"].as_bool() == Some(true) {
-            line.push_str(&format!("  [undoes label {of}]"));
+            line.push_str(&format!("  [undoes log context {of}]"));
         } else {
-            line.push_str(&format!("  [undoes part of label {of}]"));
+            line.push_str(&format!("  [undoes part of log context {of}]"));
         }
     }
-    if label["is_head"].as_bool() == Some(true) {
+    if log_context["is_head"].as_bool() == Some(true) {
         line.push_str("   \u{2190} HEAD");
     }
     line
@@ -417,11 +417,11 @@ fn fmt_op_line(op: &Json) -> String {
     let op_type = op["op_type"].as_str().unwrap_or("?");
     let field = op["field_name"].as_str();
     let entity = op["entity_uuid"].as_str().unwrap_or("?");
-    let label = match field {
+    let log_context = match field {
         Some(f) => format!("{op_type}({f})"),
         None => op_type.to_string(),
     };
-    format!("op {id}  {label}  on {entity}")
+    format!("op {id}  {log_context}  on {entity}")
 }
 
 /// `5 ops: create_metarecord ×3, file_moved ×2`, counts descending.
@@ -443,7 +443,7 @@ fn op_breakdown(ops: &[&Json]) -> String {
 
 /// `mf log head` — the id of the newest operation, one line; `0` on an empty
 /// history. A point to compare with later (`mf log revert --op` takes an
-/// operation id); going back is done by label (doc "Undo and redo by log context").
+/// operation id); going back is done by log context (doc "Undo and redo by log context").
 pub fn log_head(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.get(&format!("{base}/log/since"), &[])?;
@@ -457,7 +457,9 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
         "head".to_string()
     } else {
         target.parse::<i64>().map(|n| n.to_string()).map_err(|_| {
-            CliError::Usage(format!("invalid label '{target}' (expected a label id or HEAD)"))
+            CliError::Usage(format!(
+                "invalid log context '{target}' (expected a log context id or HEAD)"
+            ))
         })?
     };
     let resp = ctx.client.get(&format!("{base}/log/contexts/{id}"), &[])?;
@@ -466,27 +468,27 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
         return Ok(0);
     }
 
-    let label = &resp["log_context"];
-    let id = label["id"].as_i64().unwrap_or(0);
-    let ts = label["created"].as_i64().unwrap_or(0);
-    let name = label["name"].as_str().unwrap_or("");
-    let mut header = format!("Label {id}  [{}]  {name}", fmt_second(ts));
-    if label["is_head"].as_bool() == Some(true) {
+    let log_context = &resp["log_context"];
+    let id = log_context["id"].as_i64().unwrap_or(0);
+    let ts = log_context["created"].as_i64().unwrap_or(0);
+    let name = log_context["name"].as_str().unwrap_or("");
+    let mut header = format!("Log context {id}  [{}]  {name}", fmt_second(ts));
+    if log_context["is_head"].as_bool() == Some(true) {
         header.push_str("  \u{2190} HEAD");
     }
     println!("{header}");
-    if let Some(description) = label["description"].as_str() {
+    if let Some(description) = log_context["description"].as_str() {
         println!("  {description}");
     }
-    for ancestor in label["ancestors"].as_array().into_iter().flatten() {
+    for ancestor in log_context["ancestors"].as_array().into_iter().flatten() {
         let aid = ancestor["id"].as_i64().unwrap_or(0);
-        println!("  in label {aid}  {}", ancestor["name"].as_str().unwrap_or(""));
+        println!("  in log context {aid}  {}", ancestor["name"].as_str().unwrap_or(""));
     }
 
     let operations = resp["operations"].as_array().map_or(&[][..], Vec::as_slice);
     if operations.is_empty() {
         // A header alone would read as a failure: say why nothing follows.
-        println!("  {}", fmt_no_operation(label["children"].as_array()));
+        println!("  {}", fmt_no_operation(log_context["children"].as_array()));
     }
     for op in operations {
         println!();
@@ -500,8 +502,8 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// What `mf log show` prints for a label with no operation of its own: empty,
-/// or its writes are in its sub-labels (a context `mf context new` created).
+/// What `mf log show` prints for a log context with no operation of its own: empty,
+/// or its writes are in its sub-log contexts (a context `mf context new` created).
 fn fmt_no_operation(children: Option<&Vec<Json>>) -> String {
     let ids: Vec<String> = children
         .into_iter()
@@ -510,8 +512,8 @@ fn fmt_no_operation(children: Option<&Vec<Json>>) -> String {
         .collect();
     match ids.len() {
         0 => "(empty: no operation)".to_string(),
-        1 => format!("(no operation of its own: see its sub-label {})", ids[0]),
-        _ => format!("(no operation of its own: see its sub-labels {})", ids.join(", ")),
+        1 => format!("(no operation of its own: see its nested log context {})", ids[0]),
+        _ => format!("(no operation of its own: see its nested log contexts {})", ids.join(", ")),
     }
 }
 
@@ -627,7 +629,7 @@ fn fmt_second(ms: i64) -> String {
 mod tests {
     use super::*;
 
-    /// `mf log list` shows the last twenty labels; it must ask the daemon
+    /// `mf log list` shows the last twenty log contexts; it must ask the daemon
     /// for those, not for the whole log. Fetching everything and trimming it
     /// here made the listing cost grow with the log — seven seconds of daemon
     /// time and two minutes of formatting on a 200 000-operation repository
@@ -637,9 +639,9 @@ mod tests {
         let q = log_query(&LogArgs::default()).unwrap();
         assert!(
             q.contains(&("log_contexts", "20".to_string())),
-            "the default listing must bound the read by labels: {q:?}"
+            "the default listing must bound the read by log contexts: {q:?}"
         );
-        // And by operations: one label can hold a whole reconcile.
+        // And by operations: one log context can hold a whole reconcile.
         assert!(
             q.contains(&("limit", LOG_OP_CAP.to_string())),
             "the default listing must bound the read by operations too: {q:?}"
@@ -685,16 +687,16 @@ mod tests {
 
 // ── `mf log revert` (doc "Reverting a log context") ────────────────────────
 
-/// What to revert: a label — its children's operations included — an
+/// What to revert: a log context — its children's operations included — an
 /// explicit list of operations, what going back to a time takes, or,
-/// omitted, the label of the newest operation.
+/// omitted, the log context of the newest operation.
 #[derive(Clone, Default)]
 pub struct RevertTarget {
     pub log_context_id: Option<i64>,
     pub op_ids: Vec<i64>,
     /// Unix ms: back to the state at that time (doc "Rollback").
     pub since: Option<i64>,
-    /// With a label: only its standing `changes` (undo) or `undos` (redo).
+    /// With a log context: only its standing `changes` (undo) or `undos` (redo).
     pub only: Option<&'static str>,
 }
 
@@ -733,8 +735,8 @@ impl RevertTarget {
                 _ => "",
             };
             match self.log_context_id {
-                Some(l) => format!("{what}label {l}"),
-                None => "the newest label".into(),
+                Some(l) => format!("{what}log context {l}"),
+                None => "the newest log context".into(),
             }
         }
     }
@@ -773,9 +775,9 @@ fn changed_lines(plan: &Json) -> Vec<String> {
         }
         let what = match changed["op_id"].as_i64() {
             Some(id) => {
-                let label = changed["log_context_id"].as_i64().unwrap_or(0);
+                let log_context = changed["log_context_id"].as_i64().unwrap_or(0);
                 let when = changed["timestamp"].as_i64().map(fmt_minute).unwrap_or_default();
-                format!("changed since by op {id} (label {label}, {when})")
+                format!("changed since by op {id} (log context {log_context}, {when})")
             }
             None => "changed since (by an operation no longer in the log)".into(),
         };
@@ -807,7 +809,7 @@ pub fn revert_plan(ctx: &Ctx, target: RevertTarget) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf log revert [<target>]`: undoes a label (or an operation) by writing
+/// `mf log revert [<target>]`: undoes a log context (or an operation) by writing
 /// the inverse onto the current state.
 pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -870,8 +872,8 @@ fn report_revert(target: &RevertTarget, plan: &Json, resp: &Json) {
     let reverted = resp["reverted_operations"].as_array().cloned().unwrap_or_default();
     match resp["log_context"].as_i64() {
         None => println!("Nothing was reverted."),
-        Some(label) => println!(
-            "Reverted {} in label {label} ({} operation(s)).",
+        Some(log_context) => println!(
+            "Reverted {} in log context {log_context} ({} operation(s)).",
             target.describe(),
             reverted.len()
         ),

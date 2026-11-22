@@ -1136,7 +1136,7 @@ async fn test_since_before_the_log_begins_is_not_found() {
 }
 
 #[tokio::test]
-async fn test_since_names_its_label_and_has_a_plan() {
+async fn test_since_names_its_log_context_and_has_a_plan() {
     let (app, repo, _root) = setup("since_plan").await;
     let uuid = create(&app, &repo, json!([{"name": "a", "value": int(1)}])).await;
     let t = now_between(&app, &repo).await;
@@ -1153,8 +1153,9 @@ async fn test_since_names_its_label_and_has_a_plan() {
 
     let (status, body) = revert(&app, &repo, json!({"target": {"since": t}})).await;
     assert_eq!(status, StatusCode::OK, "revert failed: {body}");
-    let label = body["log_context"].as_i64().unwrap();
-    let (_, label) = request(&app, "GET", &format!("/repos/{repo}/contexts/{label}"), None).await;
-    let name = label["name"].as_str().unwrap();
+    let log_context = body["log_context"].as_i64().unwrap();
+    let (_, log_context) =
+        request(&app, "GET", &format!("/repos/{repo}/contexts/{log_context}"), None).await;
+    let name = log_context["name"].as_str().unwrap();
     assert!(name.starts_with("rollback to "), "{name}");
 }

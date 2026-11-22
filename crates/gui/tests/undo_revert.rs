@@ -119,8 +119,8 @@ fn last_status(notifier: &RecordingNotifier) -> (String, String, Value) {
     )
 }
 
-/// The root metarecord (label 1, the log's first operation), then two of the
-/// user's writes: label 2 = ops 2-3, label 3 = op 4.
+/// The root metarecord (log context 1, the log's first operation), then two of the
+/// user's writes: log context 2 = ops 2-3, log context 3 = op 4.
 fn user_log() -> Value {
     json!({
         "head": 4,
@@ -151,7 +151,7 @@ async fn test_undo_reverts_the_newest_change_and_marks_dirty() {
     );
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
     let (text, kind, _) = last_status(&notifier);
-    assert!(text.starts_with("Undid label 3"), "status: {text}");
+    assert!(text.starts_with("Undid log context 3"), "status: {text}");
     assert_eq!(kind, "info");
 }
 
@@ -169,7 +169,8 @@ async fn test_undo_under_the_watcher_reverts_the_users_change() {
     assert_eq!(
         last_status(&notifier),
         (
-            "Undid label 2 (1 operations) — the daemon's own operations were left in place.".into(),
+            "Undid log context 2 (1 operations) — the daemon's own operations were left in place."
+                .into(),
             "info".into(),
             json!(222)
         )
@@ -225,7 +226,7 @@ async fn test_redo_reverts_the_undo_across_the_watchers_work() {
     );
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
     let text = last_status(&notifier).0;
-    assert!(text.starts_with("Redid label 3"), "status: {text}");
+    assert!(text.starts_with("Redid log context 3"), "status: {text}");
 }
 
 #[tokio::test]
@@ -265,10 +266,10 @@ async fn test_no_active_repo_is_an_error() {
     assert!(undo::navigate(gui, daemon, ws, false, None, Default::default()).await.is_err());
 }
 
-/// A change written in several labels — a command inside a context — is not
+/// A change written in several log contexts — a command inside a context — is not
 /// undone without saying which: the status names them (the shell asks first).
 #[tokio::test]
-async fn test_undo_of_a_change_in_several_labels_names_them() {
+async fn test_undo_of_a_change_in_several_log_contexts_names_them() {
     let log = json!({
         "head": 2,
         "root_op": 1,

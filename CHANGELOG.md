@@ -14,6 +14,13 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **The log's "labels" are called "log contexts" everywhere**: in `mf log`'s output
+  (`log context 12`, `undo of log context 9`), its help, the GUI's messages and the
+  error `no log context N`. On the wire, a revert's operations carry
+  `entity_version_before_log_context` (API 32). The GUI's remembered work context
+  (`.metafolder/gui/context`) names its key `log_context`; a file written before is
+  still read.
+
 - **`mf sync run` commits each link on its own**, as soon as it is synced, instead of
   by batches. The intents file's `[settings]` (`commit-batch-size`,
   `transfer-batch-size`) is gone: a file that still has it is refused, naming the keys

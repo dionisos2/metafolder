@@ -174,8 +174,8 @@ impl Client {
         if self.not_activity {
             req = req.header(metafolder_core::context::ACTIVITY_HEADER, "off");
         }
-        if let Some(label) = self.log_context(method, path)? {
-            req = req.header(metafolder_core::context::LOG_CONTEXT_HEADER, label.to_string());
+        if let Some(log_context) = self.log_context(method, path)? {
+            req = req.header(metafolder_core::context::LOG_CONTEXT_HEADER, log_context.to_string());
         }
         for (key, value) in query {
             req = req.query(key, value);
@@ -210,7 +210,7 @@ impl Client {
         use metafolder_core::context;
         let Some(command) = &self.command else { return Ok(None) };
         let Some(repo) = context::repo_of(path) else { return Ok(None) };
-        let outer = command.context.filter(|c| c.repo == repo).map(|c| c.label);
+        let outer = command.context.filter(|c| c.repo == repo).map(|c| c.log_context);
         if let Some(&own) = command.created.lock().unwrap_or_else(|e| e.into_inner()).get(&repo) {
             return Ok(Some(own));
         }
@@ -380,7 +380,7 @@ pub(crate) mod tests {
         let command = Command::new(
             "mf metarecord add".into(),
             Some("query: été".into()),
-            Some(Context { repo, label: 3 }),
+            Some(Context { repo, log_context: 3 }),
         );
         let client = Client::new(&url).in_command(command);
         client.post(&format!("{base}/query"), &serde_json::json!({})).unwrap();

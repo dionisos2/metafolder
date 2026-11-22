@@ -91,7 +91,7 @@ impl IntoResponse for ApiError {
 /// Anything not typed here is an internal error (500).
 #[derive(Debug)]
 pub enum DomainError {
-    /// 404 — the addressed entity/operation/label does not exist.
+    /// 404 — the addressed entity/operation/log context does not exist.
     NotFound(String),
     /// 409 — the request conflicts with current state (e.g. already exists).
     Conflict(String),

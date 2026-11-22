@@ -1,18 +1,18 @@
 title: $:/mf/gen/CLI command/mf log undo
 catalog: CLI command
 target: mf log undo
-summary: Undo a label of your newest change still standing (none named: list them)
+summary: Undo a log context of your newest change still standing (none named: list them)
 
 !! Reference
 
 ```
-Undo a label of your newest change still standing (none named: list them)
+Undo a log context of your newest change still standing (none named: list them)
 
 Usage: mf log undo [OPTIONS] [ARGS]...
 
 Arguments:
   [ARGS]...
-          [plan] [LABEL]: "plan" previews; without a label, the candidates are listed
+          [plan] [LOG_CONTEXT]: "plan" previews; without a log context, the candidates are listed
 
 Options:
       --metadata-only

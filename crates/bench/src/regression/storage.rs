@@ -481,7 +481,7 @@ async fn write(id: &str, ctx: &Ctx, run: usize) -> Result<Duration> {
             }
         }
         // The undo of a batch: the write is done first, untimed, and the
-        // timed request reverts its label (the newest, "head").
+        // timed request reverts its log context (the newest, "head").
         ["storage", "undo", op, size] => {
             let n = if *size == "small" { SMALL } else { large(files) };
             let set = ctx.set(&targets(files, n, UNDO_RUN + run, false));

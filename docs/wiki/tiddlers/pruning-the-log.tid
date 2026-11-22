@@ -6,7 +6,7 @@ summary: mf log prune before deletes every entry of the log older than a target.
 
 ```
 mf -n music log list                           # look first: what would go
-mf -n music log prune before 12                # everything older than label 12 goes
+mf -n music log prune before 12                # everything older than log context 12 goes
 mf -n music log prune before --id 55
 mf -n music log prune before --timestamp 2026-09-01T00:00:00Z
 ```
@@ -25,5 +25,5 @@ backup of the store ([[Backups and restore]]), not on the log.
 The space pruning frees is reused by the store's next writes; a backup is a compacted
 copy. The retention limit does the same automatically ([[Automatic retention]]).
 
-`POST /repos/:repo/log/prune` with `{"target": {"id": N} | {"timestamp": T} | {"label":
+`POST /repos/:repo/log/prune` with `{"target": {"id": N} | {"timestamp": T} | {"log_context":
 N}}` answers `{"pruned_operations"}`.

@@ -1,18 +1,18 @@
 title: $:/mf/gen/CLI command/mf log revert
 catalog: CLI command
 target: mf log revert
-summary: Undo a label — what was written inside it — or an operation, by writing its inverse
+summary: Undo a log context — what was written inside it — or an operation, by writing its inverse
 
 !! Reference
 
 ```
-Undo a label — what was written inside it — or an operation, by writing its inverse
+Undo a log context — what was written inside it — or an operation, by writing its inverse
 
 Usage: mf log revert [OPTIONS] [ARGS]...
 
 Arguments:
   [ARGS]...
-          "plan" to preview, optionally a label id; or a label id
+          "plan" to preview, optionally a log context id; or a log context id
 
 Options:
       --op <OP>

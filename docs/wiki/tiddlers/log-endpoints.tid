@@ -29,7 +29,7 @@ may write — a `GET`, a query or a path to resolve writes nothing (`may_write`,
 |!Parameter |!Default |!Does |
 |`metarecord_uuid` |— |only the operations of that metarecord |
 |`limit` |— |at most this many operations, the newest |
-|`labels` |— |at most this many log contexts (each operation counted in its innermost one), the newest — whole unless `limit` cuts the oldest |
+|`log_contexts` |— |at most this many log contexts (each operation counted in its innermost one), the newest — whole unless `limit` cuts the oldest |
 |`since`, `until` |— |only operations written within (Unix ms) |
 |`include_snapshots` |`false` |each operation with `snapshots_before` (the rows it took off; the log keeps no state a write left, so there is no `snapshots_after` since API 28) |
 
@@ -38,14 +38,14 @@ may write — a `GET`, a query or a path to resolve writes nothing (`may_write`,
  "operations": [{"id": 1, "log_context_id": 1, "timestamp": 1700000000000, "origin": null,
                  "op_type": "create_metarecord", "entity_uuid": "…", "field_name": null,
                  "reverts_op_id": null}, …],
- "labels": [{"id": 1, "name": "POST /repos/init", "description": null, "parent": null,
+ "log_contexts": [{"id": 1, "name": "POST /repos/init", "description": null, "parent": null,
              "created": 1700000000000}, …],
  "total_entries": 3, "total_log_contexts": 2}
 ```
 
 Operations run oldest first — the log is a sequence ([[The operation log]]). `head` is the
 newest operation, `root_op` the creation of the repository's root while the log holds it (`null` once pruned) — where undo stops ([[The undo selection]]; `first` until API 31). `origin` is `"watcher"` for what the daemon recorded for the filesystem,
-`"trash"` for a trashing, `null` otherwise ([[Operations and their origin]]). `labels` lists
+`"trash"` for a trashing, `null` otherwise ([[Operations and their origin]]). `log_contexts` lists
 the log contexts the returned operations are in ''and all their ancestors'', so a client can
 draw the nesting; a log context whose own operations the `limit` cut carries `"partial": true`
 (how many it holds in all is not counted: that would read it whole). The totals describe
@@ -62,7 +62,7 @@ empty, and a client falls back to a full refresh. The GUI's change feed is built
 !! One log context
 
 `GET /log/contexts/:id` always includes snapshots (it is for the detail view):
-`{"label": {"id", "name", "description", "parent", "created", "ancestors", "children",
+`{"log_context": {"id", "name", "description", "parent", "created", "ancestors", "children",
 "is_head", "operation_count"}, "operations": [{"id", "log_context_id", "timestamp", "origin",
 "op_type", "entity_uuid", "field_name", "snapshots_before"}, …]}`, a
 snapshot being a row in column form

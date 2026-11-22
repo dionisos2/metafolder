@@ -109,10 +109,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/query/fields/resolve-tree", post(query_resolve_tree))
         .route("/repos/{repo}/log", get(get_log))
         .route("/repos/{repo}/log/since", get(get_log_since))
-        .route("/repos/{repo}/log/contexts", get(list_labels))
-        .route("/repos/{repo}/log/contexts/{id}", get(get_label_detail))
-        .route("/repos/{repo}/contexts", post(create_label))
-        .route("/repos/{repo}/contexts/{id}", get(get_label))
+        .route("/repos/{repo}/log/contexts", get(list_log_contexts))
+        .route("/repos/{repo}/log/contexts/{id}", get(get_log_context_detail))
+        .route("/repos/{repo}/contexts", post(create_log_context))
+        .route("/repos/{repo}/contexts/{id}", get(get_log_context))
         .route("/repos/{repo}/log/prune", post(prune_log))
         .route("/repos/{repo}/revert", post(revert))
         .route("/repos/{repo}/revert/plan", get(revert_plan))
@@ -219,7 +219,7 @@ struct RequestInfo {
     client: Option<String>,
     /// The log context the client writes in (`X-Metafolder-Log-Context`,
     /// doc "Log contexts"); `None` for none, `0` included.
-    label: Option<i64>,
+    log_context: Option<i64>,
 }
 
 /// Where the request being served writes — [`crate::log::current_context`],
@@ -229,11 +229,11 @@ pub(crate) fn request_context() -> crate::log::WriteContext {
 }
 
 /// The context a task spawned off the request being served writes in,
-/// named `name` when the request names no label: entered on the task's own
+/// named `name` when the request names no log context: entered on the task's own
 /// thread with [`crate::log::enter_context`].
 pub(crate) fn task_context(name: &str) -> crate::log::WriteContext {
-    match REQUEST.try_with(|info| info.label) {
-        Ok(label) => crate::log::WriteContext::of_request(label, name),
+    match REQUEST.try_with(|info| info.log_context) {
+        Ok(log_context) => crate::log::WriteContext::of_request(log_context, name),
         Err(_) => crate::log::WriteContext::new(name),
     }
 }
@@ -264,7 +264,8 @@ async fn name_operation(
             Some(p) => metafolder_core::doc_gen::display_route(p.as_str()),
             None => request.uri().path().to_string(),
         };
-        let label = match request.headers().get(metafolder_core::context::LOG_CONTEXT_HEADER) {
+        let log_context = match request.headers().get(metafolder_core::context::LOG_CONTEXT_HEADER)
+        {
             None => None,
             Some(v) => match v.to_str().ok().and_then(|s| s.trim().parse::<i64>().ok()) {
                 Some(0) => None,
@@ -281,7 +282,7 @@ async fn name_operation(
             op: format!("{} {route}", request.method()),
             op_id: short_header(request.headers(), "x-metafolder-op-id"),
             client: short_header(request.headers(), "x-metafolder-context"),
-            label,
+            log_context,
         }
     };
     REQUEST.scope(info, next.run(request)).await
@@ -340,7 +341,7 @@ where
         let _repo = crate::diagnostics::in_repo(repo.uuid());
         let _context = info.as_ref().map(|info| {
             crate::log::enter_context(crate::log::WriteContext::of_request(
-                info.label,
+                info.log_context,
                 info.op.clone(),
             ))
         });

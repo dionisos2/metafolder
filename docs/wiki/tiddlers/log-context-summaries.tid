@@ -52,5 +52,5 @@ Log contexts are ordered by their id: the order they were opened in, which is th
 were written in but for a log context that kept receiving writes (a long script's) after
 others began.
 
-`mf log contexts` ([[mf log contexts]]) prints them; `tests/kv_label_marks.rs` and
-`tests/label_summaries_http.rs` hold the counts, the marks and the paging.
+`mf log contexts` ([[mf log contexts]]) prints them; `tests/kv_log_context_marks.rs` and
+`tests/log_context_summaries_http.rs` hold the counts, the marks and the paging.

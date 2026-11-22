@@ -45,7 +45,7 @@ fn revert_ops(conn: &mut KvStore, ops: &[log::OpRow]) {
 }
 
 fn ops_of_revision(conn: &KvStore, rev_id: i64) -> Vec<log::OpRow> {
-    revert::label_ops(conn, rev_id).unwrap()
+    revert::log_context_ops(conn, rev_id).unwrap()
 }
 
 fn field_values(conn: &KvStore, uuid: Uuid, name: &str) -> Vec<Value> {

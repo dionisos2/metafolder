@@ -316,7 +316,7 @@ fn a_mass_add_over_a_record_given_back_is_undone_in_one_pass() {
         v
     };
     let mut w = Writer::begin(&mut store, Some("mass".into())).unwrap();
-    let label = w.log_context_id();
+    let log_context = w.log_context_id();
     w.mass_add("tag", Value::String("x".into()), &uuids).unwrap();
     w.commit().unwrap();
     // One of the records is deleted and given back after the mass add, which
@@ -324,7 +324,7 @@ fn a_mass_add_over_a_record_given_back_is_undone_in_one_pass() {
     let head = store.head().unwrap();
     delete(&mut store, uuids[7]);
     common::kv::revert_since(&mut store, head);
-    let ops = revert::label_ops(&store, label).unwrap();
+    let ops = revert::log_context_ops(&store, log_context).unwrap();
     let mut w = Writer::begin(&mut store, None).unwrap();
     assert!(w.revert_mass_run(&ops).unwrap(), "the store refused the one-pass revert");
     w.commit().unwrap();

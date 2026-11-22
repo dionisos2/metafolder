@@ -1,13 +1,13 @@
 //! The undo selection (doc "The undo selection", doc "Undo and redo by
-//! label"): deciding *what* an undo or a redo takes back.
+//! log context"): deciding *what* an undo or a redo takes back.
 //!
 //! Undo is not "step back one operation". Between the change a user wants
 //! back and the present sit the watcher's own operations — a file touched, a
 //! directory renamed — which are not the user's to undo: they record what the
 //! filesystem did. So undo looks for the newest operation *the user wrote*
-//! that still stands, and offers the labels it was written in — innermost
-//! first: the command, the answer, the script run… (doc "Labels and
-//! contexts"). Undoing the label chosen reverts its changes still standing
+//! that still stands, and offers the log contexts it was written in — innermost
+//! first: the command, the answer, the script run… (doc "Log contexts").
+//! Undoing the log context chosen reverts its changes still standing
 //! onto the current state (doc "Reverting onto the current state"), the
 //! watcher's operations left where they are. Redo is its mirror over the
 //! newest undo that still stands. There is one mechanism, and the log is a
@@ -15,8 +15,8 @@
 //!
 //! It is pure: it reads a `GET /log` body and answers, so the CLI
 //! (synchronous) and the GUI (asynchronous) share one decision instead of each
-//! writing its own. The revert itself narrows the label to what it takes
-//! (`only`), in the daemon, which sees the whole label where the window may
+//! writing its own. The revert itself narrows the log context to what it takes
+//! (`only`), in the daemon, which sees the whole log context where the window may
 //! see only its end.
 
 use std::collections::{HashMap, HashSet};
@@ -50,7 +50,7 @@ pub const WIDE_WINDOW: usize = 20_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogOp {
     pub id: i64,
-    /// Its innermost label (doc "Log contexts").
+    /// Its innermost log context (doc "Log contexts").
     pub log_context_id: i64,
     pub op_type: String,
     /// The operation this one undid, when a revert wrote it.
@@ -81,7 +81,7 @@ impl LogOp {
     }
 }
 
-/// A label undo or redo offers.
+/// A log context undo or redo offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub log_context_id: i64,
@@ -89,7 +89,7 @@ pub struct Candidate {
 }
 
 /// What an undo or a redo would take back: the operation that decided it, and
-/// the labels it was written in, innermost first. Undoing (redoing) any of
+/// the log contexts it was written in, innermost first. Undoing (redoing) any of
 /// them is a revert of its changes (undos) still standing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
@@ -104,25 +104,25 @@ impl Selection {
     }
 }
 
-/// The revert an undo of `label` is: its changes still standing.
-pub fn undo_target(label: i64) -> Json {
-    json!({"log_context_id": label, "only": "changes"})
+/// The revert an undo of `log_context` is: its changes still standing.
+pub fn undo_target(log_context: i64) -> Json {
+    json!({"log_context_id": log_context, "only": "changes"})
 }
 
-/// The revert a redo of `label` is: its undos still standing.
-pub fn redo_target(label: i64) -> Json {
-    json!({"log_context_id": label, "only": "undos"})
+/// The revert a redo of `log_context` is: its undos still standing.
+pub fn redo_target(log_context: i64) -> Json {
+    json!({"log_context_id": log_context, "only": "undos"})
 }
 
-/// The labels of a `GET /log` body, by id: name and parent.
-type Labels = HashMap<i64, (String, Option<i64>)>;
+/// The log contexts of a `GET /log` body, by id: name and parent.
+type LogContexts = HashMap<i64, (String, Option<i64>)>;
 
-fn read_log(log: &Json) -> (Vec<LogOp>, Labels) {
+fn read_log(log: &Json) -> (Vec<LogOp>, LogContexts) {
     let ops = log["operations"]
         .as_array()
         .map(|a| a.iter().filter_map(LogOp::from_json).collect())
         .unwrap_or_default();
-    let labels = log["log_contexts"]
+    let log_contexts = log["log_contexts"]
         .as_array()
         .map(|a| {
             a.iter()
@@ -133,19 +133,19 @@ fn read_log(log: &Json) -> (Vec<LogOp>, Labels) {
                 .collect()
         })
         .unwrap_or_default();
-    (ops, labels)
+    (ops, log_contexts)
 }
 
-/// The labels `label` is, innermost first: it, its parent, and so on — as
+/// The log contexts `log_context` is, innermost first: it, its parent, and so on — as
 /// far as the body names them.
-fn chain(label: i64, labels: &Labels) -> Vec<Candidate> {
+fn chain(log_context: i64, log_contexts: &LogContexts) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
-    let mut next = Some(label);
+    let mut next = Some(log_context);
     while let Some(id) = next {
         if out.iter().any(|c| c.log_context_id == id) {
             break; // a cycle the daemon would never write
         }
-        let (name, parent) = labels.get(&id).cloned().unwrap_or_default();
+        let (name, parent) = log_contexts.get(&id).cloned().unwrap_or_default();
         out.push(Candidate { log_context_id: id, name });
         next = parent;
     }
@@ -187,8 +187,8 @@ fn window(ops: &[LogOp]) -> (Vec<&LogOp>, HashSet<i64>) {
 
 /// What undo offers, from a `GET /log` body.
 pub fn undo_from_log(log: &Json) -> Option<Selection> {
-    let (ops, labels) = read_log(log);
-    undo(&ops, &labels, log["root_op"].as_i64())
+    let (ops, log_contexts) = read_log(log);
+    undo(&ops, &log_contexts, log["root_op"].as_i64())
 }
 
 /// The undo decision: the newest operation the user wrote that is not itself
@@ -196,7 +196,7 @@ pub fn undo_from_log(log: &Json) -> Option<Selection> {
 /// repository's root while the log holds it (`root_op` in `GET /log`), where
 /// undo stops (`mf log revert` still reaches it); once it is pruned, the
 /// oldest operation left is undone as any other.
-fn undo(ops: &[LogOp], labels: &Labels, root: Option<i64>) -> Option<Selection> {
+fn undo(ops: &[LogOp], log_contexts: &LogContexts, root: Option<i64>) -> Option<Selection> {
     let (newest_first, undone) = window(ops);
     for op in newest_first {
         if Some(op.id) == root {
@@ -208,15 +208,15 @@ fn undo(ops: &[LogOp], labels: &Labels, root: Option<i64>) -> Option<Selection> 
         if op.is_daemons() || op.reverts_op_id.is_some() || undone.contains(&op.id) {
             continue;
         }
-        return Some(Selection { op: op.id, candidates: chain(op.log_context_id, labels) });
+        return Some(Selection { op: op.id, candidates: chain(op.log_context_id, log_contexts) });
     }
     None
 }
 
 /// What redo offers, from a `GET /log` body.
 pub fn redo_from_log(log: &Json) -> Option<Selection> {
-    let (ops, labels) = read_log(log);
-    redo(&ops, &labels)
+    let (ops, log_contexts) = read_log(log);
+    redo(&ops, &log_contexts)
 }
 
 /// The redo decision, the mirror of [`undo`]: the newest undo — a revert of
@@ -227,7 +227,7 @@ pub fn redo_from_log(log: &Json) -> Option<Selection> {
 /// before. The newest *ordinary* change still standing ends the search: a new
 /// change clears what could be redone, as in any editor. What it cleared is
 /// still in the log, and an explicit revert of the undo reaches it.
-fn redo(ops: &[LogOp], labels: &Labels) -> Option<Selection> {
+fn redo(ops: &[LogOp], log_contexts: &LogContexts) -> Option<Selection> {
     let (newest_first, undone) = window(ops);
     let reverts: HashSet<i64> =
         newest_first.iter().filter(|op| op.reverts_op_id.is_some()).map(|op| op.id).collect();
@@ -242,7 +242,10 @@ fn redo(ops: &[LogOp], labels: &Labels) -> Option<Selection> {
             Some(target) if reverts.contains(&target) => continue,
             Some(_) if undone.contains(&op.id) => continue, // an undo already redone
             Some(_) => {
-                return Some(Selection { op: op.id, candidates: chain(op.log_context_id, labels) })
+                return Some(Selection {
+                    op: op.id,
+                    candidates: chain(op.log_context_id, log_contexts),
+                })
             }
             None if undone.contains(&op.id) => continue, // a change an undo holds back
             None => return None, // the newest thing the user wrote is a change
@@ -278,17 +281,17 @@ mod tests {
         op
     }
 
-    fn labels(nested: &[(i64, &str, Option<i64>)]) -> Labels {
+    fn log_contexts(nested: &[(i64, &str, Option<i64>)]) -> LogContexts {
         nested.iter().map(|(id, name, parent)| (*id, (name.to_string(), *parent))).collect()
     }
 
-    /// The label undo would offer first, innermost.
-    fn undo_label(log: &[LogOp]) -> Option<i64> {
-        undo(log, &Labels::new(), BEFORE).map(|s| s.candidates[0].log_context_id)
+    /// The log context undo would offer first, innermost.
+    fn undo_log_context(log: &[LogOp]) -> Option<i64> {
+        undo(log, &LogContexts::new(), BEFORE).map(|s| s.candidates[0].log_context_id)
     }
 
-    fn redo_label(log: &[LogOp]) -> Option<i64> {
-        redo(log, &Labels::new()).map(|s| s.candidates[0].log_context_id)
+    fn redo_log_context(log: &[LogOp]) -> Option<i64> {
+        redo(log, &LogContexts::new()).map(|s| s.candidates[0].log_context_id)
     }
 
     /// The log's first operation lies before the fixture — what a bounded read
@@ -297,19 +300,19 @@ mod tests {
 
     #[test]
     fn an_empty_log_has_nothing_to_undo() {
-        assert_eq!(undo(&[], &Labels::new(), None), None);
-        assert_eq!(redo(&[], &Labels::new()), None);
+        assert_eq!(undo(&[], &LogContexts::new(), None), None);
+        assert_eq!(redo(&[], &LogContexts::new()), None);
     }
 
     #[test]
-    fn the_newest_change_is_offered_with_every_label_it_is_in() {
+    fn the_newest_change_is_offered_with_every_log_context_it_is_in() {
         let log = ops(&[(1, 10, "set_field"), (2, 12, "set_field")]);
-        let labels = labels(&[
+        let log_contexts = log_contexts(&[
             (12, "mf tag add x", Some(11)),
             (11, "answer 1", Some(10)),
             (10, "run", None),
         ]);
-        let selection = undo(&log, &labels, BEFORE).unwrap();
+        let selection = undo(&log, &log_contexts, BEFORE).unwrap();
         assert_eq!(selection.op, 2);
         let ids: Vec<i64> = selection.candidates.iter().map(|c| c.log_context_id).collect();
         assert_eq!(ids, [12, 11, 10], "innermost first");
@@ -321,20 +324,20 @@ mod tests {
         let mut log =
             ops(&[(1, 1, "set_field"), (2, 2, "create_metarecord"), (3, 3, "file_moved")]);
         log[1] = watcher(log[1].clone());
-        assert_eq!(undo_label(&log), Some(1), "an arrival is told apart by its origin alone");
+        assert_eq!(undo_log_context(&log), Some(1), "an arrival is told apart by its origin alone");
     }
 
     #[test]
     fn an_undone_change_and_the_undo_itself_are_stepped_over() {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field"), (3, 3, "set_field")]);
         log[2] = reverting(log[2].clone(), 2);
-        assert_eq!(undo_label(&log), Some(1));
+        assert_eq!(undo_log_context(&log), Some(1));
     }
 
     #[test]
     fn undo_stops_at_the_creation_of_the_root() {
         let log = ops(&[(1, 1, "create_metarecord")]);
-        assert_eq!(undo(&log, &Labels::new(), Some(1)), None);
+        assert_eq!(undo(&log, &LogContexts::new(), Some(1)), None);
     }
 
     /// Without the root's creation in the log — pruned, or emptied by the
@@ -384,7 +387,7 @@ mod tests {
     fn redo_offers_the_newest_undo() {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field")]);
         log[1] = reverting(log[1].clone(), 1);
-        assert_eq!(redo_label(&log), Some(2));
+        assert_eq!(redo_log_context(&log), Some(2));
     }
 
     #[test]
@@ -394,7 +397,7 @@ mod tests {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field"), (3, 3, "file_moved")]);
         log[1] = reverting(log[1].clone(), 1);
         log[2] = watcher(log[2].clone());
-        assert_eq!(redo_label(&log), Some(2));
+        assert_eq!(redo_log_context(&log), Some(2));
     }
 
     #[test]
@@ -405,13 +408,13 @@ mod tests {
         log[0] = watcher(log[0].clone());
         log[1] = watcher(log[1].clone());
         log[2] = reverting(log[2].clone(), 1);
-        assert_eq!(redo_label(&log), Some(3));
+        assert_eq!(redo_log_context(&log), Some(3));
     }
 
     #[test]
     fn there_is_nothing_to_redo_when_your_newest_change_is_not_an_undo() {
         let log = ops(&[(1, 1, "set_field"), (2, 2, "set_field")]);
-        assert_eq!(redo_label(&log), None);
+        assert_eq!(redo_log_context(&log), None);
     }
 
     #[test]
@@ -419,7 +422,7 @@ mod tests {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field"), (3, 3, "set_field")]);
         log[1] = reverting(log[1].clone(), 1);
         log[2] = reverting(log[2].clone(), 2);
-        assert_eq!(redo_label(&log), None);
+        assert_eq!(redo_log_context(&log), None);
     }
 
     #[test]
@@ -436,7 +439,7 @@ mod tests {
         log[2] = reverting(log[2].clone(), 2);
         log[3] = reverting(log[3].clone(), 1);
         log[4] = reverting(log[4].clone(), 4);
-        assert_eq!(redo_label(&log), Some(3));
+        assert_eq!(redo_log_context(&log), Some(3));
     }
 
     #[test]
@@ -453,13 +456,13 @@ mod tests {
         log[2] = reverting(log[2].clone(), 2);
         log[4] = reverting(log[4].clone(), 4);
         log[5] = reverting(log[5].clone(), 1);
-        assert_eq!(undo_label(&log[..5]), Some(1));
+        assert_eq!(undo_log_context(&log[..5]), Some(1));
         // Redo: Z comes back (undo it), then M, then nothing — A was cleared by M.
-        assert_eq!(redo_label(&log), Some(6));
+        assert_eq!(redo_log_context(&log), Some(6));
         log.push(reverting(ops(&[(7, 7, "set_field")])[0].clone(), 6));
-        assert_eq!(redo_label(&log), Some(5));
+        assert_eq!(redo_log_context(&log), Some(5));
         log.push(reverting(ops(&[(8, 8, "set_field")])[0].clone(), 5));
-        assert_eq!(redo_label(&log), None);
+        assert_eq!(redo_log_context(&log), None);
     }
 
     #[test]
@@ -467,6 +470,6 @@ mod tests {
         let mut log = ops(&[(1, 1, "set_field"), (2, 2, "set_field"), (3, 3, "set_field")]);
         log[1] = reverting(log[1].clone(), 1);
         log[2] = reverting(log[2].clone(), 2);
-        assert_eq!(undo_label(&log), Some(1));
+        assert_eq!(undo_log_context(&log), Some(1));
     }
 }

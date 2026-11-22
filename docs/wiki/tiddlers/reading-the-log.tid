@@ -4,11 +4,11 @@ kind: guide
 summary: mf log lists the operations by log context, newest first, --ops expands them; mf log show details one log context.
 
 ```
-mf -n music log                                # the last 20 labels
+mf -n music log                                # the last 20 log contexts
 mf -n music log list --ops --limit 5           # … with their operations
 mf -n music log list --metarecord 3f2a…        # only what touched one metarecord
 mf -n music log list --since 2026-09-01 --until @1759000000000
-mf -n music log show 12                        # one label, before and after each change
+mf -n music log show 12                        # one log context, before and after each change
 mf -n music log show HEAD
 mf -n music log head                           # the newest operation's id
 ```
@@ -18,9 +18,9 @@ operation is counted in its innermost log context ([[Log contexts]]); a write ma
 context has a log context of its own, named after what it called:
 
 ```
-> label 12  2024-01-15 14:32  tag run   ← HEAD
-  label 11  2024-01-15 14:30  watcher flush  (5 ops: create_metarecord ×3, file_moved ×2)
-  label 10  2024-01-14 09:12  PUT /repos/:repo/metarecords/:uuid/fields/:name
+> log context 12  2024-01-15 14:32  tag run   ← HEAD
+  log context 11  2024-01-15 14:30  watcher flush  (5 ops: create_metarecord ×3, file_moved ×2)
+  log context 10  2024-01-14 09:12  PUT /repos/:repo/metarecords/:uuid/fields/:name
 ```
 
 * `--ops` expands each log context into its operations (`op 23  set_field(rating)  on <uuid>`).

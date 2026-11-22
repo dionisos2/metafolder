@@ -648,7 +648,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             // The filesystem's doing, not a client's (doc "Writes and
             // operations"): an arrival is a `create_metarecord` like any other,
             // so the operations have to say where they came from — the
-            // watcher's context gives them its origin, under its own label.
+            // watcher's context gives them its origin, under its own log context.
             let writer = repo.writer(&mut conn, log::WriteContext::Watcher)?;
             let mut apply = Apply {
                 report,

@@ -229,7 +229,7 @@ fn a_record_without_a_dense_id_is_given_one() {
 
 /// A store of layout 6, whose forest entries held no dense id, converts when
 /// it opens — and loses its log, as every store of a layout before 9 does (a
-/// label says what it reverts since: doc "Persisted format changes").
+/// log context says what it reverts since: doc "Persisted format changes").
 #[test]
 fn a_store_of_layout_6_converts_and_drops_its_log() {
     use metafolder_daemon::store::Log;
@@ -261,8 +261,8 @@ fn a_store_of_layout_6_converts_and_drops_its_log() {
 }
 
 /// A store of layout 8 is the one the layout 9 change reaches alone: it opens,
-/// its metarecords kept, with an empty log — a label of an older log says
-/// nothing of the labels it reverts (user decision, November 2026).
+/// its metarecords kept, with an empty log — a log context of an older log says
+/// nothing of the log contexts it reverts (user decision, November 2026).
 #[test]
 fn a_store_of_layout_8_opens_with_an_empty_log_and_its_metarecords() {
     use metafolder_daemon::store::Log;

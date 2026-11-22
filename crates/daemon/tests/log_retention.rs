@@ -163,7 +163,7 @@ fn test_a_write_is_never_trimmed_by_its_own_commit() {
     let retention = keep(0, 10);
     let older = write(&mut conn, retention, false);
     let mut w = Writer::begin_with_retention(&mut conn, None, retention).unwrap();
-    let label = w.log_context_id();
+    let log_context = w.log_context_id();
     // A creation, then a set of a value of its own: an entry each, none
     // added to another (doc "Log storage").
     for i in 0..15 {
@@ -172,6 +172,6 @@ fn test_a_write_is_never_trimmed_by_its_own_commit() {
     }
     w.commit().unwrap();
 
-    assert_eq!(conn.label_ops(label).unwrap().len(), 30, "the big write is whole");
+    assert_eq!(conn.log_context_ops(log_context).unwrap().len(), 30, "the big write is whole");
     assert!(conn.op(older).unwrap().is_none(), "what came before it is trimmed");
 }

@@ -183,10 +183,10 @@ fn a_redo_restores_what_an_operation_left_and_changes_nothing_since() {
     let mut store = KvStore::open_unsynced(dir.path()).unwrap();
     let uuid = record(&mut store);
     let mut w = Writer::begin(&mut store, Some("set".into())).unwrap();
-    let label = w.log_context_id();
+    let log_context = w.log_context_id();
     w.set_field(uuid, "a", s("two")).unwrap();
     w.commit().unwrap();
-    let set = revert::label_ops(&store, label).unwrap();
+    let set = revert::log_context_ops(&store, log_context).unwrap();
     let changed = |store: &KvStore, op: &metafolder_daemon::log::OpRow| {
         matches!(revert::changed_since(store, op).unwrap(), Changed::No)
     };
@@ -194,13 +194,13 @@ fn a_redo_restores_what_an_operation_left_and_changes_nothing_since() {
 
     // The undo: the cell is back as it was, the operation's write is gone.
     let mut w = Writer::begin(&mut store, Some("undo".into())).unwrap();
-    let undo_label = w.log_context_id();
+    let undo_log_context = w.log_context_id();
     revert::apply(&mut w, &set).unwrap();
     w.commit().unwrap();
     assert!(!changed(&store, &set[0]), "the undo wrote the cell since");
 
     // The redo reverts the undo: the cell holds what the operation left.
-    let undone = revert::label_ops(&store, undo_label).unwrap();
+    let undone = revert::log_context_ops(&store, undo_log_context).unwrap();
     let mut w = Writer::begin(&mut store, Some("redo".into())).unwrap();
     revert::apply(&mut w, &undone).unwrap();
     w.commit().unwrap();
@@ -220,10 +220,10 @@ fn write_in<T>(store: &mut KvStore, context: i64, f: impl FnOnce(&mut Writer) ->
 }
 
 fn context(store: &mut KvStore) -> i64 {
-    use metafolder_daemon::store::{Begin, LabelMeta};
+    use metafolder_daemon::store::{Begin, LogContextMeta};
     let tx = store.begin_write().unwrap();
-    let meta = LabelMeta { name: "loop".into(), description: None, parent: None, created: 0 };
-    let id = tx.create_label(&meta).unwrap();
+    let meta = LogContextMeta { name: "loop".into(), description: None, parent: None, created: 0 };
+    let id = tx.create_log_context(&meta).unwrap();
     tx.commit().unwrap();
     id
 }
@@ -242,7 +242,7 @@ fn a_loop_of_writes_in_one_context_is_one_entry() {
     }
     assert_eq!(store.counts().unwrap().0, entries + 1, "one entry");
     assert_eq!(log_keys(&store), two_keys(), "the header and the last chunk rewritten");
-    let ops = metafolder_daemon::revert::label_ops(&store, ctx).unwrap();
+    let ops = metafolder_daemon::revert::log_context_ops(&store, ctx).unwrap();
     assert_eq!(ops.iter().map(|o| o.entity_uuid).collect::<Vec<_>>(), uuids);
     assert!(ops.iter().all(|o| o.op_type == "append_field"));
     assert_eq!(store.added(ops[4500].id).unwrap(), vec![row("tag", s("x"))]);
@@ -337,13 +337,13 @@ fn a_revert_of_many_operations_is_one_key_per_entry_it_reverts() {
     let ctx = w.log_context_id();
     w.mass_add_ids("tag", s("blue"), &ids).unwrap();
     w.commit().unwrap();
-    let tagged = revert::label_ops(&store, ctx).unwrap();
+    let tagged = revert::log_context_ops(&store, ctx).unwrap();
     let mut w = Writer::begin(&mut store, Some("undo".into())).unwrap();
     let undo = w.log_context_id();
     revert::apply(&mut w, &tagged).unwrap();
     w.commit().unwrap();
     assert_eq!(store.last_write_keys().get("log_reverted_by"), Some(&1), "one entry reverted");
-    let undone = revert::label_ops(&store, undo).unwrap();
+    let undone = revert::log_context_ops(&store, undo).unwrap();
     assert_eq!(undone.len(), 5000);
     for k in [0usize, 1, 4095, 4096, 4999] {
         let rev = undone.iter().find(|o| o.reverts_op_id == Some(tagged[k].id)).unwrap();

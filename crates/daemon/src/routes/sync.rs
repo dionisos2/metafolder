@@ -227,7 +227,7 @@ pub(super) async fn sync_delete_link(
             repo.ensure_writable()?;
             let mut conn = repo.conn.lock_recover();
             if Rows::version(&*conn, record)?.is_some() {
-                // A label id belongs to one repository; a pair's request
+                // A log context id belongs to one repository; a pair's request
                 // names none of either side's.
                 let mut writer =
                     repo.writer(&mut conn, crate::log::WriteContext::new("sync unlink"))?;

@@ -1983,7 +1983,7 @@ impl KvStore {
         txn.drop_left_behind()?;
         // A reindex invalidates the work under way anyway: the contexts left
         // empty go (doc "Log contexts").
-        txn.drop_empty_labels()?;
+        txn.drop_empty_log_contexts()?;
         // Whose each live id is, off the primary numbering (`ids`), not off
         // its index.
         let who: HashMap<u32, [u8; 16]> = {

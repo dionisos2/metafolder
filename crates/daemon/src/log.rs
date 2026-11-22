@@ -1,5 +1,5 @@
 //! The logged write flow (doc "Log storage"). Every write to
-//! the data tables goes through a [`Writer`], which records, under a label
+//! the data tables goes through a [`Writer`], which records, under a log context
 //! (doc "Log contexts"), one operation per atomic change with before/after snapshots, and keeps the
 //! `head` pointer (the newest operation) consistent with the data tables — all
 //! in one store transaction. The log is a sequence, not a tree: nothing moves
@@ -16,7 +16,7 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::error::DomainError;
 use crate::rows::{self, FieldRow};
-use crate::store::{Begin, Database, LabelMeta, Log, MassKind, NewOp, Store, WriteTxn};
+use crate::store::{Begin, Database, Log, LogContextMeta, MassKind, NewOp, Store, WriteTxn};
 
 /// The `origin` of an operation the daemon writes on the filesystem's
 /// behalf — the watcher's flush (doc "Operations and their origin").
@@ -102,7 +102,7 @@ impl OpType {
 #[derive(Debug, Clone)]
 pub struct OpRow {
     pub id: i64,
-    /// Its innermost label (doc "Log contexts").
+    /// Its innermost log context (doc "Log contexts").
     pub log_context_id: i64,
     /// When it was written, Unix milliseconds.
     pub timestamp: i64,
@@ -128,44 +128,46 @@ pub struct OpRow {
 /// Where a write's operations go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteContext {
-    /// Under a label that exists already: the context a client passed.
+    /// Under a log context that exists already: the context a client passed.
     In(i64),
-    /// Under a label the write opens — and drops again when it writes
+    /// Under a log context the write opens — and drops again when it writes
     /// nothing.
-    New(NewLabel),
-    /// Under a label opened for one flush of the watcher, inside the
-    /// watcher's own label. The operations' origin is [`ORIGIN_WATCHER`].
+    New(NewLogContext),
+    /// Under a log context opened for one flush of the watcher, inside the
+    /// watcher's own log context. The operations' origin is [`ORIGIN_WATCHER`].
     Watcher,
 }
 
-/// A label a write opens.
+/// A log context a write opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewLabel {
+pub struct NewLogContext {
     pub name: String,
     pub description: Option<String>,
     pub parent: Option<i64>,
 }
 
 impl WriteContext {
-    /// A new root label named `name`.
+    /// A new root log context named `name`.
     pub fn new(name: impl Into<String>) -> Self {
-        WriteContext::New(NewLabel { name: name.into(), description: None, parent: None })
+        WriteContext::New(NewLogContext { name: name.into(), description: None, parent: None })
     }
 
-    /// The context of a request: the label the client named, or a new root
-    /// label named `name` when it named none (doc "Log contexts").
-    pub fn of_request(label: Option<i64>, name: impl Into<String>) -> Self {
-        match label {
+    /// The context of a request: the log context the client named, or a new root
+    /// log context named `name` when it named none (doc "Log contexts").
+    pub fn of_request(log_context: Option<i64>, name: impl Into<String>) -> Self {
+        match log_context {
             Some(id) => WriteContext::In(id),
             None => WriteContext::new(name),
         }
     }
 
-    /// The same context, its new label (if it opens one) named `name`
+    /// The same context, its new log context (if it opens one) named `name`
     /// instead.
     pub fn named(self, name: impl Into<String>) -> Self {
         match self {
-            WriteContext::New(label) => WriteContext::New(NewLabel { name: name.into(), ..label }),
+            WriteContext::New(log_context) => {
+                WriteContext::New(NewLogContext { name: name.into(), ..log_context })
+            }
             other => other,
         }
     }
@@ -178,7 +180,7 @@ std::thread_local! {
 
 /// The context the work running on this thread writes in: the request's
 /// (set by the routes for the length of its work, and by a task spawned off
-/// one), or a label named "daemon" outside of any.
+/// one), or a log context named "daemon" outside of any.
 ///
 /// A thread-local rather than an argument: it is a property of the request,
 /// and every write handler and task would otherwise take it only to hand it
@@ -203,26 +205,28 @@ impl Drop for ContextGuard {
     }
 }
 
-/// Refuses a label a client may not write under: one that does not exist,
+/// Refuses a log context a client may not write under: one that does not exist,
 /// or the watcher's or one inside it.
-pub fn check_client_label(log: &dyn Log, id: i64) -> Result<()> {
-    let watcher = log.watcher_label()?;
+pub fn check_client_log_context(log: &dyn Log, id: i64) -> Result<()> {
+    let watcher = log.watcher_log_context()?;
     let mut next = Some(id);
     let mut depth = 0;
-    while let Some(label) = next {
-        if Some(label) == watcher {
+    while let Some(log_context) = next {
+        if Some(log_context) == watcher {
             return Err(DomainError::BadRequest(format!(
-                "label {id} is the watcher's: only the daemon writes under it"
+                "log context {id} is the watcher's: only the daemon writes under it"
             ))
             .into());
         }
-        let Some(meta) = log.labels(&[label])?.remove(&label) else {
-            return Err(DomainError::BadRequest(format!("no label {label}")).into());
+        let Some(meta) = log.log_contexts(&[log_context])?.remove(&log_context) else {
+            return Err(DomainError::BadRequest(format!("no log context {log_context}")).into());
         };
         next = meta.parent;
         depth += 1;
         if depth > MAX_TREE_DEPTH {
-            return Err(DomainError::BadRequest(format!("label {id} is nested too deep")).into());
+            return Err(
+                DomainError::BadRequest(format!("log context {id} is nested too deep")).into()
+            );
         }
     }
     Ok(())
@@ -235,9 +239,9 @@ pub fn check_client_label(log: &dyn Log, id: i64) -> Result<()> {
 pub enum Target {
     Id(i64),
     Timestamp(i64),
-    /// A label: its oldest operation, its children's included — so a prune
+    /// A log context: its oldest operation, its children's included — so a prune
     /// to it keeps it whole.
-    Label(i64),
+    LogContext(i64),
 }
 
 /// Resolves a target to an operation id.
@@ -251,31 +255,31 @@ pub fn resolve_target(log: &dyn Log, target: &Target) -> Result<i64> {
         Target::Timestamp(t) => log
             .last_op_at_or_before(*t)?
             .with_context(|| format!("no operation found at or before timestamp {t}")),
-        Target::Label(label) => first_op_under(log, *label)?.ok_or_else(|| {
-            DomainError::NotFound(format!("label {label} holds no operation")).into()
+        Target::LogContext(log_context) => first_op_under(log, *log_context)?.ok_or_else(|| {
+            DomainError::NotFound(format!("log context {log_context} holds no operation")).into()
         }),
     }
 }
 
-/// The oldest operation of `label` and its descendants.
-pub fn first_op_under(log: &dyn Log, label: i64) -> Result<Option<i64>> {
+/// The oldest operation of `log_context` and its descendants.
+pub fn first_op_under(log: &dyn Log, log_context: i64) -> Result<Option<i64>> {
     let mut first: Option<i64> = None;
-    let mut todo = vec![label];
-    while let Some(label) = todo.pop() {
-        if let Some(op) = log.label_first_op(label)? {
+    let mut todo = vec![log_context];
+    while let Some(log_context) = todo.pop() {
+        if let Some(op) = log.log_context_first_op(log_context)? {
             first = Some(first.map_or(op, |f| f.min(op)));
         }
-        todo.extend(log.label_children(label)?);
+        todo.extend(log.log_context_children(log_context)?);
     }
     Ok(first)
 }
 
-/// `label` and every label nested in it, `label` first.
-pub fn label_subtree(log: &dyn Log, label: i64) -> Result<Vec<i64>> {
-    let mut out = vec![label];
+/// `log_context` and every log context nested in it, `log_context` first.
+pub fn log_context_subtree(log: &dyn Log, log_context: i64) -> Result<Vec<i64>> {
+    let mut out = vec![log_context];
     let mut i = 0;
     while i < out.len() {
-        out.extend(log.label_children(out[i])?);
+        out.extend(log.log_context_children(out[i])?);
         i += 1;
     }
     Ok(out)
@@ -296,7 +300,7 @@ pub struct RetypeSummary {
 // ── Pruning (doc "Pruning the log") ────────────────────────────────────
 
 /// Permanently removes every operation older than `target` — the target
-/// itself is kept. Returns how many operations went. The labels left empty
+/// itself is kept. Returns how many operations went. The log contexts left empty
 /// stay until a reindex (doc "Log contexts").
 pub fn prune(conn: &mut dyn Database, target: i64) -> Result<usize> {
     conn.head()?.context("cannot prune an empty history")?;
@@ -442,11 +446,11 @@ impl Retention {
 /// in bulk, in batches of [`FLUSH_THRESHOLD`] operations.
 pub struct Writer<'c> {
     tx: Box<dyn WriteTxn + 'c>,
-    /// The label its operations go under.
+    /// The log context its operations go under.
     log_context_id: i64,
-    /// Whether this write opened that label, which then goes with it when
+    /// Whether this write opened that log context, which then goes with it when
     /// nothing was written.
-    opened_label: bool,
+    opened_log_context: bool,
     /// When this write began: every operation it records carries it.
     timestamp: i64,
     /// The newest operation: HEAD as of `begin`, then the last one this
@@ -499,27 +503,27 @@ pub struct Writer<'c> {
 }
 
 impl<'c> Writer<'c> {
-    /// Opens a transaction under a label of its own named `label` (or
+    /// Opens a transaction under a log context of its own named `log_context` (or
     /// "write"), keeping the whole history. Every write of a *loaded*
     /// repository goes through [`crate::state::RepoState::writer`] instead,
     /// which applies the repository's configured retention.
-    pub fn begin(conn: &'c mut dyn Begin, label: Option<String>) -> Result<Self> {
-        Self::begin_with_retention(conn, label, Retention::UNLIMITED)
+    pub fn begin(conn: &'c mut dyn Begin, log_context: Option<String>) -> Result<Self> {
+        Self::begin_with_retention(conn, log_context, Retention::UNLIMITED)
     }
 
     /// [`Self::begin`], dropping the history that falls outside `retention`
     /// when the write is committed.
     pub fn begin_with_retention(
         conn: &'c mut dyn Begin,
-        label: Option<String>,
+        log_context: Option<String>,
         retention: Retention,
     ) -> Result<Self> {
-        let name = label.unwrap_or_else(|| "write".to_string());
+        let name = log_context.unwrap_or_else(|| "write".to_string());
         Self::begin_in(conn, WriteContext::new(name), retention)
     }
 
     /// Opens a transaction writing in `context` (doc "Log contexts").
-    /// A label named by a client must exist and lie outside the watcher's
+    /// A log context named by a client must exist and lie outside the watcher's
     /// (`400` otherwise): a client cannot pass its writes off as the
     /// daemon's.
     pub fn begin_in(
@@ -531,29 +535,29 @@ impl<'c> Writer<'c> {
         let head = tx.head()?;
         let timestamp = now_ms();
         let mut origin = None;
-        let (log_context_id, opened_label) = match context {
+        let (log_context_id, opened_log_context) = match context {
             WriteContext::In(id) => {
-                check_client_label(&*tx, id)?;
+                check_client_log_context(&*tx, id)?;
                 (id, false)
             }
-            WriteContext::New(label) => {
-                if let Some(parent) = label.parent {
-                    check_client_label(&*tx, parent)?;
+            WriteContext::New(log_context) => {
+                if let Some(parent) = log_context.parent {
+                    check_client_log_context(&*tx, parent)?;
                 }
-                let meta = LabelMeta {
-                    name: label.name,
-                    description: label.description,
-                    parent: label.parent,
+                let meta = LogContextMeta {
+                    name: log_context.name,
+                    description: log_context.description,
+                    parent: log_context.parent,
                     created: timestamp,
                 };
-                (tx.create_label(&meta)?, true)
+                (tx.create_log_context(&meta)?, true)
             }
             WriteContext::Watcher => {
                 origin = Some(ORIGIN_WATCHER.to_string());
-                let root = match tx.watcher_label()? {
-                    Some(root) if !tx.labels(&[root])?.is_empty() => root,
+                let root = match tx.watcher_log_context()? {
+                    Some(root) if !tx.log_contexts(&[root])?.is_empty() => root,
                     _ => {
-                        let root = tx.create_label(&LabelMeta {
+                        let root = tx.create_log_context(&LogContextMeta {
                             name: "watcher".to_string(),
                             description: Some(
                                 "What the daemon recorded for the filesystem".to_string(),
@@ -561,23 +565,23 @@ impl<'c> Writer<'c> {
                             parent: None,
                             created: timestamp,
                         })?;
-                        tx.set_watcher_label(root)?;
+                        tx.set_watcher_log_context(root)?;
                         root
                     }
                 };
-                let meta = LabelMeta {
+                let meta = LogContextMeta {
                     name: "watcher flush".to_string(),
                     description: None,
                     parent: Some(root),
                     created: timestamp,
                 };
-                (tx.create_label(&meta)?, true)
+                (tx.create_log_context(&meta)?, true)
             }
         };
         Ok(Self {
             tx,
             log_context_id,
-            opened_label,
+            opened_log_context,
             timestamp,
             chain_head: head,
             flushed: 0,
@@ -596,16 +600,16 @@ impl<'c> Writer<'c> {
         })
     }
 
-    /// The label this write's operations go under.
+    /// The log context this write's operations go under.
     pub fn log_context_id(&self) -> i64 {
         self.log_context_id
     }
 
-    /// Notes that this write reverts label `target`: all of it, its children
+    /// Notes that this write reverts log context `target`: all of it, its children
     /// included, when `tree`, some of its operations otherwise — what the log's
     /// summaries say of an undo without reading its operations.
-    pub fn note_label_reverts(&mut self, target: i64, tree: bool) -> Result<()> {
-        self.tx.note_label_reverts(self.log_context_id, target, tree)
+    pub fn note_log_context_reverts(&mut self, target: i64, tree: bool) -> Result<()> {
+        self.tx.note_log_context_reverts(self.log_context_id, target, tree)
     }
 
     /// Marks this write as made on someone's behalf rather than at a
@@ -1705,9 +1709,9 @@ impl<'c> Writer<'c> {
         })?;
         let log = metafolder_core::slowlog::phase("commit.log");
         if self.flushed == 0 && self.pending.is_empty() {
-            // Nothing was written: drop the label it opened, leave HEAD alone.
-            if self.opened_label {
-                self.tx.drop_label(self.log_context_id)?;
+            // Nothing was written: drop the log context it opened, leave HEAD alone.
+            if self.opened_log_context {
+                self.tx.drop_log_context(self.log_context_id)?;
             }
         } else {
             self.flush_pending()?;

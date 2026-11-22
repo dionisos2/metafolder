@@ -188,7 +188,7 @@ pub struct Ctx {
     pub paths: Vec<String>,
     /// The first directory of the generated tree.
     pub dir0: String,
-    /// A label, and an operation twenty back from HEAD: what the plans
+    /// A log context, and an operation twenty back from HEAD: what the plans
     /// look back to, and what the prune keeps from (after the warm-up, there
     /// is nothing left before it to prune).
     pub log_context_id: i64,
@@ -463,7 +463,8 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
             post(&format!("{base}/query/delete"), json!({"query": uuid_in(&[&u])})).await?;
         }
         "api.label.create" => {
-            post(&format!("{base}/contexts"), json!({"name": next_name("bench-label-")})).await?;
+            post(&format!("{base}/contexts"), json!({"name": next_name("bench-log-context-")}))
+                .await?;
         }
         "api.revert" => {
             set_touch(base, sample).await?;
@@ -711,7 +712,7 @@ pub async fn prepare(url: &str, dir: &Path, peer_dir: &Path) -> Result<Ctx> {
     let log = get(&format!("{base}/log?limit=21")).await?;
     let ops = log["operations"].as_array().context("log operations")?;
     let log_context_id =
-        ops.first().and_then(|o| o["log_context_id"].as_i64()).context("a label")?;
+        ops.first().and_then(|o| o["log_context_id"].as_i64()).context("a log context")?;
     let older_op = ops.last().and_then(|o| o["id"].as_i64()).context("an older operation")?;
 
     // The orphans: the files the generation did not write.

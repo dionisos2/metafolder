@@ -5,10 +5,10 @@ aliases: undo redo
 summary: mf log undo (Ctrl+Z) takes back a log context of the newest change you made, whatever the watcher wrote since; mf log redo (Ctrl+Shift+Z) takes a log context of the newest undo back.
 
 ```
-mf -n music log undo           # which labels the newest change is in — nothing written
-mf -n music log undo 42        # undo label 42: its changes still standing
+mf -n music log undo           # which log contexts the newest change is in — nothing written
+mf -n music log undo 42        # undo log context 42: its changes still standing
 mf -n music log undo plan 42   # what that would do — nothing written
-mf -n music log redo           # which labels the newest undo is in
+mf -n music log redo           # which log contexts the newest undo is in
 mf -n music log redo 57
 ```
 
@@ -21,7 +21,7 @@ script's run… ([[Log contexts]]). Undoing a log context reverts every change o
 standing, onto the current state: the watcher's operations written since stay where they
 are — they record what really happened on disk ([[Why undo does not step HEAD back]]).
 Pressed again, it takes back the change before, and so on. The undo is itself written in
-a log context: the command's (`mf log undo 42`), or `undo of label 42`.
+a log context: the command's (`mf log undo 42`), or `undo of log context 42`.
 
 On the command line the log context is named: `mf log undo` alone lists the candidates and
 writes nothing — undo then never takes back more or less than meant. In the GUI, a change

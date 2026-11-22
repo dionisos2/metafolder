@@ -1,6 +1,6 @@
 //! `mf context` (doc "Log contexts"): opening a context and reading
 //! one, and what a command tells the daemon about itself — the name and
-//! description its label is opened with.
+//! description its log context is opened with.
 
 use serde_json::{json, Value as Json};
 
@@ -9,7 +9,7 @@ use metafolder_core::context::Context;
 use crate::client::CliError;
 use crate::commands::Ctx;
 
-/// The command line, as its label's name: `mf` and its arguments, each quoted
+/// The command line, as its log context's name: `mf` and its arguments, each quoted
 /// when the shell would need it.
 pub fn command_line(args: &[String]) -> String {
     let mut out = String::from("mf");
@@ -33,7 +33,7 @@ fn quote(arg: &str) -> String {
 }
 
 /// The query a command acts on, when it names one (`-q`/`--query`, in any
-/// spelling clap takes): what its label's description says. `-s` is a flag
+/// spelling clap takes): what its log context's description says. `-s` is a flag
 /// saying how to read it, and takes no text of its own.
 pub fn query_of(args: &[String]) -> Option<String> {
     let mut it = args.iter();
@@ -61,19 +61,20 @@ fn repo_uuid(ctx: &Ctx) -> Result<uuid::Uuid, CliError> {
         .map_err(|_| CliError::Op(format!("unexpected repository path '{base}'")))
 }
 
-/// `mf context new NAME [DESCRIPTION]`: opens a label inside the current
+/// `mf context new NAME [DESCRIPTION]`: opens a log context inside the current
 /// context and prints it as `METAFOLDER_LOG_CONTEXT` takes it.
 pub fn begin(ctx: &Ctx, name: &str, description: Option<&str>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let repo = repo_uuid(ctx)?;
-    let parent = ctx.client.context().filter(|c| c.repo == repo).map(|c| c.label);
-    let label = ctx.client.post(
+    let parent = ctx.client.context().filter(|c| c.repo == repo).map(|c| c.log_context);
+    let log_context = ctx.client.post(
         &format!("{base}/contexts"),
         &json!({"name": name, "description": description, "parent": parent}),
     )?;
-    let id =
-        label["id"].as_i64().ok_or_else(|| CliError::Op("the daemon named no label".into()))?;
-    println!("{}", Context { repo, label: id });
+    let id = log_context["id"]
+        .as_i64()
+        .ok_or_else(|| CliError::Op("the daemon named no log context".into()))?;
+    println!("{}", Context { repo, log_context: id });
     Ok(0)
 }
 
@@ -82,59 +83,65 @@ pub fn begin(ctx: &Ctx, name: &str, description: Option<&str>) -> Result<i32, Cl
 pub fn parent(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let repo = repo_uuid(ctx)?;
-    let current = ctx.client.context().filter(|c| c.repo == repo && c.label != 0);
+    let current = ctx.client.context().filter(|c| c.repo == repo && c.log_context != 0);
     let parent = match current {
         None => None,
-        Some(c) => ctx.client.get(&format!("{base}/contexts/{}", c.label), &[])?["parent"].as_i64(),
+        Some(c) => {
+            ctx.client.get(&format!("{base}/contexts/{}", c.log_context), &[])?["parent"].as_i64()
+        }
     };
     match parent {
-        Some(id) => println!("{}", Context { repo, label: id }),
+        Some(id) => println!("{}", Context { repo, log_context: id }),
         None => println!("0"),
     }
     Ok(0)
 }
 
-/// `mf context show [CONTEXT]`: a label (default: the current context) and the
-/// labels it is nested in. `LABEL` is a label id, or a context as `begin`
+/// `mf context show [CONTEXT]`: a log context (default: the current context) and the
+/// log contexts it is nested in. `LABEL` is a log context id, or a context as `begin`
 /// prints it.
-pub fn show(ctx: &Ctx, label: Option<&str>) -> Result<i32, CliError> {
+pub fn show(ctx: &Ctx, log_context: Option<&str>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let repo = repo_uuid(ctx)?;
-    let id = match label {
+    let id = match log_context {
         Some(text) => match Context::parse(text) {
             Some(context) if context.repo != repo => {
                 return Err(CliError::Usage(format!(
-                    "{text} is a label of another repository ({})",
+                    "{text} is a log context of another repository ({})",
                     context.repo.as_simple()
                 )))
             }
-            Some(context) => context.label,
+            Some(context) => context.log_context,
             None => text.trim().parse::<i64>().map_err(|_| {
-                CliError::Usage(format!("'{text}' is not a label (an id, or <repo>:<id>)"))
+                CliError::Usage(format!("'{text}' is not a log context (an id, or <repo>:<id>)"))
             })?,
         },
         None => match ctx.client.context().filter(|c| c.repo == repo) {
-            Some(context) => context.label,
+            Some(context) => context.log_context,
             None => {
-                println!("No context: what is written opens its own label.");
+                println!("No context: what is written opens its own log context.");
                 return Ok(0);
             }
         },
     };
-    let label = ctx.client.get(&format!("{base}/contexts/{id}"), &[])?;
-    println!("{}", line(&label));
-    if let Some(description) = label["description"].as_str() {
+    let log_context = ctx.client.get(&format!("{base}/contexts/{id}"), &[])?;
+    println!("{}", line(&log_context));
+    if let Some(description) = log_context["description"].as_str() {
         println!("  {description}");
     }
-    for ancestor in label["ancestors"].as_array().into_iter().flatten() {
+    for ancestor in log_context["ancestors"].as_array().into_iter().flatten() {
         println!("  in {}", line(ancestor));
     }
     Ok(0)
 }
 
-/// `label 12  tag run`.
-fn line(label: &Json) -> String {
-    format!("label {}  {}", label["id"].as_i64().unwrap_or(0), label["name"].as_str().unwrap_or(""))
+/// `log_context 12  tag run`.
+fn line(log_context: &Json) -> String {
+    format!(
+        "log context {}  {}",
+        log_context["id"].as_i64().unwrap_or(0),
+        log_context["name"].as_str().unwrap_or("")
+    )
 }
 
 #[cfg(test)]

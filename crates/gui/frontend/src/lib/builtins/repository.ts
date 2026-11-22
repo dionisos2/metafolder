@@ -395,7 +395,7 @@ async function unsetWorkContext(ws: string): Promise<void> {
   );
 }
 
-/** `log:undo` / `log:redo` (doc "Undo and redo by log context"): the label named,
+/** `log:undo` / `log:redo` (doc "Undo and redo by log context"): the log context named,
  *  or — none named — the one the newest change (undo) was written in; when it
  *  was written in several, which one is asked, innermost first. */
 async function undoOrRedo(
@@ -403,11 +403,11 @@ async function undoOrRedo(
   redo: boolean,
   named: string | undefined,
 ): Promise<void> {
-  let label: number | null = null;
+  let logContext: number | null = null;
   if (named !== undefined) {
-    label = Number.parseInt(named, 10);
-    if (!Number.isFinite(label)) {
-      await status(`not a label: "${named}"`);
+    logContext = Number.parseInt(named, 10);
+    if (!Number.isFinite(logContext)) {
+      await status(`not a log context: "${named}"`);
       return;
     }
   } else {
@@ -422,8 +422,8 @@ async function undoOrRedo(
       const chosen = await collectArgs(
         [
           {
-            name: "label",
-            prompt: () => `${redo ? "Redo" : "Undo"} which label?`,
+            name: "log context",
+            prompt: () => `${redo ? "Redo" : "Undo"} which log context?`,
             complete: () => candidates.map((c) => `${c.id} ${c.name}`),
           },
         ],
@@ -431,11 +431,11 @@ async function undoOrRedo(
         promptForArg,
       );
       if (chosen === null) return;
-      label = Number.parseInt(chosen[0] ?? "", 10);
-      if (!Number.isFinite(label)) return;
+      logContext = Number.parseInt(chosen[0] ?? "", 10);
+      if (!Number.isFinite(logContext)) return;
     }
   }
-  await invoke("log_navigate", { wsId: ws, redo, label });
+  await invoke("log_navigate", { wsId: ws, redo, logContext });
 }
 
 /** What `log_rollback_plan` answers: the time read, how many operations
@@ -489,7 +489,7 @@ const applyIgnore: Builtin = async (args, context, name) => {
     );
 };
 
-const undoOrRedoLabel: Builtin = async (args, context, name) => {
+const undoOrRedoLogContext: Builtin = async (args, context, name) => {
   const { ws } = context;
   if (ws) await undoOrRedo(ws, name === "log:redo", args[0]);
 };
@@ -578,8 +578,8 @@ export const repositoryBuiltins: Builtins = {
       });
     }
   },
-  "log:undo": undoOrRedoLabel,
-  "log:redo": undoOrRedoLabel,
+  "log:undo": undoOrRedoLogContext,
+  "log:redo": undoOrRedoLogContext,
   "log:rollback": async (args, context) => {
     // The time was collected by dispatch.
     const { ws } = context;

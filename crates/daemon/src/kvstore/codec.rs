@@ -299,7 +299,7 @@ pub(crate) fn get_fields(r: &mut Dec, mut row: impl FnMut(&str, Value)) -> Resul
 /// tables"): `varint len · name · flags · [varint len · description] ·
 /// [varint parent] · varint created (ms)`, the flags saying which of the two
 /// optional parts follow.
-pub(crate) fn enc_context(m: &crate::store::LabelMeta) -> Vec<u8> {
+pub(crate) fn enc_context(m: &crate::store::LogContextMeta) -> Vec<u8> {
     const DESCRIBED: u8 = 1;
     const CHILD: u8 = 2;
     let flags = (m.description.is_some() as u8 * DESCRIBED) | (m.parent.is_some() as u8 * CHILD);
@@ -316,14 +316,14 @@ pub(crate) fn enc_context(m: &crate::store::LabelMeta) -> Vec<u8> {
 }
 
 /// What [`enc_context`] wrote.
-pub(crate) fn dec_context(b: &[u8]) -> Result<crate::store::LabelMeta> {
+pub(crate) fn dec_context(b: &[u8]) -> Result<crate::store::LogContextMeta> {
     let mut r = Dec(b);
     let name = r.string()?;
     let flags = r.take(1)?[0];
     let description = if flags & 1 != 0 { Some(r.string()?) } else { None };
     let parent = if flags & 2 != 0 { Some(r.varint()? as i64) } else { None };
     let created = r.varint()? as i64;
-    Ok(crate::store::LabelMeta { name, description, parent, created })
+    Ok(crate::store::LogContextMeta { name, description, parent, created })
 }
 
 /// An operation's origin, one byte: a client's (none), the watcher's, the
@@ -359,14 +359,14 @@ mod tests {
 
     #[test]
     fn a_log_context_comes_back_compact() {
-        use crate::store::LabelMeta;
-        let full = LabelMeta {
+        use crate::store::LogContextMeta;
+        let full = LogContextMeta {
             name: "tag run".into(),
             description: Some("the 2024 photos".into()),
             parent: Some(300),
             created: 1_763_700_000_000,
         };
-        let bare = LabelMeta { name: "x".into(), description: None, parent: None, created: 5 };
+        let bare = LogContextMeta { name: "x".into(), description: None, parent: None, created: 5 };
         for m in [&full, &bare] {
             let back = dec_context(&enc_context(m)).unwrap();
             assert_eq!(

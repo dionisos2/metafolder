@@ -143,7 +143,7 @@ fn the_log_walks_back_from_head() {
 // ── Writing ───────────────────────────────────────────────────────────────────
 
 use metafolder_daemon::log::{OpType, Retention};
-use metafolder_daemon::store::{Begin, LabelMeta, NewOp};
+use metafolder_daemon::store::{Begin, LogContextMeta, NewOp};
 
 fn empty() -> (Handle, TempDir) {
     open()
@@ -238,7 +238,7 @@ fn appended_operations_chain_from_head() {
         reverts_op_id: None,
         origin: None,
     };
-    let label = |name: &str| LabelMeta {
+    let log_context = |name: &str| LogContextMeta {
         name: name.into(),
         description: None,
         parent: None,
@@ -246,7 +246,7 @@ fn appended_operations_chain_from_head() {
     };
     let first = {
         let tx = conn.begin_write().unwrap();
-        let rev = tx.create_label(&label("one")).unwrap();
+        let rev = tx.create_log_context(&log_context("one")).unwrap();
         let last = tx.append_ops(rev, 1_000, &[op("a"), op("b")]).unwrap();
         tx.set_head(Some(last)).unwrap();
         tx.commit().unwrap();
@@ -254,7 +254,7 @@ fn appended_operations_chain_from_head() {
     };
     let tx = conn.begin_write().unwrap();
     assert_eq!(tx.head().unwrap(), Some(first));
-    let rev = tx.create_label(&label("two")).unwrap();
+    let rev = tx.create_log_context(&log_context("two")).unwrap();
     let last = tx.append_ops(rev, 2_000, &[op("c")]).unwrap();
     tx.set_head(Some(last)).unwrap();
     let c = tx.op(last).unwrap().unwrap();
@@ -291,7 +291,7 @@ fn clearing_takes_every_metarecord() {
 }
 
 #[test]
-fn the_log_lists_its_lines_and_labels() {
+fn the_log_lists_its_lines_and_log_contexts() {
     let (conn, _dir, _, _) = fixture();
     let store: &dyn Store = &conn;
     let head = store.head().unwrap().unwrap();
@@ -303,15 +303,15 @@ fn the_log_lists_its_lines_and_labels() {
         back.iter().map(|o| o.id).collect::<Vec<_>>()
     );
 
-    let labels: Vec<i64> = {
+    let log_contexts: Vec<i64> = {
         let mut r: Vec<i64> = all.iter().map(|o| o.log_context_id).collect();
         r.dedup();
         r
     };
-    assert_eq!(labels.len(), 2);
-    let meta = store.labels(&[labels[0], labels[1], 999_999]).unwrap();
-    assert_eq!(meta.len(), 2, "an id naming no label is left out");
-    assert!(meta[&labels[0]].created <= meta[&labels[1]].created);
+    assert_eq!(log_contexts.len(), 2);
+    let meta = store.log_contexts(&[log_contexts[0], log_contexts[1], 999_999]).unwrap();
+    assert_eq!(meta.len(), 2, "an id naming no log context is left out");
+    assert!(meta[&log_contexts[0]].created <= meta[&log_contexts[1]].created);
     assert_eq!(all[0].origin, None, "a client's write");
     assert!(all[0].timestamp <= all[2].timestamp);
     // Counted by entry: the two creations, alike but for their target, are one
@@ -320,32 +320,34 @@ fn the_log_lists_its_lines_and_labels() {
 }
 
 #[test]
-fn a_label_names_its_operations_and_its_children() {
+fn a_log_context_names_its_operations_and_its_children() {
     let (mut conn, _dir, _, child) = fixture();
     let store: &dyn Store = &conn;
     let all = store.all_ops().unwrap();
     let (first, second) = (all[0].log_context_id, all[2].log_context_id);
     let ids =
         |ops: Vec<metafolder_daemon::log::OpRow>| ops.iter().map(|o| o.id).collect::<Vec<_>>();
-    assert_eq!(ids(store.label_ops(first).unwrap()), [all[0].id, all[1].id]);
-    assert_eq!(ids(store.label_ops(second).unwrap()), [all[2].id]);
-    assert!(store.label_ops(999_999).unwrap().is_empty());
-    assert_eq!(store.label_first_op(first).unwrap(), Some(all[0].id));
-    assert_eq!(store.label_first_op(999_999).unwrap(), None);
+    assert_eq!(ids(store.log_context_ops(first).unwrap()), [all[0].id, all[1].id]);
+    assert_eq!(ids(store.log_context_ops(second).unwrap()), [all[2].id]);
+    assert!(store.log_context_ops(999_999).unwrap().is_empty());
+    assert_eq!(store.log_context_first_op(first).unwrap(), Some(all[0].id));
+    assert_eq!(store.log_context_first_op(999_999).unwrap(), None);
     assert_eq!(ids(store.entity_ops_after(child, 0).unwrap()), [all[1].id, all[2].id]);
     assert_eq!(ids(store.entity_ops_after(child, all[1].id).unwrap()), [all[2].id]);
 
     let tx = conn.begin_write().unwrap();
-    let meta = |parent| LabelMeta { name: "x".into(), description: None, parent, created: 0 };
-    let run = tx.create_label(&meta(None)).unwrap();
-    let (a, b) =
-        (tx.create_label(&meta(Some(run))).unwrap(), tx.create_label(&meta(Some(run))).unwrap());
-    assert_eq!(tx.label_children(run).unwrap(), [a, b]);
-    tx.drop_label(a).unwrap();
-    assert_eq!(tx.label_children(run).unwrap(), [b]);
-    assert!(tx.labels(&[a]).unwrap().is_empty());
-    tx.set_watcher_label(run).unwrap();
-    assert_eq!(tx.watcher_label().unwrap(), Some(run));
+    let meta = |parent| LogContextMeta { name: "x".into(), description: None, parent, created: 0 };
+    let run = tx.create_log_context(&meta(None)).unwrap();
+    let (a, b) = (
+        tx.create_log_context(&meta(Some(run))).unwrap(),
+        tx.create_log_context(&meta(Some(run))).unwrap(),
+    );
+    assert_eq!(tx.log_context_children(run).unwrap(), [a, b]);
+    tx.drop_log_context(a).unwrap();
+    assert_eq!(tx.log_context_children(run).unwrap(), [b]);
+    assert!(tx.log_contexts(&[a]).unwrap().is_empty());
+    tx.set_watcher_log_context(run).unwrap();
+    assert_eq!(tx.watcher_log_context().unwrap(), Some(run));
 }
 
 #[test]
@@ -395,14 +397,14 @@ fn targets_are_found_in_the_log() {
 }
 
 #[test]
-fn pruning_removes_operations_not_their_labels() {
+fn pruning_removes_operations_not_their_log_contexts() {
     let (mut conn, _dir, _, _) = fixture();
     let all = (&conn as &dyn Store).all_ops().unwrap();
     let tx = conn.begin_write().unwrap();
     assert_eq!(tx.delete_ops(&[all[1].id, all[0].id]).unwrap(), 2);
     tx.commit().unwrap();
     let store: &dyn Store = &conn;
-    // The label left empty stays until a reindex (doc "Log contexts").
+    // The log context left empty stays until a reindex (doc "Log contexts").
     assert_eq!(store.counts().unwrap(), (1, 2));
     assert!(store.op(all[2].id).unwrap().is_some());
     assert!(store.added(all[0].id).unwrap().is_empty(), "snapshots go too");

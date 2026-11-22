@@ -35,7 +35,7 @@ use uuid::Uuid;
 use crate::error::DomainError;
 use crate::log::{OpRow, Retention};
 use crate::rows::{FieldRow, TreeRow};
-use crate::store::{Begin, LabelMeta, Log, MassKind, NewOp, Rows, WriteTxn};
+use crate::store::{Begin, Log, LogContextMeta, MassKind, NewOp, Rows, WriteTxn};
 
 mod codec;
 mod derived;
@@ -426,8 +426,8 @@ impl State {
 /// before the reverts of an operation were indexed; 6: a forest entry
 /// without its metarecord's dense id; 7: a forest entry holding uuid · row id
 /// · dense id, the rows one key each in `field_cells`; 8: a record's rows under
-/// one key, its dense id, in `records`; 9: the labels a label reverts, in
-/// `label_reverts`; 10: an operation keeps its version delta and not the rows
+/// one key, its dense id, in `records`; 9: the log contexts a log context reverts, in
+/// `log_context_reverts`; 10: an operation keeps its version delta and not the rows
 /// it left; 11: the review of the store's tables, values in the compact
 /// encoding — doc "Store tables").
 const LAYOUT: i64 = 11;
@@ -543,13 +543,13 @@ fn op_timestamp(v: &[u8]) -> Result<i64> {
     Ok(entry::Header::decode(v)?.timestamp)
 }
 
-/// A label, and the key of the command that opened it, if one did, in the
+/// A log context, and the key of the command that opened it, if one did, in the
 /// compact form ([`codec::enc_context`]).
-fn enc_label(m: &LabelMeta) -> Vec<u8> {
+fn enc_log_context(m: &LogContextMeta) -> Vec<u8> {
     codec::enc_context(m)
 }
 
-fn dec_label(b: &[u8]) -> Result<LabelMeta> {
+fn dec_log_context(b: &[u8]) -> Result<LogContextMeta> {
     codec::dec_context(b)
 }
 
@@ -1057,9 +1057,9 @@ impl Read<'_> {
         self.ids_from(0, usize::MAX)
     }
 
-    fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
+    fn log_context_op_ids(&self, log_context: i64) -> Result<Vec<i64>> {
         let mut out = Vec::new();
-        for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(label))? {
+        for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(log_context))? {
             let (k, v) = e?;
             let first = from_be(&k[8..]);
             out.extend(first..first + targets_of(v)?);
@@ -1068,19 +1068,19 @@ impl Read<'_> {
         Ok(out)
     }
 
-    /// A label's oldest operation of its own, `None` when it holds none: one
+    /// A log context's oldest operation of its own, `None` when it holds none: one
     /// key.
-    fn label_first_op(&self, label: i64) -> Result<Option<i64>> {
+    fn log_context_first_op(&self, log_context: i64) -> Result<Option<i64>> {
         self.count(1)?;
-        Ok(match self.t.log_entries_by_context.prefix_iter(self.r, &be(label))?.next() {
+        Ok(match self.t.log_entries_by_context.prefix_iter(self.r, &be(log_context))?.next() {
             Some(e) => Some(from_be(&e?.0[8..])),
             None => None,
         })
     }
 
-    /// The ids of the labels older than `before` (all when none), newest first,
+    /// The ids of the log contexts older than `before` (all when none), newest first,
     /// at most `max`: the end of a table keyed by id.
-    fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
+    fn log_context_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
         let hi = be(before.map_or(i64::MAX, |b| b.saturating_sub(1)));
         let range = (std::ops::Bound::Unbounded, std::ops::Bound::Included(&hi[..]));
         let mut out = Vec::new();
@@ -1091,12 +1091,12 @@ impl Read<'_> {
         Ok(out)
     }
 
-    /// How many operations a label holds of its own, off the keys of
+    /// How many operations a log context holds of its own, off the keys of
     /// `log_entries_by_context` — one per entry, which says how many targets it
     /// has — so that no entry is read.
-    fn label_op_count(&self, label: i64) -> Result<i64> {
+    fn log_context_op_count(&self, log_context: i64) -> Result<i64> {
         let (mut n, mut seen) = (0i64, 0u64);
-        for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(label))? {
+        for e in self.t.log_entries_by_context.prefix_iter(self.r, &be(log_context))? {
             seen += 1;
             n += targets_of(e?.1)?;
         }
@@ -1104,9 +1104,9 @@ impl Read<'_> {
         Ok(n)
     }
 
-    /// A label's newest operation of its own.
-    fn label_last_op(&self, label: i64) -> Result<Option<i64>> {
-        let (lo, hi) = (key(&[&be(label), &be(0)]), key(&[&be(label), &be(i64::MAX)]));
+    /// A log context's newest operation of its own.
+    fn log_context_last_op(&self, log_context: i64) -> Result<Option<i64>> {
+        let (lo, hi) = (key(&[&be(log_context), &be(0)]), key(&[&be(log_context), &be(i64::MAX)]));
         let range = (std::ops::Bound::Included(&lo[..]), std::ops::Bound::Included(&hi[..]));
         self.count(1)?;
         Ok(match self.t.log_entries_by_context.rev_range(self.r, &range)?.next() {
@@ -1118,11 +1118,13 @@ impl Read<'_> {
         })
     }
 
-    /// The labels `label` reverts (`kind` 0), or the labels that revert it
-    /// (`kind` 1), each with whether it is the whole label.
-    fn label_marks(&self, kind: u8, label: i64) -> Result<Vec<(i64, bool)>> {
+    /// The log contexts `log_context` reverts (`kind` 0), or the log contexts that revert it
+    /// (`kind` 1), each with whether it is the whole log context.
+    fn log_context_marks(&self, kind: u8, log_context: i64) -> Result<Vec<(i64, bool)>> {
         let mut out = Vec::new();
-        for e in self.t.log_context_reverts.prefix_iter(self.r, &key(&[&[kind], &be(label)]))? {
+        for e in
+            self.t.log_context_reverts.prefix_iter(self.r, &key(&[&[kind], &be(log_context)]))?
+        {
             let (k, v) = e?;
             out.push((from_be(&k[9..]), v.first() == Some(&1)));
         }
@@ -1130,9 +1132,9 @@ impl Read<'_> {
         Ok(out)
     }
 
-    fn label_children(&self, label: i64) -> Result<Vec<i64>> {
+    fn log_context_children(&self, log_context: i64) -> Result<Vec<i64>> {
         let mut out = Vec::new();
-        for e in self.t.log_context_children.prefix_iter(self.r, &be(label))? {
+        for e in self.t.log_context_children.prefix_iter(self.r, &be(log_context))? {
             out.push(from_be(&e?.0[8..]));
         }
         self.count(out.len() as u64 + 1)?;
@@ -1464,14 +1466,14 @@ macro_rules! kv_reads {
                     $read.ops_of(ids.into_iter())
                 })
             }
-            fn labels(&self, ids: &[i64]) -> Result<HashMap<i64, LabelMeta>> {
+            fn log_contexts(&self, ids: &[i64]) -> Result<HashMap<i64, LogContextMeta>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let mut out = HashMap::new();
                     $read.count(ids.len() as u64)?;
                     for &id in ids {
                         if let Some(b) = $read.t.log_contexts.get($read.r, &be(id))? {
-                            out.insert(id, dec_label(b)?);
+                            out.insert(id, dec_log_context(b)?);
                         }
                     }
                     Ok(out)
@@ -1487,50 +1489,50 @@ macro_rules! kv_reads {
                     Ok((ops, $read.t.log_contexts.len($read.r)? as i64))
                 })
             }
-            fn label_ops(&self, label: i64) -> Result<Vec<OpRow>> {
+            fn log_context_ops(&self, log_context: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    let ids = $read.label_op_ids(label)?;
+                    let ids = $read.log_context_op_ids(log_context)?;
                     $read.ops_of(ids.into_iter())
                 })
             }
-            fn label_first_op(&self, label: i64) -> Result<Option<i64>> {
+            fn log_context_first_op(&self, log_context: i64) -> Result<Option<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_first_op(label))
+                $with(&mut |$read: &Read| $read.log_context_first_op(log_context))
             }
-            fn label_children(&self, label: i64) -> Result<Vec<i64>> {
+            fn log_context_children(&self, log_context: i64) -> Result<Vec<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_children(label))
+                $with(&mut |$read: &Read| $read.log_context_children(log_context))
             }
-            fn label_op_count(&self, label: i64) -> Result<i64> {
+            fn log_context_op_count(&self, log_context: i64) -> Result<i64> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_op_count(label))
+                $with(&mut |$read: &Read| $read.log_context_op_count(log_context))
             }
-            fn label_op_ids(&self, label: i64) -> Result<Vec<i64>> {
+            fn log_context_op_ids(&self, log_context: i64) -> Result<Vec<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_op_ids(label))
+                $with(&mut |$read: &Read| $read.log_context_op_ids(log_context))
             }
-            fn label_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
+            fn log_context_ids_before(&self, before: Option<i64>, max: usize) -> Result<Vec<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_ids_before(before, max))
+                $with(&mut |$read: &Read| $read.log_context_ids_before(before, max))
             }
-            fn label_last_op(&self, label: i64) -> Result<Option<i64>> {
+            fn log_context_last_op(&self, log_context: i64) -> Result<Option<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_last_op(label))
+                $with(&mut |$read: &Read| $read.log_context_last_op(log_context))
             }
-            fn label_reverts(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+            fn log_context_reverts(&self, log_context: i64) -> Result<Vec<(i64, bool)>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_marks(0, label))
+                $with(&mut |$read: &Read| $read.log_context_marks(0, log_context))
             }
-            fn label_reverted_by(&self, label: i64) -> Result<Vec<(i64, bool)>> {
+            fn log_context_reverted_by(&self, log_context: i64) -> Result<Vec<(i64, bool)>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.label_marks(1, label))
+                $with(&mut |$read: &Read| $read.log_context_marks(1, log_context))
             }
             fn reverters(&self, op: i64) -> Result<Vec<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.reverters_of(op))
             }
-            fn watcher_label(&self) -> Result<Option<i64>> {
+            fn watcher_log_context(&self) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     $read.count(1)?;
@@ -1544,8 +1546,12 @@ macro_rules! kv_reads {
                     $read.ops_resolved_of(ids.into_iter(), Some(entity))
                 })
             }
-            fn version_before_label(&self, label: i64, entity: Uuid) -> Result<Option<u64>> {
-                crate::store::version_before_label(self, label, entity)
+            fn version_before_log_context(
+                &self,
+                log_context: i64,
+                entity: Uuid,
+            ) -> Result<Option<u64>> {
+                crate::store::version_before_log_context(self, log_context, entity)
             }
             fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
@@ -2039,8 +2045,8 @@ impl KvStore {
     ///   history tree (layouts 1 and 2: operations chained to a parent,
     ///   `op_children`, `restorations`), and the sequence before it was split
     ///   by origin (3), the one grouped by writes (4), and the one with no
-    ///   index of its reverts (5), the one with no marks on its labels for the
-    ///   labels they revert (6 to 8), the one whose operations carry no version delta
+    ///   index of its reverts (5), the one with no marks on its log contexts for the
+    ///   log contexts they revert (6 to 8), the one whose operations carry no version delta
     ///   and keep the rows they left (9). The log is emptied, the metarecords kept
     ///   (user decision, October and November 2026; doc "The operation log").
     ///
@@ -2530,23 +2536,23 @@ impl KvTxn<'_> {
         self.derive_row(owner, &row.name, &row.value, -1, before)
     }
 
-    /// Writes a new label, and its place among its parent's children.
-    fn put_label(&self, meta: &LabelMeta) -> Result<i64> {
+    /// Writes a new log context, and its place among its parent's children.
+    fn put_log_context(&self, meta: &LogContextMeta) -> Result<i64> {
         let id = self.next(State::NextLogContext)?;
         let mut w = self.txn.borrow_mut();
-        self.t.log_contexts.put(&mut w, &be(id), &enc_label(meta))?;
+        self.t.log_contexts.put(&mut w, &be(id), &enc_log_context(meta))?;
         if let Some(parent) = meta.parent {
             self.t.log_context_children.put(&mut w, &key(&[&be(parent), &be(id)]), &[])?;
         }
         Ok(id)
     }
 
-    /// Drops every label nothing is in — no operation, no child label —, at
-    /// a reindex only: retention and prunes remove operations, never labels,
+    /// Drops every log context nothing is in — no operation, no child log context —, at
+    /// a reindex only: retention and prunes remove operations, never log contexts,
     /// so that a context a client holds stays valid while it works (doc "Log
     /// contexts"). Children first, by descending id: a child is newer than
     /// its parent.
-    pub(super) fn drop_empty_labels(&self) -> Result<usize> {
+    pub(super) fn drop_empty_log_contexts(&self) -> Result<usize> {
         let ids: Vec<i64> = {
             let txn = self.txn.borrow();
             let ids = self
@@ -2564,13 +2570,13 @@ impl KvTxn<'_> {
         Ok(dropped)
     }
 
-    /// Drops `label` if nothing is left in it — no operation, no child label —
-    /// and then its parent on the same terms. The watcher's label stays: the
+    /// Drops `log_context` if nothing is left in it — no operation, no child log context —
+    /// and then its parent on the same terms. The watcher's log context stays: the
     /// daemon writes under it.
-    fn drop_if_empty(&self, label: i64) -> Result<usize> {
+    fn drop_if_empty(&self, log_context: i64) -> Result<usize> {
         let mut dropped = 0;
-        let mut next = Some(label);
-        while let Some(label) = next {
+        let mut next = Some(log_context);
+        while let Some(log_context) = next {
             let (empty, parent) = {
                 let txn = self.txn.borrow();
                 let read = Read {
@@ -2588,17 +2594,17 @@ impl KvTxn<'_> {
                     universe: Default::default(),
                     entries: None,
                 };
-                let Some(meta) = self.t.log_contexts.get(&txn, &be(label))? else { break };
-                let meta = dec_label(meta)?;
-                let empty = read.label_first_op(label)?.is_none()
-                    && read.label_children(label)?.is_empty()
-                    && read.meta(State::WatcherLogContext)? != Some(label);
+                let Some(meta) = self.t.log_contexts.get(&txn, &be(log_context))? else { break };
+                let meta = dec_log_context(meta)?;
+                let empty = read.log_context_first_op(log_context)?.is_none()
+                    && read.log_context_children(log_context)?.is_empty()
+                    && read.meta(State::WatcherLogContext)? != Some(log_context);
                 (empty, meta.parent)
             };
             if !empty {
                 break;
             }
-            self.drop_label(label)?;
+            self.drop_log_context(log_context)?;
             dropped += 1;
             next = parent;
         }
@@ -2630,32 +2636,32 @@ impl WriteTxn for KvTxn<'_> {
         field: &str,
         values: &[Value],
         ids: &roaring::RoaringBitmap,
-        label: i64,
+        log_context: i64,
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<crate::store::MassApplied>> {
-        self.mass_log(kind, field, values, ids, label, timestamp, origin, None)
+        self.mass_log(kind, field, values, ids, log_context, timestamp, origin, None)
     }
 
     fn mass_delete(
         &self,
         ids: &roaring::RoaringBitmap,
-        label: i64,
+        log_context: i64,
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<crate::store::MassApplied>> {
-        self.mass_delete_log(ids, label, timestamp, origin)
+        self.mass_delete_log(ids, log_context, timestamp, origin)
     }
 
     fn mass_revert(
         &self,
         first_op: i64,
         last_op: i64,
-        label: i64,
+        log_context: i64,
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<crate::store::MassApplied>> {
-        self.mass_revert_log(first_op, last_op, label, timestamp, origin)
+        self.mass_revert_log(first_op, last_op, log_context, timestamp, origin)
     }
 
     fn mass_undelete(
@@ -2806,12 +2812,12 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    fn create_label(&self, meta: &LabelMeta) -> Result<i64> {
-        self.put_label(meta)
+    fn create_log_context(&self, meta: &LogContextMeta) -> Result<i64> {
+        self.put_log_context(meta)
     }
 
-    fn drop_label(&self, id: i64) -> Result<()> {
-        let Some(meta) = Log::labels(self, &[id])?.remove(&id) else { return Ok(()) };
+    fn drop_log_context(&self, id: i64) -> Result<()> {
+        let Some(meta) = Log::log_contexts(self, &[id])?.remove(&id) else { return Ok(()) };
         let mut w = self.txn.borrow_mut();
         self.t.log_contexts.delete(&mut w, &be(id))?;
         if let Some(parent) = meta.parent {
@@ -2835,7 +2841,7 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    fn note_label_reverts(&self, reverter: i64, reverted: i64, tree: bool) -> Result<()> {
+    fn note_log_context_reverts(&self, reverter: i64, reverted: i64, tree: bool) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         let forward = key(&[&[0u8], &be(reverter), &be(reverted)]);
         let already =
@@ -2850,17 +2856,17 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    fn set_watcher_label(&self, id: i64) -> Result<()> {
+    fn set_watcher_log_context(&self, id: i64) -> Result<()> {
         self.meta_put(State::WatcherLogContext, id)
     }
 
-    fn append_ops(&self, label: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64> {
+    fn append_ops(&self, log_context: i64, timestamp: i64, ops: &[NewOp]) -> Result<i64> {
         let mut last = {
             let w = self.txn.borrow();
             State::NextLogOp.get(&self.t, &w)?.unwrap_or(1) - 1
         };
         for op in ops {
-            let (h, before) = entry::of_op(op, label, timestamp)?;
+            let (h, before) = entry::of_op(op, log_context, timestamp)?;
             // An operation that differs from the last entry only by its target
             // is added to it (doc "Log storage").
             if let Some(id) = self.extend_last(&h, op.entity, before.clone())? {
@@ -2890,7 +2896,7 @@ impl WriteTxn for KvTxn<'_> {
 
     /// The log trim (`log::Retention`), over these tables: for each origin
     /// past its limit and slack, the oldest operations down to the limit — the
-    /// first keys of its table —, leaving their labels. Reads what it deletes and two statistics,
+    /// first keys of its table —, leaving their log contexts. Reads what it deletes and two statistics,
     /// never the operations it keeps (`tests/log_cost.rs`): it runs once every
     /// `slack` writes, and what is kept may be a reconcile's.
     fn trim(&self, retention: Retention, keep_from: i64) -> Result<usize> {

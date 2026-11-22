@@ -1,10 +1,10 @@
-//! The GUI's work context (doc "The GUI's work context"): a label the user
+//! The GUI's work context (doc "The GUI's work context"): a log context the user
 //! opens on a repository (`context:set`), which every later request of the
-//! GUI's to that repository writes in (`X-Metafolder-Log-Context`, doc "Labels and
-//! contexts") until it is closed (`context:unset`) — naming the work under way,
+//! GUI's to that repository writes in (`X-Metafolder-Log-Context`, doc "Log contexts")
+//! until it is closed (`context:unset`) — naming the work under way,
 //! so it can be looked at, or undone, whole.
 //!
-//! One per repository, at most: a label id means nothing in another
+//! One per repository, at most: a log context id means nothing in another
 //! repository, and a context is the repository's, not a workspace's. It is
 //! remembered in the repository's `.metafolder/gui/context`, so a GUI started
 //! again finds it and asks whether to stay in it ([`pending`], [`resume`]).
@@ -29,12 +29,12 @@ use metafolder_core::sync::MutexExt;
 /// given. The file's content, as JSON.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorkContext {
-    /// Written `label` before November 2026 (the log's "label" renamed "log
+    /// Written `log_context` before November 2026 (the log's "log context" renamed "log
     /// context"): read under either name.
     #[serde(alias = "label")]
     pub log_context: i64,
     pub name: String,
-    /// What the work is, when the user said (the label's description).
+    /// What the work is, when the user said (the log context's description).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
@@ -46,7 +46,7 @@ pub enum Pending {
     None,
     /// A context left open, to stay in or to end.
     Open(WorkContext),
-    /// A context left open whose label is gone — pruned since. It has been
+    /// A context left open whose log context is gone — pruned since. It has been
     /// forgotten; the user is only told.
     Gone(WorkContext),
 }
@@ -105,20 +105,22 @@ pub fn active(repo: &str) -> Option<WorkContext> {
 pub fn context_of(repo: &str) -> Option<metafolder_core::context::Context> {
     let key = Uuid::parse_str(repo).ok()?;
     with_active(|map| {
-        map.get(&key)
-            .map(|a| metafolder_core::context::Context { repo: key, label: a.context.log_context })
+        map.get(&key).map(|a| metafolder_core::context::Context {
+            repo: key,
+            log_context: a.context.log_context,
+        })
     })
 }
 
-/// The label a request to `path` is sent in: the context in force on its
+/// The log context a request to `path` is sent in: the context in force on its
 /// repository.
-pub(crate) fn label_for(path: &str) -> Option<i64> {
+pub(crate) fn log_context_for(path: &str) -> Option<i64> {
     let key = repo_of_path(path)?;
     with_active(|map| map.get(&key).map(|a| a.context.log_context))
 }
 
 /// After a request to `path` answered `status` with `body`: when the daemon
-/// refused it because the context's label no longer exists (pruned while the
+/// refused it because the context's log context no longer exists (pruned while the
 /// context was in force — doc "Log endpoints": nothing was written), the
 /// context is closed and forgotten, and `true` says to send the request again,
 /// outside it.
@@ -129,7 +131,7 @@ pub(crate) fn forget_if_gone(path: &str, status: u16, body: &Value) -> bool {
     let Some(key) = repo_of_path(path) else { return false };
     let removed = change(|map| {
         let gone = map.get(&key).is_some_and(|a| {
-            body["error"].as_str() == Some(&format!("no label {}", a.context.log_context))
+            body["error"].as_str() == Some(&format!("no log context {}", a.context.log_context))
         });
         if gone {
             map.remove(&key)
@@ -140,7 +142,7 @@ pub(crate) fn forget_if_gone(path: &str, status: u16, body: &Value) -> bool {
     match removed {
         Some(active) => {
             eprintln!(
-                "work context \"{}\" (label {}) no longer exists: closed",
+                "work context \"{}\" (log context {}) no longer exists: closed",
                 active.context.name, active.context.log_context
             );
             let _ = remove_file(&active.metafolder);
@@ -166,7 +168,7 @@ pub fn forget(repo: &str) {
 }
 
 /// Opens a context named `name` on `repo` and puts it in force, closing the
-/// one in force there if any: one at a time. The new label is opened at the
+/// one in force there if any: one at a time. The new log context is opened at the
 /// root, not inside the one it replaces.
 pub async fn set(
     daemon: &DaemonProxy,
@@ -183,12 +185,13 @@ pub async fn set(
             daemon.request("POST", &format!("/repos/{repo}/contexts"), Some(body)).await?;
         if response.status >= 300 {
             return Err(crate::daemon_proxy::error_message(&response.body, || {
-                format!("opening the label failed with status {}", response.status)
+                format!("opening the log context failed with status {}", response.status)
             }));
         }
-        let label = response.body["id"].as_i64().ok_or("the daemon answered no label id")?;
+        let log_context =
+            response.body["id"].as_i64().ok_or("the daemon answered no log context id")?;
         let context = WorkContext {
-            log_context: label,
+            log_context: log_context,
             name: name.to_string(),
             description: description.map(str::to_string),
         };
@@ -229,7 +232,7 @@ pub async fn unset(daemon: &DaemonProxy, repo: &str) -> Result<Option<WorkContex
 
 /// What `repo`, being opened, has to offer back: the context remembered in its
 /// file, when it is not in force already — checked against the daemon, since
-/// the label may have been pruned since; a gone one is forgotten.
+/// the log context may have been pruned since; a gone one is forgotten.
 pub async fn pending(daemon: &DaemonProxy, repo: &str) -> Result<Pending, String> {
     if active(repo).is_some() {
         return Ok(Pending::None);
@@ -245,7 +248,7 @@ pub async fn pending(daemon: &DaemonProxy, repo: &str) -> Result<Pending, String
             Ok(Pending::Gone(context))
         }
         status => Err(crate::daemon_proxy::error_message(&response.body, || {
-            format!("reading label {} failed with status {status}", context.log_context)
+            format!("reading log context {} failed with status {status}", context.log_context)
         })),
     }
 }

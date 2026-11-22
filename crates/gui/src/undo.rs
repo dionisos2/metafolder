@@ -1,10 +1,10 @@
 //! `log:undo` / `log:redo` (doc "Log commands in the GUI", doc "Undo
-//! and redo by label"): undo a label of the newest change the *user* made to
-//! the active repository, and take a label of the newest undo back. And
+//! and redo by log context"): undo a log context of the newest change the *user* made to
+//! the active repository, and take a log context of the newest undo back. And
 //! `log:rollback` (doc "Rollback"): go back to the state at a time.
 //!
 //! The selection is [`metafolder_core::undo`]'s, shared with `mf log
-//! undo`/`redo`: the labels the newest change still standing (the newest undo)
+//! undo`/`redo`: the log contexts the newest change still standing (the newest undo)
 //! was written in, innermost first. The shell asks which when there are several
 //! ([`log_candidates`]); this module carries the revert out and reports it —
 //! the watcher's operations are left where they are.
@@ -49,7 +49,7 @@ async fn selection(
     Ok(None)
 }
 
-/// Undoes (redoes) `label`, or — none named — the one label the newest change
+/// Undoes (redoes) `log_context`, or — none named — the one log context the newest change
 /// (undo) was written in. When it was written in several, nothing is done and
 /// the status says so: the shell asks which before calling this
 /// ([`log_candidates`]).
@@ -58,13 +58,13 @@ pub async fn navigate(
     daemon: Arc<DaemonProxy>,
     ws_id: String,
     redo: bool,
-    label: Option<i64>,
+    log_context: Option<i64>,
     timeouts: crate::commands::StatusTimeouts,
 ) -> Result<(), String> {
     let repo = gui.active_repo(&ws_id)?;
     let verb = if redo { "redo" } else { "undo" };
-    let label = match label {
-        Some(label) => label,
+    let log_context = match log_context {
+        Some(log_context) => log_context,
         None => match selection(&daemon, &repo, redo).await? {
             None => {
                 let text = format!("Nothing to {verb}.");
@@ -76,7 +76,7 @@ pub async fn navigate(
             }
             Some(selection) => {
                 let text = format!(
-                    "Several labels to {verb}: {} — name one (log:{verb} <label>).",
+                    "Several log contexts to {verb}: {} — name one (log:{verb} <log context>).",
                     selection.describe().join(" · ")
                 );
                 gui.post_status(&ws_id, &text, "info", Some(timeouts.message_ms))?;
@@ -84,7 +84,7 @@ pub async fn navigate(
             }
         },
     };
-    revert(&gui, &daemon, &ws_id, &repo, label, redo, &timeouts).await
+    revert(&gui, &daemon, &ws_id, &repo, log_context, redo, &timeouts).await
 }
 
 /// The GUI's move policies. It asks nothing while the lock is held — a window
@@ -170,7 +170,7 @@ async fn revert(
     let summary = match response["log_context"].as_i64() {
         None => "Nothing was reverted.".to_string(),
         Some(_) => format!(
-            "{} label {log_context_id} ({count} operations) — the daemon's own operations were \
+            "{} log context {log_context_id} ({count} operations) — the daemon's own operations were \
              left in place.",
             if redo { "Redid" } else { "Undid" }
         ),
@@ -206,12 +206,13 @@ pub async fn log_navigate(
     app: tauri::State<'_, Arc<crate::commands::App>>,
     ws_id: String,
     redo: bool,
-    label: Option<i64>,
+    log_context: Option<i64>,
 ) -> Result<(), String> {
-    navigate(app.gui.clone(), app.daemon.clone(), ws_id, redo, label, app.status_timeouts()).await
+    navigate(app.gui.clone(), app.daemon.clone(), ws_id, redo, log_context, app.status_timeouts())
+        .await
 }
 
-/// The labels `log:undo` (`log:redo`) would take back, innermost first:
+/// The log contexts `log:undo` (`log:redo`) would take back, innermost first:
 /// `[{"id", "name"}]`, empty when there is nothing to undo.
 #[tauri::command]
 pub async fn log_candidates(
@@ -231,7 +232,7 @@ pub async fn log_candidates(
 
 /// The log panel's `log:revert`: writes the inverse of `target` at HEAD, files
 /// included (`core::coordinated_revert::revert_unplanned`). Answers the daemon's revert response
-/// (`label`, `reverted_operations`, `skipped_operations`) with the `notes`
+/// (`log_context`, `reverted_operations`, `skipped_operations`) with the `notes`
 /// the file actions left. The panel reads the plan and confirms an overwrite
 /// of a cell changed since before it gets here.
 #[tauri::command]

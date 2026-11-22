@@ -1,4 +1,4 @@
-// The log panel goes into a label, the way path-ref goes into a node (doc "log
+// The log panel goes into a log context, the way path-ref goes into a node (doc "log
 // panel", doc "Opening a row"): it lists one level at a time — the units of
 // work, then what one holds, down to the operations — with a breadcrumb back
 // out. A row's ↘ button goes into it; a click only selects; no double click.
@@ -32,9 +32,9 @@ function shadowFor(): ShadowRoot {
 type Handler = (...args: string[]) => unknown;
 
 const ENTITY = 'e'.repeat(32);
-const op = (id: number, label: number) => ({
+const op = (id: number, logContext: number) => ({
   id,
-  log_context_id: label,
+  log_context_id: logContext,
   op_type: 'set_field',
   origin: null,
   reverts_op_id: null,
@@ -43,8 +43,8 @@ const op = (id: number, label: number) => ({
   entity_uuid: null,
 });
 /** What `GET /log/contexts/:id?op=` answers: the operation with its snapshots. */
-const DETAIL = (id: number, label: number) => ({
-  log_context: { id: label, name: 'mf tag add', created: 0, is_head: false, operation_count: 2 },
+const DETAIL = (id: number, logContext: number) => ({
+  log_context: { id: logContext, name: 'mf tag add', created: 0, is_head: false, operation_count: 2 },
   operations: [
     {
       id,
@@ -59,8 +59,8 @@ const DETAIL = (id: number, label: number) => ({
     },
   ],
 });
-/** A label as `GET /log/contexts` summarises it (doc "Log context summaries"). */
-const label = (id: number, name: string, extra: Record<string, unknown> = {}) => ({
+/** A log context as `GET /log/contexts` summarises it (doc "Log context summaries"). */
+const logContext = (id: number, name: string, extra: Record<string, unknown> = {}) => ({
   id,
   name,
   description: null,
@@ -84,16 +84,16 @@ const UNITS = {
   head: 12,
   head_log_context: 9,
   log_contexts: [
-    label(9, 'edit', { operations: 1, last_op: 12, is_head: true }),
-    label(1, 'run', { children: 1 }),
+    logContext(9, 'edit', { operations: 1, last_op: 12, is_head: true }),
+    logContext(1, 'run', { children: 1 }),
   ],
   next_before: null,
   total_log_contexts: 4,
 };
-/** What a label holds: the labels nested in it, and its own operations. */
-const NESTED: Record<number, ReturnType<typeof label>[]> = {
-  1: [label(2, 'answer', { parent: 1, children: 1 })],
-  2: [label(3, 'mf tag add', { parent: 2, operations: 2, last_op: 11 })],
+/** What a log context holds: the log contexts nested in it, and its own operations. */
+const NESTED: Record<number, ReturnType<typeof logContext>[]> = {
+  1: [logContext(2, 'answer', { parent: 1, children: 1 })],
+  2: [logContext(3, 'mf tag add', { parent: 2, operations: 2, last_op: 11 })],
   3: [],
   9: [],
 };
@@ -176,7 +176,7 @@ async function settle() {
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
 }
 
-describe('log panel: going into a label', () => {
+describe('log panel: going into a log context', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
     document.body.replaceChildren();
@@ -187,7 +187,7 @@ describe('log panel: going into a label', () => {
     expect(p.rows()).toEqual(['#9 edit', '#1 run']);
   });
 
-  test("a label's ↘ button lists what it holds, and the breadcrumb says where", async () => {
+  test("a log context's ↘ button lists what it holds, and the breadcrumb says where", async () => {
     const p = await mountPanel();
     p.rowWith('run').querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
     await settle();
@@ -286,7 +286,7 @@ describe('log panel: going into a label', () => {
     expect(p.rows()).toEqual(['#9 edit', '#1 run']);
   });
 
-  test('reverting one operation from a label goes to where that operation is listed', async () => {
+  test('reverting one operation from a log context goes to where that operation is listed', async () => {
     const p = await mountPanel();
     await p.run('cursor:first'); // #9 edit: one operation
     p.api.daemon.call.mockResolvedValueOnce({ operations: [] } as never); // the plan: nothing
@@ -317,20 +317,20 @@ describe('log panel: after a revert', () => {
   });
 });
 
-describe('log panel: no operation is read until a label is gone into', () => {
+describe('log panel: no operation is read until a log context is gone into', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
     document.body.replaceChildren();
   });
 
-  test('the top level asks for label summaries only', async () => {
+  test('the top level asks for log context summaries only', async () => {
     const p = await mountPanel();
     const urls = p.api.daemon.call.mock.calls.map((c) => c[1]);
     expect(urls).toContain('/repos/r/log/contexts?limit=100');
     expect(urls.some((u) => /\/log\?|\/log\/contexts\/\d/.test(u))).toBe(false);
   });
 
-  test('going into a label reads what it holds: its labels and the newest of its operations', async () => {
+  test('going into a log context reads what it holds: its log contexts and the newest of its operations', async () => {
     const p = await mountPanel();
     p.rowWith('edit').querySelector<HTMLButtonElement>('button.mf-open-enter')!.click();
     await settle();
@@ -344,12 +344,12 @@ describe('log panel: no operation is read until a label is gone into', () => {
     const p = await mountPanel({
       ...UNITS,
       log_contexts: [
-        label(12, 'undo 9', {
+        logContext(12, 'undo 9', {
           operations: 1,
           reverts: [{ log_context: 9, whole: true }],
           is_head: true,
         }),
-        label(9, 'edit', {
+        logContext(9, 'edit', {
           operations: 1,
           undone: 'fully',
           reverted_by: [{ log_context: 12, whole: true }],
@@ -364,8 +364,8 @@ describe('log panel: no operation is read until a label is gone into', () => {
     expect(p.rowWith('edit').classList.contains('undone-row')).toBe(true);
   });
 
-  test('a unit holding the HEAD operation in a nested label is marked HEAD', async () => {
-    // The HEAD operation is in label #3, nested in #2, nested in #1.
+  test('a unit holding the HEAD operation in a nested log context is marked HEAD', async () => {
+    // The HEAD operation is in log context #3, nested in #2, nested in #1.
     const p = await mountPanel({ ...UNITS, head_log_context: 3 }, [2, 1]);
     const badges = (name: string) =>
       [...p.rowWith(name).querySelectorAll('.badge')].map((b) => b.textContent);

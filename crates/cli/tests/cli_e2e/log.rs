@@ -3,7 +3,7 @@ use super::*;
 // ── Event log: mf log / mf log show / mf prune (doc "Event log") ─────────────────
 
 #[test]
-fn test_log_lists_labels_most_recent_first() {
+fn test_log_lists_log_contexts_most_recent_first() {
     let (repo, _root) = init_repo("log_list");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
@@ -14,7 +14,7 @@ fn test_log_lists_labels_most_recent_first() {
     assert!(out.stdout.contains("\u{2190} HEAD"), "stdout: {}", out.stdout);
     let first = out.stdout.lines().next().unwrap();
     assert!(first.starts_with('>') && first.contains("\u{2190} HEAD"), "first line: {first}");
-    assert!(out.stdout.contains("label "), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("log context "), "stdout: {}", out.stdout);
 }
 
 #[test]
@@ -37,23 +37,23 @@ fn test_log_show_displays_what_the_operation_replaced() {
 
     let out = mf(&["-u", &repo, "log", "show", "HEAD"]);
     assert_ok(&out);
-    assert!(out.stdout.starts_with("Label "), "stdout: {}", out.stdout);
+    assert!(out.stdout.starts_with("Log context "), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("set_field(rating)"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("before:  3"), "stdout: {}", out.stdout);
     // The log keeps no state a write left.
     assert!(!out.stdout.contains("after:"), "stdout: {}", out.stdout);
 
-    // --raw prints JSON with the label object.
+    // --raw prints JSON with the log context object.
     let raw = mf(&["-u", &repo, "log", "show", "HEAD", "--raw"]);
     assert_ok(&raw);
     let parsed: serde_json::Value = serde_json::from_str(&raw.stdout).unwrap();
     assert!(parsed["log_context"]["is_head"].as_bool().unwrap());
 }
 
-/// A label with no operation of its own says so, rather than stopping after
+/// A log context with no operation of its own says so, rather than stopping after
 /// its header as if something had failed.
 #[test]
-fn test_log_show_says_when_a_label_holds_no_operation() {
+fn test_log_show_says_when_a_log_context_holds_no_operation() {
     let (repo, _root) = init_repo("log_show_empty");
     let out = mf(&["-u", &repo, "context", "new", "run"]);
     assert_ok(&out);
@@ -64,7 +64,7 @@ fn test_log_show_says_when_a_label_holds_no_operation() {
     assert_ok(&out);
     assert!(out.stdout.contains("(empty: no operation)"), "stdout: {}", out.stdout);
 
-    // Its writes are in the labels of the commands run inside it.
+    // Its writes are in the log contexts of the commands run inside it.
     let envs = [("METAFOLDER_LOG_CONTEXT", context.as_str())];
     assert_ok(&mf_full(&["-u", &repo, "metarecord", "add", "rating:int=3"], None, &envs, true));
     let child = mf(&["-u", &repo, "log", "show", "HEAD", "--raw"]);
@@ -74,7 +74,8 @@ fn test_log_show_says_when_a_label_holds_no_operation() {
     let out = mf(&["-u", &repo, "log", "show", run]);
     assert_ok(&out);
     assert!(
-        out.stdout.contains(&format!("(no operation of its own: see its sub-label {child})")),
+        out.stdout
+            .contains(&format!("(no operation of its own: see its nested log context {child})")),
         "stdout: {}",
         out.stdout
     );
@@ -204,9 +205,10 @@ fn oldest_revision_with_rating(repo: &str) -> String {
         .stdout
         .lines()
         .filter_map(|line| {
+            // `… log context <id> …`
             let mut it = line.split_whitespace();
             while let Some(token) = it.next() {
-                if token == "label" {
+                if token == "context" {
                     return it.next().map(str::to_string);
                 }
             }
@@ -342,13 +344,13 @@ fn test_log_undo_reverts_the_last_manual_revision() {
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
-    // Without a label, undo names the labels it could take back: the
+    // Without a log context, undo names the log contexts it could take back: the
     // command that wrote the change, innermost first.
     let plan = mf(&["-u", &repo, "log", "undo"]);
     assert_ok(&plan);
     assert!(plan.stdout.contains("field set rating:int=5"), "stdout: {}", plan.stdout);
-    let label = first_candidate(&plan.stdout).expect("a candidate");
-    let plan = mf(&["-u", &repo, "log", "undo", "plan", &label]);
+    let log_context = first_candidate(&plan.stdout).expect("a candidate");
+    let plan = mf(&["-u", &repo, "log", "undo", "plan", &log_context]);
     assert_ok(&plan);
     assert!(plan.stdout.contains("set_field(rating)"), "stdout: {}", plan.stdout);
     // A plan writes nothing.
@@ -629,17 +631,17 @@ fn test_both_repo_selectors_from_the_environment_are_refused() {
 
 // ── Contexts (doc "Log contexts") ─────────────────────────────────────
 
-/// `mf log show HEAD --raw`: the newest operation's label.
+/// `mf log show HEAD --raw`: the newest operation's log context.
 fn head_log_context(repo: &str, envs: &[(&str, &str)]) -> serde_json::Value {
     let out = mf_full(&["-u", repo, "log", "show", "HEAD", "--raw"], None, envs, true);
     assert_ok(&out);
     serde_json::from_str::<serde_json::Value>(&out.stdout).unwrap()["log_context"].clone()
 }
 
-/// A command writes in a label of its own, named after its command line,
+/// A command writes in a log context of its own, named after its command line,
 /// inside the context `mf context new` opened and `METAFOLDER_LOG_CONTEXT` passes on.
 #[test]
-fn test_a_command_writes_in_its_own_label_inside_the_context() {
+fn test_a_command_writes_in_its_own_log_context_inside_the_context() {
     let (repo, _root) = init_repo("label_context");
     let out = mf(&["-u", &repo, "context", "new", "tag run", "all the photos"]);
     assert_ok(&out);
@@ -649,10 +651,13 @@ fn test_a_command_writes_in_its_own_label_inside_the_context() {
 
     let out = mf_full(&["-u", &repo, "metarecord", "add", "rating:int=3"], None, &envs, true);
     assert_ok(&out);
-    let label = head_log_context(&repo, &[]);
-    assert_eq!(label["parent"].as_i64().unwrap().to_string(), run, "{label}");
-    assert!(label["name"].as_str().unwrap().contains("metarecord add rating:int=3"), "{label}");
-    assert_eq!(label["ancestors"][0]["description"], "all the photos");
+    let log_context = head_log_context(&repo, &[]);
+    assert_eq!(log_context["parent"].as_i64().unwrap().to_string(), run, "{log_context}");
+    assert!(
+        log_context["name"].as_str().unwrap().contains("metarecord add rating:int=3"),
+        "{log_context}"
+    );
+    assert_eq!(log_context["ancestors"][0]["description"], "all the photos");
 
     // `mf context show` names the context it runs in.
     let out = mf_full(&["-u", &repo, "context", "show"], None, &envs, true);
@@ -670,10 +675,14 @@ fn test_a_command_writes_in_its_own_label_inside_the_context() {
         true,
     );
     assert_ok(&out);
-    let label = head_log_context(&repo, &[]);
+    let log_context = head_log_context(&repo, &[]);
     let answer_id = answer.split_once(':').unwrap().1;
-    assert_eq!(label["parent"].as_i64().unwrap().to_string(), answer_id, "{label}");
-    assert_eq!(label["ancestors"][1]["id"].as_i64().unwrap().to_string(), run, "{label}");
+    assert_eq!(log_context["parent"].as_i64().unwrap().to_string(), answer_id, "{log_context}");
+    assert_eq!(
+        log_context["ancestors"][1]["id"].as_i64().unwrap().to_string(),
+        run,
+        "{log_context}"
+    );
 
     // `mf context parent` names the context the current one is in: the run,
     // and `0` at the root.
@@ -718,24 +727,24 @@ fn test_a_context_is_not_sent_to_another_repository() {
     assert_eq!(out.code, 2, "a malformed context is a usage error: {}", out.stderr);
 }
 
-/// The innermost label `mf log undo`/`redo` offers in `listing`.
+/// The innermost log context `mf log undo`/`redo` offers in `listing`.
 fn first_candidate(listing: &str) -> Option<String> {
     listing.lines().skip(1).find_map(|l| l.split_whitespace().next()).map(str::to_string)
 }
 
-/// `mf log undo` (or `redo`) of the innermost label it offers — what a
-/// single-label change asks for. The listing when there is nothing to take
+/// `mf log undo` (or `redo`) of the innermost log context it offers — what a
+/// single-log context change asks for. The listing when there is nothing to take
 /// back.
 pub(super) fn take_back(repo: &str, verb: &str, extra: &[&str]) -> Out {
     let listing = mf(&["-u", repo, "log", verb]);
     assert_ok(&listing);
-    let Some(label) = first_candidate(&listing.stdout) else { return listing };
-    let mut args = vec!["-u", repo, "log", verb, label.as_str()];
+    let Some(log_context) = first_candidate(&listing.stdout) else { return listing };
+    let mut args = vec!["-u", repo, "log", verb, log_context.as_str()];
     args.extend_from_slice(extra);
     mf(&args)
 }
 
-/// Undo offers every label the newest change is in, innermost first: the
+/// Undo offers every log context the newest change is in, innermost first: the
 /// command, then the context it ran in. Undoing the context takes back every
 /// command of it (doc "Undo and redo by log context").
 #[test]
@@ -823,10 +832,10 @@ fn test_log_rollback_needs_a_time() {
 
 // ── `mf log contexts` (doc "Log context summaries") ────────────────────────────────
 
-/// The labels, newest first, each with its operations counted and what an undo
+/// The log contexts, newest first, each with its operations counted and what an undo
 /// of it says — read without the operations being.
 #[test]
-fn test_log_labels_lists_summaries_and_marks_an_undo() {
+fn test_log_log_contexts_lists_summaries_and_marks_an_undo() {
     let (repo, _root) = init_repo("log_labels");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
@@ -842,11 +851,16 @@ fn test_log_labels_lists_summaries_and_marks_an_undo() {
     let out = mf(&["-u", &repo, "log", "contexts"]);
     assert_ok(&out);
     assert!(out.stdout.contains("[undone]"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("[undoes label "), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("[undoes log context "), "stdout: {}", out.stdout);
 
     // A limit shows that many, and says there are more.
     let out = mf(&["-u", &repo, "log", "contexts", "--limit", "1"]);
     assert_ok(&out);
-    assert_eq!(out.stdout.lines().filter(|l| l.contains("label ")).count(), 1, "{}", out.stdout);
+    assert_eq!(
+        out.stdout.lines().filter(|l| l.contains("log context ")).count(),
+        1,
+        "{}",
+        out.stdout
+    );
     assert!(out.stdout.contains("more"), "stdout: {}", out.stdout);
 }

@@ -182,7 +182,7 @@ describe('a shell line dispatched in a context', () => {
     expect(await dispatch('!echo hi', context)).toEqual({ ok: true });
     const runs = tauri.filter((c) => c.cmd === 'run_shell');
     expect(runs).toEqual([
-      { cmd: 'run_shell', args: { wsId: 'ws-2', commandLine: 'echo hi', label: null, typed: true } },
+      { cmd: 'run_shell', args: { wsId: 'ws-2', commandLine: 'echo hi', logContext: null, typed: true } },
     ]);
   });
 });

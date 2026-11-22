@@ -1,10 +1,10 @@
-//! The GUI's work context (doc "The GUI's work context"): a label the user
+//! The GUI's work context (doc "The GUI's work context"): a log context the user
 //! opens on a repository, carried by every later request to that repository
 //! (`X-Metafolder-Log-Context`) until it is closed, and remembered in the
 //! repository's `.metafolder/gui/context` so a restart can offer it back.
 //!
 //! A stub daemon on an ephemeral port serves the repository listing and the
-//! label routes, and records the label each write was sent in.
+//! log context routes, and records the log context each write was sent in.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -23,18 +23,18 @@ mod common;
 
 #[derive(Default)]
 struct Stub {
-    /// The labels that exist; a prune removes one.
-    labels: HashSet<i64>,
+    /// The log contexts that exist; a prune removes one.
+    log_contexts: HashSet<i64>,
     next: i64,
-    /// The label header of each label creation, in order.
+    /// The log context header of each log context creation, in order.
     created_in: Vec<Option<String>>,
-    /// The label header of each write, in order.
+    /// The log context header of each write, in order.
     writes_in: Vec<Option<String>>,
 }
 
 type Shared = Arc<Mutex<Stub>>;
 
-fn label_of(headers: &HeaderMap) -> Option<String> {
+fn log_context_of(headers: &HeaderMap) -> Option<String> {
     headers.get(LOG_CONTEXT_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string)
 }
 
@@ -51,20 +51,20 @@ async fn spawn_stub(repo: &str, metafolder: PathBuf) -> (String, Shared) {
             "/repos/{repo}/contexts",
             post(move |headers: HeaderMap, Json(body): Json<Value>| async move {
                 let mut stub = create.lock().unwrap();
-                stub.created_in.push(label_of(&headers));
+                stub.created_in.push(log_context_of(&headers));
                 stub.next += 1;
                 let id = stub.next;
-                stub.labels.insert(id);
+                stub.log_contexts.insert(id);
                 Json(json!({"id": id, "name": body["name"], "parent": null}))
             }),
         )
         .route(
             "/repos/{repo}/contexts/{id}",
             get(move |Path((_, id)): Path<(String, i64)>| async move {
-                if read.lock().unwrap().labels.contains(&id) {
+                if read.lock().unwrap().log_contexts.contains(&id) {
                     (StatusCode::OK, Json(json!({"id": id})))
                 } else {
-                    (StatusCode::NOT_FOUND, Json(json!({"error": format!("no label {id}")})))
+                    (StatusCode::NOT_FOUND, Json(json!({"error": format!("no log context {id}")})))
                 }
             }),
         )
@@ -72,12 +72,13 @@ async fn spawn_stub(repo: &str, metafolder: PathBuf) -> (String, Shared) {
             "/repos/{repo}/metarecords",
             post(move |headers: HeaderMap| async move {
                 let mut stub = write.lock().unwrap();
-                let label = label_of(&headers);
-                stub.writes_in.push(label.clone());
-                match label.map(|l| l.parse::<i64>().unwrap()) {
-                    Some(id) if !stub.labels.contains(&id) => {
-                        (StatusCode::BAD_REQUEST, Json(json!({"error": format!("no label {id}")})))
-                    }
+                let log_context = log_context_of(&headers);
+                stub.writes_in.push(log_context.clone());
+                match log_context.map(|l| l.parse::<i64>().unwrap()) {
+                    Some(id) if !stub.log_contexts.contains(&id) => (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": format!("no log context {id}")})),
+                    ),
                     _ => (StatusCode::OK, Json(json!({}))),
                 }
             }),
@@ -122,11 +123,11 @@ async fn a_context_set_is_carried_by_every_write_to_its_repository_until_unset()
     assert_eq!(work_context::active(&repo), Some(opened.clone()));
 
     assert_eq!(write(&proxy, &repo).await, 200);
-    // Another repository's requests carry nothing: a label id means nothing there.
+    // Another repository's requests carry nothing: a log context id means nothing there.
     let other = uuid::Uuid::new_v4().simple().to_string();
     let _ = proxy.request("POST", &format!("/repos/{other}/metarecords"), None).await;
 
-    // One at a time: setting another closes the first, and the new label is
+    // One at a time: setting another closes the first, and the new log context is
     // not opened inside it.
     let second = work_context::set(&proxy, &repo, "tagging", Some("the 2024 trip")).await.unwrap();
     assert_eq!(second.log_context, 2);
@@ -180,11 +181,11 @@ async fn a_remembered_context_is_offered_back_and_resumed() {
 }
 
 #[tokio::test]
-async fn a_remembered_context_whose_label_was_pruned_is_dropped() {
+async fn a_remembered_context_whose_log_context_was_pruned_is_dropped() {
     let (repo, metafolder, _root, proxy, stub) = setup("work_context_gone").await;
     work_context::set(&proxy, &repo, "old work", None).await.unwrap();
     work_context::forget(&repo);
-    stub.lock().unwrap().labels.clear();
+    stub.lock().unwrap().log_contexts.clear();
 
     let gone = WorkContext { log_context: 1, name: "old work".into(), description: None };
     assert_eq!(work_context::pending(&proxy, &repo).await.unwrap(), Pending::Gone(gone));
@@ -195,8 +196,8 @@ async fn a_remembered_context_whose_label_was_pruned_is_dropped() {
 async fn a_write_whose_context_was_pruned_meanwhile_is_made_outside_it() {
     let (repo, metafolder, _root, proxy, stub) = setup("work_context_pruned").await;
     work_context::set(&proxy, &repo, "work", None).await.unwrap();
-    // `mf log prune` from a terminal takes the label away during the session.
-    stub.lock().unwrap().labels.clear();
+    // `mf log prune` from a terminal takes the log context away during the session.
+    stub.lock().unwrap().log_contexts.clear();
 
     assert_eq!(write(&proxy, &repo).await, 200, "the write is not lost");
     assert_eq!(work_context::active(&repo), None, "the context is closed");
@@ -223,8 +224,8 @@ async fn every_change_of_a_context_is_signalled() {
 }
 
 #[test]
-fn a_file_naming_its_log_context_label_is_still_read() {
-    // Before the log's "label" was renamed "log context" (November 2026).
+fn a_file_naming_its_log_context_log_context_is_still_read() {
+    // Before the log's "log context" was renamed "log context" (November 2026).
     let root = common::TempDir::new("work_context_label_file");
     std::fs::create_dir_all(root.join("gui")).unwrap();
     std::fs::write(root.join("gui/context"), r#"{"label": 3, "name": "n", "description": "d"}"#)
@@ -253,7 +254,7 @@ fn a_file_without_a_description_is_still_read() {
 }
 
 #[test]
-fn the_file_holds_the_label_and_its_name() {
+fn the_file_holds_the_log_context_and_its_name() {
     let root = common::TempDir::new("work_context_file");
     let context =
         WorkContext { log_context: 42, name: "a name".into(), description: Some("why".into()) };

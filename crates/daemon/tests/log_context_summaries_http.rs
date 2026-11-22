@@ -1,4 +1,4 @@
-//! `GET /repos/:repo/log/contexts`: the labels of the log with what is known of
+//! `GET /repos/:repo/log/contexts`: the log contexts of the log with what is known of
 //! each without reading an operation (doc "Log context summaries").
 
 use axum::body::Body;
@@ -63,7 +63,7 @@ impl Repo {
         value
     }
 
-    async fn labels(&self, query: &str) -> Value {
+    async fn log_contexts(&self, query: &str) -> Value {
         self.call("GET", &format!("/log/contexts{query}"), None).await
     }
 }
@@ -84,10 +84,10 @@ async fn make_records(r: &Repo, n: usize) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn the_summaries_say_how_many_operations_a_label_holds_and_what_reverts_it() {
+async fn the_summaries_say_how_many_operations_a_log_context_holds_and_what_reverts_it() {
     let r = setup("summaries").await;
     let uuids = make_records(&r, 12).await;
-    // A write to many records: one label, twelve operations, one stub.
+    // A write to many records: one log context, twelve operations, one stub.
     r.call(
         "POST",
         "/query/fields/add",
@@ -96,7 +96,7 @@ async fn the_summaries_say_how_many_operations_a_label_holds_and_what_reverts_it
     )
     .await;
 
-    let listed = r.labels("?limit=5").await;
+    let listed = r.log_contexts("?limit=5").await;
     let mass = listed["log_contexts"][0].clone();
     assert_eq!(mass["operations"], json!(12), "{mass}");
     assert_eq!(mass["is_head"], json!(true));
@@ -107,11 +107,11 @@ async fn the_summaries_say_how_many_operations_a_label_holds_and_what_reverts_it
     assert!(mass["first_op"].as_i64().unwrap() < mass["last_op"].as_i64().unwrap());
     let mass_id = mass["id"].as_i64().unwrap();
 
-    // Undone whole: the undo says what it reverts, the label says it is undone.
+    // Undone whole: the undo says what it reverts, the log context says it is undone.
     let undo =
         r.call("POST", "/revert", Some(json!({"target": {"log_context_id": mass_id}}))).await;
     let undo_id = undo["log_context"].as_i64().unwrap();
-    let listed = r.labels("?limit=5").await;
+    let listed = r.log_contexts("?limit=5").await;
     let by_id = |id: i64| {
         listed["log_contexts"]
             .as_array()
@@ -129,7 +129,7 @@ async fn the_summaries_say_how_many_operations_a_label_holds_and_what_reverts_it
     // The undo undone (a redo): the first change stands again.
     let redo =
         r.call("POST", "/revert", Some(json!({"target": {"log_context_id": undo_id}}))).await;
-    let listed = r.labels("?limit=5").await;
+    let listed = r.log_contexts("?limit=5").await;
     let by_id = |id: i64| {
         listed["log_contexts"]
             .as_array()
@@ -145,21 +145,21 @@ async fn the_summaries_say_how_many_operations_a_label_holds_and_what_reverts_it
 }
 
 #[tokio::test]
-async fn one_operation_undone_marks_its_label_partly() {
+async fn one_operation_undone_marks_its_log_context_partly() {
     let r = setup("partly").await;
     let uuids = make_records(&r, 3).await;
-    let label = r.labels("?limit=1").await["log_contexts"][0]["id"].as_i64().unwrap();
-    // `uuids` were created one label each; set a field on two of them in one label.
+    let log_context = r.log_contexts("?limit=1").await["log_contexts"][0]["id"].as_i64().unwrap();
+    // `uuids` were created one log context each; set a field on two of them in one log context.
     let _ = uuids;
-    let log = r.call("GET", &format!("/log/contexts/{label}"), None).await;
+    let log = r.call("GET", &format!("/log/contexts/{log_context}"), None).await;
     let op = log["operations"][0]["id"].as_i64().unwrap();
     r.call("POST", "/revert", Some(json!({"target": {"op_ids": [op]}}))).await;
-    let listed = r.labels("?limit=5").await;
+    let listed = r.log_contexts("?limit=5").await;
     let this = listed["log_contexts"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|l| l["id"] == json!(label))
+        .find(|l| l["id"] == json!(log_context))
         .unwrap();
     assert_eq!(this["undone"], json!("partly"), "{this}");
 }
@@ -168,7 +168,7 @@ async fn one_operation_undone_marks_its_label_partly() {
 async fn the_summaries_page_newest_first() {
     let r = setup("paging").await;
     make_records(&r, 7).await;
-    let all = r.labels("?limit=500").await;
+    let all = r.log_contexts("?limit=500").await;
     let ids: Vec<i64> =
         all["log_contexts"].as_array().unwrap().iter().map(|l| l["id"].as_i64().unwrap()).collect();
     assert!(ids.windows(2).all(|w| w[0] > w[1]), "newest first: {ids:?}");
@@ -177,7 +177,7 @@ async fn the_summaries_page_newest_first() {
     let mut paged = Vec::new();
     let mut before = String::new();
     loop {
-        let page = r.labels(&format!("?limit=3{before}")).await;
+        let page = r.log_contexts(&format!("?limit=3{before}")).await;
         paged.extend(
             page["log_contexts"].as_array().unwrap().iter().map(|l| l["id"].as_i64().unwrap()),
         );
@@ -187,13 +187,13 @@ async fn the_summaries_page_newest_first() {
         }
     }
     assert_eq!(paged, ids);
-    // A label with nothing nested in it lists nothing under it.
-    let kids = r.labels(&format!("?parent={}", ids[0])).await;
+    // A log context with nothing nested in it lists nothing under it.
+    let kids = r.log_contexts(&format!("?parent={}", ids[0])).await;
     assert_eq!(kids["log_contexts"], json!([]));
 }
 
 #[tokio::test]
-async fn the_label_detail_counts_without_making_up_the_operations() {
+async fn the_log_context_detail_counts_without_making_up_the_operations() {
     let r = setup("detail").await;
     let uuids = make_records(&r, 12).await;
     r.call(
@@ -203,15 +203,16 @@ async fn the_label_detail_counts_without_making_up_the_operations() {
                     "value": {"type": "string", "value": "jazz"}})),
     )
     .await;
-    let label = r.labels("?limit=1").await["log_contexts"][0]["id"].as_i64().unwrap();
-    let detail = r.call("GET", &format!("/log/contexts/{label}?offset=2&limit=3"), None).await;
+    let log_context = r.log_contexts("?limit=1").await["log_contexts"][0]["id"].as_i64().unwrap();
+    let detail =
+        r.call("GET", &format!("/log/contexts/{log_context}?offset=2&limit=3"), None).await;
     assert_eq!(detail["log_context"]["operation_count"], json!(12));
     assert_eq!(detail["log_context"]["is_head"], json!(true));
     assert_eq!(detail["operations"].as_array().unwrap().len(), 3);
 }
 
 #[tokio::test]
-async fn the_label_detail_can_give_the_newest_operations_without_their_snapshots() {
+async fn the_log_context_detail_can_give_the_newest_operations_without_their_snapshots() {
     let r = setup("newest").await;
     let uuids = make_records(&r, 12).await;
     r.call(
@@ -221,15 +222,19 @@ async fn the_label_detail_can_give_the_newest_operations_without_their_snapshots
                     "value": {"type": "string", "value": "jazz"}})),
     )
     .await;
-    let label = r.labels("?limit=1").await["log_contexts"][0]["id"].as_i64().unwrap();
-    let all = r.call("GET", &format!("/log/contexts/{label}"), None).await;
+    let log_context = r.log_contexts("?limit=1").await["log_contexts"][0]["id"].as_i64().unwrap();
+    let all = r.call("GET", &format!("/log/contexts/{log_context}"), None).await;
     let ids: Vec<i64> =
         all["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(ids.len(), 12);
     assert!(all["operations"][0].get("snapshots_before").is_some(), "snapshots by default");
 
     let window = r
-        .call("GET", &format!("/log/contexts/{label}?newest=1&offset=2&limit=3&snapshots=0"), None)
+        .call(
+            "GET",
+            &format!("/log/contexts/{log_context}?newest=1&offset=2&limit=3&snapshots=0"),
+            None,
+        )
         .await;
     assert_eq!(window["log_context"]["operation_count"], json!(12));
     let got: Vec<i64> = window["operations"]
@@ -261,14 +266,14 @@ async fn an_empty_context_is_not_listed() {
     let run = r.call("POST", "/contexts", Some(json!({"name": "mf reconcile"}))).await["id"]
         .as_i64()
         .unwrap();
-    assert!(!ids(&r.labels("?limit=50").await).contains(&run), "an empty root is left out");
+    assert!(!ids(&r.log_contexts("?limit=50").await).contains(&run), "an empty root is left out");
 
     let answer = r.call("POST", "/contexts", Some(json!({"name": "answer", "parent": run}))).await
         ["id"]
         .as_i64()
         .unwrap();
-    assert!(!ids(&r.labels("?limit=50").await).contains(&run), "a child that is empty too");
-    assert_eq!(ids(&r.labels(&format!("?parent={run}")).await), Vec::<i64>::new());
+    assert!(!ids(&r.log_contexts("?limit=50").await).contains(&run), "a child that is empty too");
+    assert_eq!(ids(&r.log_contexts(&format!("?parent={run}")).await), Vec::<i64>::new());
 
     // Written in, the answer is listed, and so is the run that holds it.
     let write = Request::builder()
@@ -279,6 +284,6 @@ async fn an_empty_context_is_not_listed() {
         .body(Body::from(json!({"fields": []}).to_string()))
         .unwrap();
     assert_eq!(r.app.clone().oneshot(write).await.unwrap().status(), StatusCode::OK);
-    assert!(ids(&r.labels("?limit=50").await).contains(&run));
-    assert_eq!(ids(&r.labels(&format!("?parent={run}")).await), [answer]);
+    assert!(ids(&r.log_contexts("?limit=50").await).contains(&run));
+    assert_eq!(ids(&r.log_contexts(&format!("?parent={run}")).await), [answer]);
 }

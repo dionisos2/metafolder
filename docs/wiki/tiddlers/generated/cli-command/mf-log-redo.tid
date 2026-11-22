@@ -1,18 +1,18 @@
 title: $:/mf/gen/CLI command/mf log redo
 catalog: CLI command
 target: mf log redo
-summary: Take back the undos of a label of the newest undo still standing (none named: list them)
+summary: Take back the undos of a log context of the newest undo still standing (none named: list them)
 
 !! Reference
 
 ```
-Take back the undos of a label of the newest undo still standing (none named: list them)
+Take back the undos of a log context of the newest undo still standing (none named: list them)
 
 Usage: mf log redo [OPTIONS] [ARGS]...
 
 Arguments:
   [ARGS]...
-          [plan] [LABEL]: "plan" previews; without a label, the candidates are listed
+          [plan] [LOG_CONTEXT]: "plan" previews; without a log context, the candidates are listed
 
 Options:
       --metadata-only

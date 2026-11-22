@@ -96,19 +96,19 @@ impl Fx {
         self.write(|w| w.delete_metarecord(u).unwrap());
     }
 
-    /// A deletion of many records, as one entry; its label.
+    /// A deletion of many records, as one entry; its log context.
     fn mass_delete(&mut self, uuids: &[Uuid]) -> i64 {
         let ids = self.ids(uuids);
         let mut w = Writer::begin(&mut self.store, Some("delete".into())).unwrap();
-        let label = w.log_context_id();
+        let log_context = w.log_context_id();
         w.mass_delete_ids(&ids).unwrap();
         w.commit().unwrap();
-        label
+        log_context
     }
 
-    /// Reverts the operations of `label` that name `only` (all when empty).
-    fn revert_label(&mut self, label: i64, only: &[Uuid]) {
-        let ops: Vec<_> = revert::label_ops(&self.store, label)
+    /// Reverts the operations of `log_context` that name `only` (all when empty).
+    fn revert_log_context(&mut self, log_context: i64, only: &[Uuid]) {
+        let ops: Vec<_> = revert::log_context_ops(&self.store, log_context)
             .unwrap()
             .into_iter()
             .filter(|o| only.is_empty() || only.contains(&o.entity_uuid))
@@ -168,8 +168,8 @@ fn a_mass_deletion_is_given_back_one_record_at_a_time_while_pending() {
     let ids = fx.ids(&fx.files);
     let some = [fx.files[5], fx.files[6]];
     let some_ids = fx.ids(&some);
-    let label = fx.mass_delete(&fx.files.clone());
-    fx.revert_label(label, &some);
+    let log_context = fx.mass_delete(&fx.files.clone());
+    fx.revert_log_context(log_context, &some);
     assert_eq!(fx.ids(&some), some_ids);
     assert_eq!(fx.rows(some[0]), before[2 + 5]);
     assert_eq!(fx.rows(some[1]), before[2 + 6]);
@@ -179,7 +179,7 @@ fn a_mass_deletion_is_given_back_one_record_at_a_time_while_pending() {
     fx.check();
     // The rest, folded, then.
     let rest: Vec<Uuid> = fx.files.iter().copied().filter(|u| !some.contains(u)).collect();
-    fx.revert_label(label, &rest);
+    fx.revert_log_context(log_context, &rest);
     assert_eq!(fx.all_rows(), before);
     assert_eq!(fx.ids(&fx.files), ids);
     fx.check();
@@ -192,12 +192,12 @@ fn a_mass_deletion_is_given_back_at_once_pending_or_folded() {
         let mut fx = fixture(40);
         let before = fx.all_rows();
         let ids = fx.ids(&fx.files);
-        let label = fx.mass_delete(&fx.files.clone());
+        let log_context = fx.mass_delete(&fx.files.clone());
         if folded {
             fx.fold();
         }
         fx.check();
-        fx.revert_label(label, &[]);
+        fx.revert_log_context(log_context, &[]);
         assert_eq!(fx.all_rows(), before, "folded: {folded}");
         assert_eq!(fx.ids(&fx.files), ids, "folded: {folded}");
         fx.check();
@@ -212,16 +212,16 @@ fn marks_cut_by_a_restoration_are_given_back_in_the_end() {
     let before = fx.all_rows();
     let ids = fx.ids(&fx.files);
     let first = fx.mass_delete(&fx.files.clone());
-    fx.revert_label(first, &[fx.files[10]]);
+    fx.revert_log_context(first, &[fx.files[10]]);
     fx.check();
     let pair = fx.files[10..12].to_vec();
     let second = fx.mass_delete(&pair);
     fx.check();
     fx.fold();
     fx.check();
-    fx.revert_label(second, &[]);
+    fx.revert_log_context(second, &[]);
     let rest: Vec<Uuid> = fx.files.iter().copied().filter(|u| *u != fx.files[10]).collect();
-    fx.revert_label(first, &rest);
+    fx.revert_log_context(first, &rest);
     assert_eq!(fx.all_rows(), before);
     assert_eq!(fx.ids(&fx.files), ids);
     fx.check();
@@ -236,12 +236,12 @@ fn a_subtree_deleted_in_bulk_is_given_back() {
         let before = fx.all_rows();
         let mut doomed = fx.files.clone();
         doomed.push(fx.folder);
-        let label = fx.mass_delete(&doomed);
+        let log_context = fx.mass_delete(&doomed);
         if folded {
             fx.fold();
         }
         fx.check();
-        fx.revert_label(label, &[]);
+        fx.revert_log_context(log_context, &[]);
         assert_eq!(fx.all_rows(), before, "folded: {folded}");
         fx.check();
     }
@@ -279,9 +279,9 @@ fn many_cycles_keep_the_id_and_the_indexes() {
         let ids = fx.ids(&fx.files);
         for cycle in 0..3 {
             if mass {
-                let label = fx.mass_delete(&fx.files.clone());
+                let log_context = fx.mass_delete(&fx.files.clone());
                 fx.check();
-                fx.revert_label(label, &[]);
+                fx.revert_log_context(log_context, &[]);
             } else {
                 let head = fx.store.head().unwrap();
                 fx.delete(fx.files[4]);
@@ -327,10 +327,10 @@ fn a_revert_after_a_reindex_gives_the_record_back() {
     let head = fx.store.head().unwrap();
     fx.delete(fx.files[1]);
     let batch = fx.files[10..30].to_vec();
-    let label = fx.mass_delete(&batch);
+    let log_context = fx.mass_delete(&batch);
     fx.store.reindex().unwrap();
     fx.check();
-    let _ = label;
+    let _ = log_context;
     common::kv::revert_since(&mut fx.store, head);
     assert_eq!(fx.all_rows(), before);
     fx.check();
@@ -441,7 +441,7 @@ fn a_bulk_restoration_does_not_take_a_position_back_from_a_live_record() {
     for folded in [false, true] {
         let mut fx = fixture(40);
         let (folder, file) = (fx.folder, fx.files[3]);
-        let label = fx.mass_delete(&fx.files.clone());
+        let log_context = fx.mass_delete(&fx.files.clone());
         if folded {
             fx.fold();
         }
@@ -449,7 +449,7 @@ fn a_bulk_restoration_does_not_take_a_position_back_from_a_live_record() {
             w.create_metarecord(vec![Field::new("loc", tree(folder, "f3.txt"))]).unwrap().uuid
         });
         {
-            let ops = revert::label_ops(&fx.store, label).unwrap();
+            let ops = revert::log_context_ops(&fx.store, log_context).unwrap();
             let mut w = Writer::begin(&mut fx.store, None).unwrap();
             let done = revert::apply(&mut w, &ops);
             assert!(done.is_err() || w.commit().is_err(), "folded: {folded}");
