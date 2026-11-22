@@ -99,8 +99,8 @@ impl DaemonSettings {
     /// The log-retention policy these settings describe.
     pub fn log_retention(&self) -> crate::log::Retention {
         crate::log::Retention {
-            watcher_ops: self.log_retention_watcher_entries,
-            user_ops: self.log_retention_user_entries,
+            watcher_entries: self.log_retention_watcher_entries,
+            user_entries: self.log_retention_user_entries,
         }
     }
 
@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(s.auto_backup_days, 7);
         assert_eq!(
             s.log_retention(),
-            crate::log::Retention { watcher_ops: 50_000, user_ops: 1_000_000 },
+            crate::log::Retention { watcher_entries: 50_000, user_entries: 1_000_000 },
             "history is bounded out of the box, the user's far longer than the watcher's"
         );
     }
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(config.settings.orphan_cascade_limit, 7);
         assert_eq!(
             config.settings.log_retention(),
-            crate::log::Retention { watcher_ops: 500, user_ops: 0 }
+            crate::log::Retention { watcher_entries: 500, user_entries: 0 }
         );
         assert!(config.settings.obsolete().is_empty());
         std::fs::remove_file(&path).unwrap();

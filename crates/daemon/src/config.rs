@@ -169,8 +169,8 @@ impl RepoConfig {
     /// the daemon's settings otherwise.
     pub fn log_retention(&self, daemon: crate::log::Retention) -> crate::log::Retention {
         crate::log::Retention {
-            watcher_ops: self.log_retention_watcher_entries.unwrap_or(daemon.watcher_ops),
-            user_ops: self.log_retention_user_entries.unwrap_or(daemon.user_ops),
+            watcher_entries: self.log_retention_watcher_entries.unwrap_or(daemon.watcher_entries),
+            user_entries: self.log_retention_user_entries.unwrap_or(daemon.user_entries),
         }
     }
 
@@ -266,14 +266,14 @@ mod tests {
 
     #[test]
     fn test_log_retention_defers_to_the_daemon_unless_overridden() {
-        let daemon = crate::log::Retention { watcher_ops: 500, user_ops: 900 };
+        let daemon = crate::log::Retention { watcher_entries: 500, user_entries: 900 };
         let mut config = RepoConfig::new(PathBuf::from("/r"), "r".into());
         assert_eq!(config.log_retention(daemon), daemon, "no override: the daemon decides");
 
         config.log_retention_watcher_entries = Some(20);
         assert_eq!(
             config.log_retention(daemon),
-            crate::log::Retention { watcher_ops: 20, user_ops: 900 }
+            crate::log::Retention { watcher_entries: 20, user_entries: 900 }
         );
     }
 

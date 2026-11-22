@@ -216,7 +216,7 @@ fn trim_cost(big: usize) -> u64 {
     for _ in 0..119 {
         watcher_write(&mut kv, Retention::UNLIMITED);
     }
-    let retention = Retention { watcher_ops: 20, user_ops: 0 };
+    let retention = Retention { watcher_entries: 20, user_entries: 0 };
     let (_, reads) = reads_of(&mut kv, |kv| watcher_write(kv, retention));
     assert_eq!(kv.counts().unwrap().0, 20 + 2 * big as i64, "the trim kept 20 watcher entries");
     reads

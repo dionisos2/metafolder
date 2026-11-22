@@ -246,7 +246,7 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     use metafolder_daemon::log::Retention;
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 30);
-    let keep = Retention { watcher_ops: 0, user_ops: 5 };
+    let keep = Retention { watcher_entries: 0, user_entries: 5 };
     let mut w = Writer::begin_with_retention(&mut store, Some("mass".into()), keep).unwrap();
     let log_context = w.log_context_id();
     w.mass_add("tag", s("jazz"), &uuids).unwrap();

@@ -409,10 +409,10 @@ enum Mass {
 /// plateau instead of being rewritten whole at every trim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Retention {
-    /// Operations of the watcher to keep. `0` = unlimited.
-    pub watcher_ops: u64,
-    /// Operations of every other origin to keep. `0` = unlimited.
-    pub user_ops: u64,
+    /// Entries of the watcher to keep. `0` = unlimited.
+    pub watcher_entries: u64,
+    /// Entries of every other origin to keep. `0` = unlimited.
+    pub user_entries: u64,
 }
 
 impl Retention {
@@ -420,7 +420,7 @@ impl Retention {
     /// repository actually writes with is the configured one, and a silent
     /// `Retention::default()` meaning "unlimited" would read as agreeing with
     /// it.
-    pub const UNLIMITED: Self = Self { watcher_ops: 0, user_ops: 0 };
+    pub const UNLIMITED: Self = Self { watcher_entries: 0, user_entries: 0 };
 
     /// How far past a limit the log is allowed to drift before a trim runs.
     /// Hysteresis, not sloppiness: trimming one operation per write would
@@ -432,7 +432,7 @@ impl Retention {
     }
 
     pub(crate) fn enabled(&self) -> bool {
-        self.watcher_ops > 0 || self.user_ops > 0
+        self.watcher_entries > 0 || self.user_entries > 0
     }
 }
 

@@ -2913,8 +2913,8 @@ impl WriteTxn for KvTxn<'_> {
         };
         let mut doomed: Vec<i64> = Vec::new();
         for (table, limit) in [
-            (self.t.log_watcher_entries, retention.watcher_ops),
-            (self.t.log_user_entries, retention.user_ops),
+            (self.t.log_watcher_entries, retention.watcher_entries),
+            (self.t.log_user_entries, retention.user_entries),
         ] {
             if limit == 0 {
                 continue;

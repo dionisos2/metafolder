@@ -32,8 +32,8 @@ fn ops(conn: &KvStore, watcher: bool) -> usize {
         .count()
 }
 
-const fn keep(watcher_ops: u64, user_ops: u64) -> Retention {
-    Retention { watcher_ops, user_ops }
+const fn keep(watcher_entries: u64, user_entries: u64) -> Retention {
+    Retention { watcher_entries, user_entries }
 }
 
 #[test]
