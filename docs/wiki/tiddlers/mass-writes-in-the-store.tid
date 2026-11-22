@@ -90,10 +90,15 @@ replayed.
 !! The fold
 
 `KvStore::fold` — and a reindex, and the idle fold ([[Folding in idle time]]) — writes
-the pending index writes into what is stored, oldest first, and empties the list. A
-set or an unset is where its removed values are found: the field's stored values are
-walked for the records it was written on, and the histograms give back the rows they
-held. Until then the histogram of a field with pending index writes counts those rows,
+the pending index writes into what is stored, one chunk of a field at a time
+(`fold_events_chunk`): the field's postings of that chunk are read, every pending
+index write of the chunk is replayed over them in memory, oldest first, they are
+written back and the chunk's pending index writes deleted. A set or an unset is where
+its removed values are found: it names ids, not values, so every value the field has
+in the chunk — a walk of the keys of its postings, not of their bitmaps — loses the
+ids it was written on, and the histograms give back the rows they held; the values it
+adds, like an add or a removal, were counted when it was written. Since chunks name
+disjoint ids, a field folded in some chunks and not in others reads right. Until then the histogram of a field with pending index writes counts those rows,
 so `mf repo check` does not hold it to the rows; the postings are held to them as
 replayed ([[Checking and reindexing a repository]]).
 

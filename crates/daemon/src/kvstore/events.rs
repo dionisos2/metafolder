@@ -480,55 +480,113 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// Writes `field`'s pending events into what is stored, oldest first, and
-    /// empties its list. A replacement is where the values it removed are
-    /// found: the field's stored values are walked for the records it was
-    /// written on.
+    /// Writes `field`'s pending index writes into what is stored, chunk by
+    /// chunk ([`Self::fold_events_chunk`]), and empties its list.
     pub(in super::super) fn fold_events(&self, field: &str) -> Result<()> {
+        for chunk in self.pending_chunks(field)? {
+            self.fold_events_chunk(field, chunk)?;
+        }
+        Ok(())
+    }
+
+    /// Writes `field`'s pending index writes of one chunk of 65 536 ids into
+    /// its postings of that chunk, and deletes them: what one fold step holds
+    /// in memory and how long it lasts are bounded by a chunk (doc "Folding in
+    /// idle time"). Every pending write is replayed, oldest first: a
+    /// replacement removes the ids it names from every value the field has in
+    /// the chunk — it does not name the values it removes — and its histogram
+    /// buckets lose those rows here, the values it adds having been counted
+    /// when it was written (doc "Mass writes in the store").
+    pub(in super::super) fn fold_events_chunk(&self, field: &str, chunk: u16) -> Result<()> {
         let t = self.t;
-        let events = read_events(&t, &self.txn.borrow(), field)?;
+        let prefix = [&name_key(field)[..], &chunk.to_be_bytes()].concat();
+        let (keys, events) = {
+            let txn = self.txn.borrow();
+            let mut keys = Vec::new();
+            let mut events = Vec::new();
+            for entry in t.index_pending_writes.prefix_iter(&txn, &prefix)? {
+                let (k, v) = entry?;
+                keys.push(k.to_vec());
+                events.push(Event::decode(v)?);
+            }
+            (keys, events)
+        };
         if events.is_empty() {
             return Ok(());
         }
+        let mut values = self.values_in_chunk(field, chunk)?;
         for e in &events {
             let valued = e.values.iter().filter(|v| value_key(v).is_some());
             match e.kind {
                 Kind::Add | Kind::Remove => {
-                    for (value, key) in valued.zip(&e.keys) {
-                        let have = self.stored_holders(field, key)?;
-                        let add = e.kind == Kind::Add;
-                        let ids = if add { &e.ids - &have } else { &e.ids & &have };
-                        self.store_holders(field, Some(value), key, &ids, add)?;
+                    let add = e.kind == Kind::Add;
+                    for key in valued.zip(&e.keys).map(|(_, k)| k) {
+                        self.with_chunk(SETS, &posting_prefix(field, key), chunk, &mut |bm| {
+                            if add {
+                                *bm |= &e.ids;
+                            } else {
+                                *bm -= &e.ids;
+                            }
+                        })?;
+                        if add {
+                            values.insert(key.clone());
+                        }
                     }
                 }
                 Kind::Replace => {
-                    for (key, holders) in self.postings_of(field)? {
-                        let gone = &holders & &e.ids;
-                        if gone.is_empty() {
-                            continue;
-                        }
-                        self.store_holders(field, None, &key, &gone, false)?;
-                        self.hist_bump(field, &key, -(gone.len() as i64))?;
+                    for key in &values {
+                        let mut gone = 0;
+                        self.with_chunk(SETS, &posting_prefix(field, key), chunk, &mut |bm| {
+                            gone = bm.intersection_len(&e.ids);
+                            *bm -= &e.ids;
+                        })?;
+                        self.hist_bump(field, key, -(gone as i64))?;
                     }
-                    for (value, key) in valued.zip(&e.keys) {
-                        let have = self.stored_holders(field, key)?;
-                        self.store_holders(field, Some(value), key, &(&e.ids - &have), true)?;
+                    for key in valued.zip(&e.keys).map(|(_, k)| k) {
+                        self.with_chunk(SETS, &posting_prefix(field, key), chunk, &mut |bm| {
+                            *bm |= &e.ids
+                        })?;
+                        values.insert(key.clone());
                     }
                 }
             }
         }
-        let prefix = name_key(field);
         let mut w = self.txn.borrow_mut();
-        let mut keys = Vec::new();
-        for entry in t.index_pending_writes.prefix_iter(&w, &prefix)? {
-            keys.push(entry?.0.to_vec());
-        }
-        for k in keys {
-            t.index_pending_writes.delete(&mut w, &k)?;
+        for k in &keys {
+            t.index_pending_writes.delete(&mut w, k)?;
         }
         drop(w);
-        self.events.borrow_mut().insert(field.to_string(), 0);
+        let left = self.eventful(field)?.saturating_sub(keys.len());
+        self.events.borrow_mut().insert(field.to_string(), left);
         Ok(())
+    }
+
+    /// The value keys `field` has a posting of in `chunk`, as the transaction
+    /// sees them — `nothing` left out, which is the field's `absent` set, kept
+    /// at once. A walk of the keys of the field's postings, not of their
+    /// bitmaps.
+    fn values_in_chunk(&self, field: &str, chunk: u16) -> Result<BTreeSet<Vec<u8>>> {
+        let posted = [&[POSTINGS][..], &name_key(field)].concat();
+        let tail = chunk.to_be_bytes();
+        let mut keys = BTreeSet::new();
+        {
+            let txn = self.txn.borrow();
+            for entry in self.t.sets().prefix_iter(&txn, &posted)? {
+                let k = entry?.0;
+                if k.len() >= posted.len() + 2 && k.ends_with(&tail) {
+                    keys.insert(k[posted.len()..k.len() - 2].to_vec());
+                }
+            }
+        }
+        // The postings this transaction made are not in the table yet.
+        let whole = [&[SETS][..], &posted[..]].concat();
+        for k in self.sets.borrow().keys() {
+            if k.starts_with(&whole) && k.len() >= whole.len() + 2 && k.ends_with(&tail) {
+                keys.insert(k[whole.len()..k.len() - 2].to_vec());
+            }
+        }
+        keys.remove(&[super::super::derived::NOTHING_TAG][..]);
+        Ok(keys)
     }
 
     /// Every value of `field` that has a holder as stored, the transaction's
@@ -634,7 +692,7 @@ impl KvTxn<'_> {
         }
         enum List {
             Part(u32),
-            Events(String),
+            Events(String, u16),
             Grams(String),
         }
         let mut best: Option<(u64, List)> = None;
@@ -652,15 +710,18 @@ impl KvTxn<'_> {
         for (part, size) in parts {
             consider(size, List::Part(part));
         }
-        let mut fields: std::collections::BTreeMap<String, u64> = Default::default();
+        // A field's pending index writes, chunk by chunk: a step folds one.
+        let mut chunks: std::collections::BTreeMap<(String, u16), u64> = Default::default();
         for entry in self.t.index_pending_writes.iter(&self.txn.borrow())? {
             let (k, v) = entry?;
-            let (name, _) = unesc(k)?;
+            let (name, rest) = unesc(k)?;
             let name = String::from_utf8(name).context("a field name")?;
-            *fields.entry(name).or_default() += (k.len() + v.len()) as u64;
+            let chunk = rest.get(..2).context("a chunk in the key")?;
+            let chunk = u16::from_be_bytes(chunk.try_into().expect("two bytes"));
+            *chunks.entry((name, chunk)).or_default() += (k.len() + v.len()) as u64;
         }
-        for (field, size) in fields {
-            consider(size, List::Events(field));
+        for ((field, chunk), size) in chunks {
+            consider(size, List::Events(field, chunk));
         }
         for field in self.gram_fields()? {
             consider(self.gram_fold_size(&field)?, List::Grams(field));
@@ -670,8 +731,135 @@ impl KvTxn<'_> {
             // fold (doc "Log storage").
             None => self.index_log_step(super::super::entry::INDEX_BUDGET),
             Some((_, List::Part(part))) => self.fold_part(part).map(|()| true),
-            Some((_, List::Events(field))) => self.fold_events(&field).map(|()| true),
+            Some((_, List::Events(field, chunk))) => {
+                self.fold_events_chunk(&field, chunk).map(|()| true)
+            }
             Some((_, List::Grams(field))) => self.fold_gram_field(&field).map(|()| true),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use metafolder_core::metarecord::{Field, Value};
+    use uuid::Uuid;
+
+    use super::super::super::{test_store, KvStore, KvTxn, State, TestDir};
+    use super::*;
+    use crate::log::Writer;
+
+    fn s(text: &str) -> Value {
+        Value::String(text.into())
+    }
+
+    /// Twelve records of `tag` `a`, six in the first chunk of ids and six in
+    /// the second, folded; then, pending in both chunks, a set to `b`, an add
+    /// of `c` and a removal of `b` on overlapping ids.
+    fn two_chunks() -> (KvStore, TestDir, Vec<Uuid>) {
+        let (mut store, dir) = test_store();
+        let txn = KvTxn::new(&mut store).unwrap();
+        txn.meta_put(State::NextMetarecordId, (1 << 16) - 6).unwrap();
+        txn.finish().unwrap();
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        let uuids: Vec<Uuid> = (0..12)
+            .map(|_| w.create_metarecord(vec![Field::new("tag", s("a"))]).unwrap().uuid)
+            .collect();
+        w.commit().unwrap();
+        store.fold().unwrap();
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        w.mass_set("tag", vec![s("b")], &uuids[2..10]).unwrap();
+        w.mass_add("tag", s("c"), &uuids[0..8]).unwrap();
+        w.mass_remove("tag", &s("b"), &uuids[4..12]).unwrap();
+        w.commit().unwrap();
+        (store, dir, uuids)
+    }
+
+    /// The chunks `field` has pending index writes in.
+    fn chunks_pending(store: &mut KvStore, field: &str) -> BTreeSet<u16> {
+        let txn = KvTxn::new(store).unwrap();
+        txn.pending_chunks(field).unwrap()
+    }
+
+    /// Each value's holders, as a transaction reads them.
+    fn holders(store: &mut KvStore) -> Vec<RoaringBitmap> {
+        let txn = KvTxn::new(store).unwrap();
+        ["a", "b", "c"]
+            .iter()
+            .map(|v| {
+                let key = value_key(&s(v)).unwrap();
+                txn.effective("tag", &s(v), &key).unwrap()
+            })
+            .collect()
+    }
+
+    fn check(store: &KvStore) {
+        let diff = store.check_derived().unwrap();
+        assert!(diff.is_empty(), "derived data diverges from a rebuild:\n{}", diff.join("\n"));
+    }
+
+    #[test]
+    fn the_fold_of_a_fields_chunk_reads_and_writes_that_chunk_only() {
+        let (mut store, _dir, _) = two_chunks();
+        assert_eq!(chunks_pending(&mut store, "tag"), BTreeSet::from([0, 1]));
+        let txn = KvTxn::new(&mut store).unwrap();
+        txn.fold_events_chunk("tag", 0).unwrap();
+        // The postings of the field the fold loaded: of its chunk only.
+        let posted = [&[SETS, POSTINGS][..], &name_key("tag")].concat();
+        let loaded: BTreeSet<u16> = txn
+            .sets
+            .borrow()
+            .keys()
+            .filter(|k| k.starts_with(&posted))
+            .map(|k| u16::from_be_bytes([k[k.len() - 2], k[k.len() - 1]]))
+            .collect();
+        assert_eq!(loaded, BTreeSet::from([0]), "chunks of the field's postings read");
+        txn.finish().unwrap();
+        assert_eq!(chunks_pending(&mut store, "tag"), BTreeSet::from([1]));
+        check(&store);
+    }
+
+    #[test]
+    fn a_field_reads_the_same_unfolded_half_folded_and_folded() {
+        let (mut store, _dir, _) = two_chunks();
+        let before = holders(&mut store);
+        // a: 0, 1, 10, 11 (the set took the others); b: 2, 3; c: 0 to 7 —
+        // as dense ids, from the first.
+        let first = (1u32 << 16) - 6;
+        let ids = |of: &[u32]| of.iter().map(|i| first + i).collect::<RoaringBitmap>();
+        assert_eq!(
+            before,
+            vec![ids(&[0, 1, 10, 11]), ids(&[2, 3]), ids(&[0, 1, 2, 3, 4, 5, 6, 7])]
+        );
+        let txn = KvTxn::new(&mut store).unwrap();
+        txn.fold_events_chunk("tag", 1).unwrap();
+        txn.finish().unwrap();
+        assert_eq!(holders(&mut store), before, "half folded");
+        check(&store);
+        let txn = KvTxn::new(&mut store).unwrap();
+        txn.fold_events_chunk("tag", 0).unwrap();
+        txn.finish().unwrap();
+        assert_eq!(holders(&mut store), before, "folded");
+        assert!(chunks_pending(&mut store, "tag").is_empty());
+        check(&store);
+    }
+
+    #[test]
+    fn a_fold_step_folds_one_chunk_of_a_field() {
+        let (mut store, _dir, _) = two_chunks();
+        let before = holders(&mut store);
+        let mut seen = vec![chunks_pending(&mut store, "tag")];
+        while store.fold_step().unwrap() {
+            let pending = chunks_pending(&mut store, "tag");
+            if seen.last() != Some(&pending) {
+                seen.push(pending);
+            }
+            check(&store);
+        }
+        assert_eq!(
+            seen,
+            vec![BTreeSet::from([0, 1]), BTreeSet::from([1]), BTreeSet::new()],
+            "the chunks pending after each step"
+        );
+        assert_eq!(holders(&mut store), before);
     }
 }

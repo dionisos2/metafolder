@@ -5,54 +5,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
-* Folding a field's pending index writes chunk by chunk
-Agreed with the user, 22 November 2026. Today a fold step takes *all* the pending
-index writes of one field, every chunk, in one transaction (=fold_events=,
-=kvstore/events.rs= 487; chosen in the step picker, =events.rs= ~640,
-=List::Events(field)=). An add or a remove reads the posting of its value. A set or
-an unset calls =postings_of(field)= — every value of the field with its holders,
-every chunk, whole — and calls it again for each set or unset pending. On a field
-of many values, that is all its postings in memory and a long transaction every
-request waits behind.
-
-The step becomes one (field, chunk):
-
-1. read and decode the postings of that field in that chunk — every value's
-   bitmap, restricted to the chunk (keys =posting_prefix(field, key)= then the
-   chunk; =nothing= has a key of its own and is one value among the others);
-2. read the pending index writes of that (field, chunk) (table
-   =index_pending_writes=, keyed field · chunk · write number, oldest first;
-   =read_events= reads a whole field today);
-3. replay them *all, in order*, in memory: union, difference on bitmaps of at most
-   65 536 ids. Not "from the last set or unset only": a set or an unset names a
-   bitmap of ids, not the chunk, so it decides only its own ids (discussed and
-   dropped, 22 November 2026: replaying is simple and cheap anyway);
-4. update the histograms with the same differences (=hist_bump=), in the same
-   step — check against doc "Mass writes in the store" which side the write
-   already counted at once ("the histograms for a value added or removed") and
-   which the fold counts (a set's or an unset's removed values, today =events.rs=
-   511), so that nothing is counted twice or missed;
-5. encode and write the postings changed, delete that chunk's pending index
-   writes, commit; then the next (field, chunk) that still has some.
-
-- Memory and the length of a step are bounded by one chunk, as the fold of a
-  part's records is (=fold_part=, one part of 65 536 ids per step).
-- The pending count per field (=self.events=, =eventful=, =events.rs=) and the
-  step picker (biggest first, measured per field in bytes) go per (field, chunk).
-- Listing the values a field has in one chunk walks the keys of the field's
-  postings and keeps those of the chunk: a walk of keys, not of bitmaps — say so
-  in the note if it shows in the bench.
-- Reads need no change: they replay the pending writes chunk by chunk already
-  (doc "Mass writes in the store": chunks name disjoint ids), so a field half
-  folded reads right. A test should still say so: a field with two chunks pending,
-  one folded, reads the same before and after.
-- Tests first: the fold of a (field, chunk) touches only that chunk's postings
-  (count the keys read: a second chunk of the field is not read); a set then adds
-  then a remove on overlapping ids replays to what the reads answered before the
-  fold; the histograms agree with a count from the postings after the fold.
-- Write it down in doc "Folding in idle time" (§ How: the unit becomes a field's
-  chunk, not a field) and doc "Mass writes in the store".
-
 * Vocabulary after the store's table review
 The wiki and the code's comments, then its names, still speak the store of before
 the review (November 2026). Done group by group, one commit each: first fix the

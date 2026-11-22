@@ -30,12 +30,15 @@ a file touched every few seconds must not keep the repository busy for ever.
 
 !! How
 
-One ''list'' per step — a part's pending writes, a field's pending index writes, a
-field's pending trigrams, the log entries not yet indexed by metarecord — the biggest first (bytes for the first two, ids for the third), each in a
-transaction of its own (`KvStore::fold_step`): a read or a write that arrives
+One ''list'' per step — a part's pending writes, a field's pending index writes in
+one chunk of 65 536 ids, a field's pending trigrams, the log entries not yet indexed
+by metarecord — the biggest first (bytes for the first two, ids for the third), each
+in a transaction of its own (`KvStore::fold_step`): a read or a write that arrives
 waits for one list, not for all of them. After a fold the next step is one second
 later (`NEXT`) if the repository is still quiet; with nothing left, the thread looks
-again when it could be idle. No chunk size to tune: a list is the unit.
+again when it could be idle. No size to tune: a list is the unit, and a part or a
+field's chunk bounds what a step holds in memory — a field of many values never has
+all its postings read at once ([[Mass writes in the store]], § The fold).
 
 A deletion of many records waiting for its fold ([[Mass operations in the log]]) comes
 before every other list, whatever the sizes: its records are read with the older
