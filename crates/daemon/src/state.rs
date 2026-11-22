@@ -427,7 +427,7 @@ impl RepoState {
     }
     /// The rule index, current as of the connection's HEAD: re-read when a
     /// write since the last read may have moved a rule, and published for
-    /// the ingest thread. One `head` read when nothing changed.
+    /// the ingest thread. One `log_head` read when nothing changed.
     pub fn watch_rules(
         &self,
         conn: &dyn crate::store::Store,

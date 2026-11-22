@@ -385,7 +385,7 @@ fn a_store_of_the_version_before_is_derived_again_when_it_opens() {
     let Fx { store, _dir, files, .. } = fx;
     drop(store);
     {
-        // As the version before left it: no record, an older `derived`, no flag.
+        // As the version before left it: no record, an older `derived_version`, no flag.
         let env = raw_env(_dir.path());
         let records = open_raw(&env, "metarecords");
         let meta = open_raw(&env, "version");

@@ -16,7 +16,6 @@ names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 ** Tables and keys renamed, still in the code
 | Old | Now | Where it stays |
 |-----+-----+----------------|
-| =meta='s =next_op=, =next_id=, =next_label=, =head=, =layout=, =derived= | =next_log_op=, =next_metarecord_id=, =next_log_context=, =log_head=, =primary_version=, =derived_version= | comments |
 | =cells=, =field_cells=, =row_owner=, =by_field= | gone (a record keeps its fields) | comments in =log.rs=, =storage.rs=, =kv_layout.rs= |
 
 ** The vocabulary of the former kinds

@@ -1,7 +1,7 @@
 //! The logged write flow (doc "Log storage"). Every write to
 //! the data tables goes through a [`Writer`], which records, under a log context
 //! (doc "Log contexts"), one operation per atomic change with before/after snapshots, and keeps the
-//! `head` pointer (the newest operation) consistent with the data tables — all
+//! `log_head` pointer (the newest operation) consistent with the data tables — all
 //! in one store transaction. The log is a sequence, not a tree: nothing moves
 //! back over it (doc "The operation log").
 

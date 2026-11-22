@@ -419,7 +419,8 @@ impl State {
     }
 }
 
-/// The version of the primary layout this code writes, `layout` in `meta`
+/// The version of the primary layout this code writes, `primary_version` in
+/// `version` (`layout` in `meta` up to layout 10)
 /// (absent: the first one, rows keyed `uuid · row id` in `cells`; 2: the
 /// history tree, operations chained to a parent; 3: the sequence, before the
 /// operations were split by origin; 4: operations grouped by write; 5:
