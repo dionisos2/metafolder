@@ -14,6 +14,12 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **The log calls the rows an operation took off its `before`** (API 34): an operation
+  of `GET /repos/:repo/log` and `GET /repos/:repo/log/contexts/:id` carries `before`
+  (`snapshots_before` before), asked for with `include_before=true`
+  (`include_snapshots`), and left out of a log context with `before=0`
+  (`snapshots=0`).
+
 - **`GET /repos/:repo/wear` names what it counts by the store's tables** (API 33):
   `pending_writes`, `pending_write_parts`, `pending_write_bytes` for the writes to many
   records not yet folded (`mass_*` before), `index_writes`, `index_write_fields`,

@@ -46,7 +46,7 @@ pub struct LogQuery {
     pub entity: Option<Uuid>,
     pub since: Option<i64>,
     pub until: Option<i64>,
-    pub include_snapshots: bool,
+    pub include_before: bool,
 }
 
 /// The body of `GET /repos/:repo/log`.
@@ -78,7 +78,7 @@ pub fn listing(store: &dyn crate::store::Store, q: &LogQuery) -> Result<serde_js
 
     let mut op_values = Vec::with_capacity(ops.len());
     for op in &ops {
-        op_values.push(op_json(log, op, q.include_snapshots)?);
+        op_values.push(op_json(log, op, q.include_before)?);
     }
     let mut log_context_values = Vec::with_capacity(log_contexts.len());
     for (id, meta) in &log_contexts {
@@ -247,7 +247,7 @@ const OPS_PER_LABEL: usize = 8;
 const GROWTH: usize = 8;
 
 /// One operation, in the shape every `/log` response uses (doc "Log endpoints").
-pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<serde_json::Value> {
+pub fn op_json(log: &dyn Log, op: &OpRow, include_before: bool) -> Result<serde_json::Value> {
     let mut value = json!({
         "id": op.id,
         "log_context_id": op.log_context_id,
@@ -258,42 +258,42 @@ pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<ser
         "field_name": op.field_name,
         "reverts_op_id": op.reverts_op_id,
     });
-    if include_snapshots {
-        value["snapshots_before"] = snapshots_json(log, op.id)?;
+    if include_before {
+        value["before"] = before_json(log, op.id)?;
     }
     Ok(value)
 }
 
-/// Snapshot rows in their raw column form (doc "Log endpoints" examples).
-pub fn snapshots_json(log: &dyn Log, op_id: i64) -> Result<serde_json::Value> {
+/// The rows an operation took off, its before, in their raw column form (doc "Log endpoints" examples).
+pub fn before_json(log: &dyn Log, op_id: i64) -> Result<serde_json::Value> {
     let blob_hex = |b: Vec<u8>| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
     let mut out = Vec::new();
-    for row in log.snapshots(op_id)? {
+    for row in log.before_rows(op_id)? {
         // Raw column form (doc "Log endpoints" examples), null columns omitted.
         let encoded = rows::encode_value(&row.value);
-        let mut snapshot = json!({
+        let mut columns = json!({
             "field_name": row.name,
             "value_type": encoded.value_type,
         });
         if let Some(text) = encoded.text {
-            snapshot["value_text"] = json!(text);
+            columns["value_text"] = json!(text);
         }
         if let Some(int) = encoded.int {
-            snapshot["value_int"] = json!(int);
+            columns["value_int"] = json!(int);
         }
         if let Some(real) = encoded.real {
-            snapshot["value_real"] = json!(real);
+            columns["value_real"] = json!(real);
         }
         if let Some(uuid) = encoded.uuid {
-            snapshot["value_uuid"] = json!(blob_hex(uuid));
+            columns["value_uuid"] = json!(blob_hex(uuid));
         }
         if let Some(repo) = encoded.ref_repo {
-            snapshot["value_ref_repo"] = json!(blob_hex(repo));
+            columns["value_ref_repo"] = json!(blob_hex(repo));
         }
         if let Some(name) = encoded.name {
-            snapshot["value_name"] = json!(name);
+            columns["value_name"] = json!(name);
         }
-        out.push(snapshot);
+        out.push(columns);
     }
     Ok(serde_json::Value::Array(out))
 }

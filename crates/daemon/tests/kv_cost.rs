@@ -832,7 +832,7 @@ fn the_chunk_an_entry_is_extended_in_is_coded_once_per_write_transaction() {
     let targets: Vec<Uuid> = ops.iter().rev().map(|op| op.entity_uuid).collect();
     assert_eq!(targets, uuids);
     for op in [&ops[0], &ops[904], &ops[n as usize - 1]] {
-        assert!(Log::snapshots(&kv, op.id).unwrap().is_empty(), "no tag before");
+        assert!(Log::before_rows(&kv, op.id).unwrap().is_empty(), "no tag before");
     }
 }
 

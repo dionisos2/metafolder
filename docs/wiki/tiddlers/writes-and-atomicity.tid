@@ -10,7 +10,7 @@ One `log::Writer` write is one write transaction of the store, and it holds
 everything the write changes:
 
 * the field rows;
-* the log's operations and snapshots, and HEAD;
+* the log's entries and the before of each operation, and HEAD;
 * ''every'' index (derived key space).
 
 It commits entirely or not at all. So the indexes are consistent with HEAD by

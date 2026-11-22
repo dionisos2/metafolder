@@ -355,7 +355,7 @@ impl Side {
         for op in self.store.ops_after(0).unwrap() {
             let before: BTreeSet<String> = self
                 .store
-                .snapshots(op.id)
+                .before_rows(op.id)
                 .unwrap()
                 .iter()
                 .map(|r| format!("{}={:?}", r.name, r.value))

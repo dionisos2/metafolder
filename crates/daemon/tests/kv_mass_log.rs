@@ -72,7 +72,7 @@ fn a_mass_add_is_one_entry_that_reads_as_one_operation_per_record() {
         assert_eq!(op.op_type, "append_field");
         assert_eq!(op.field_name.as_deref(), Some("tag"));
         assert!(uuids.contains(&op.entity_uuid));
-        assert!(store.snapshots(op.id).unwrap().is_empty());
+        assert!(store.before_rows(op.id).unwrap().is_empty());
         let after = store.added(op.id).unwrap();
         assert_eq!(
             (after.len(), &after[0].name, &after[0].value),
@@ -113,7 +113,7 @@ fn a_mass_remove_reads_as_a_deletion_per_record() {
     assert_eq!(ops.len(), 30);
     for op in &ops {
         assert_eq!(op.op_type, "delete_field");
-        let before = store.snapshots(op.id).unwrap();
+        let before = store.before_rows(op.id).unwrap();
         assert_eq!((before.len(), &before[0].value), (1, &s("blue")));
         assert!(store.added(op.id).unwrap().is_empty());
     }
@@ -343,7 +343,7 @@ fn a_mass_replace_is_one_entry_that_reads_with_what_it_replaced() {
     for op in &ops {
         assert_eq!(op.op_type, "set_field");
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
-        let before = store.snapshots(op.id).unwrap();
+        let before = store.before_rows(op.id).unwrap();
         assert_eq!(before.len(), 1);
         assert_eq!(before[0].value, s(["blue", "green"][i % 2]));
     }
@@ -365,7 +365,7 @@ fn a_mass_unset_logs_only_the_records_that_held_the_field() {
     assert_eq!(ops.len(), 20);
     for op in &ops {
         assert_eq!(op.op_type, "delete_field");
-        assert_eq!(store.snapshots(op.id).unwrap().len(), 1);
+        assert_eq!(store.before_rows(op.id).unwrap().len(), 1);
         assert!(store.added(op.id).unwrap().is_empty());
     }
     assert!(uuids.iter().all(|&u| tags_of(&store, u).is_empty()));
@@ -392,7 +392,7 @@ fn what_a_replacement_replaced_survives_the_writes_that_came_after() {
     assert_eq!(ops.len(), 30);
     for op in &ops {
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
-        let before = store.snapshots(op.id).unwrap();
+        let before = store.before_rows(op.id).unwrap();
         assert_eq!(before.len(), 1, "record {i}");
         assert_eq!(before[0].value, s(["blue", "green"][i % 2]), "record {i}");
     }
@@ -457,7 +457,7 @@ fn a_replacement_knows_what_the_same_write_put_before_it() {
     for op in replacement {
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
         let mut before: Vec<Value> =
-            store.snapshots(op.id).unwrap().into_iter().map(|r| r.value).collect();
+            store.before_rows(op.id).unwrap().into_iter().map(|r| r.value).collect();
         before.sort_by_key(|v| format!("{v:?}"));
         let mut want = if (100..110).contains(&i) {
             vec![Value::Nothing]
@@ -489,13 +489,13 @@ fn pruning_into_a_replacement_keeps_each_operation_what_it_replaced() {
         let ops = store.ops_after(head).unwrap();
         assert_eq!(ops.len(), 40);
         let before: Vec<_> =
-            ops.iter().map(|o| (o.entity_uuid, store.snapshots(o.id).unwrap())).collect();
+            ops.iter().map(|o| (o.entity_uuid, store.before_rows(o.id).unwrap())).collect();
         metafolder_daemon::log::prune(&mut store, ops[13].id).unwrap();
         let left = store.ops_after(head).unwrap();
         assert_eq!(left.len(), 40, "reindex: {reindex}");
         for (op, (uuid, rows)) in left.iter().zip(&before) {
             assert_eq!(op.entity_uuid, *uuid, "reindex: {reindex}");
-            assert_eq!(&store.snapshots(op.id).unwrap(), rows, "reindex: {reindex}, {op:?}");
+            assert_eq!(&store.before_rows(op.id).unwrap(), rows, "reindex: {reindex}, {op:?}");
             assert_eq!(store.added(op.id).unwrap().len(), 0);
         }
     }
@@ -537,7 +537,7 @@ fn a_replacement_of_long_texts_is_undone_whole() {
     assert_eq!(ops.len(), 30);
     for (op, before) in ops.iter().zip(&start) {
         let held: Vec<Value> =
-            store.snapshots(op.id).unwrap().into_iter().map(|r| r.value).collect();
+            store.before_rows(op.id).unwrap().into_iter().map(|r| r.value).collect();
         assert_eq!(&held, before, "{op:?}");
     }
     let mut w = Writer::begin(&mut store, None).unwrap();

@@ -227,12 +227,12 @@ async fn the_log_context_detail_can_give_the_newest_operations_without_their_sna
     let ids: Vec<i64> =
         all["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
     assert_eq!(ids.len(), 12);
-    assert!(all["operations"][0].get("snapshots_before").is_some(), "snapshots by default");
+    assert!(all["operations"][0].get("before").is_some(), "snapshots by default");
 
     let window = r
         .call(
             "GET",
-            &format!("/log/contexts/{log_context}?newest=1&offset=2&limit=3&snapshots=0"),
+            &format!("/log/contexts/{log_context}?newest=1&offset=2&limit=3&before=0"),
             None,
         )
         .await;
@@ -245,7 +245,7 @@ async fn the_log_context_detail_can_give_the_newest_operations_without_their_sna
         .collect();
     // Newest first, the two newest skipped.
     assert_eq!(got, vec![ids[9], ids[8], ids[7]]);
-    assert!(window["operations"][0].get("snapshots_before").is_none(), "{window}");
+    assert!(window["operations"][0].get("before").is_none(), "{window}");
 }
 
 /// A context nothing is in — a command that wrote nothing, a script's

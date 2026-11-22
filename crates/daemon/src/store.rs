@@ -138,9 +138,9 @@ macro_rules! forward_to_store {
                 let $me = self;
                 Log::op($conn, id)
             }
-            fn snapshots(&self, op_id: i64) -> Result<Vec<FieldRow>> {
+            fn before_rows(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
-                Log::snapshots($conn, op_id)
+                Log::before_rows($conn, op_id)
             }
             fn added(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
@@ -419,7 +419,7 @@ pub trait Log {
     fn op(&self, id: i64) -> Result<Option<OpRow>>;
     /// The rows an operation took off its record: what it replaced, removed
     /// or deleted (its *before*; the log keeps no *after*).
-    fn snapshots(&self, op_id: i64) -> Result<Vec<FieldRow>>;
+    fn before_rows(&self, op_id: i64) -> Result<Vec<FieldRow>>;
     /// The rows an `append_field` operation added — what a revert takes off;
     /// none for any other operation.
     fn added(&self, op_id: i64) -> Result<Vec<FieldRow>>;
@@ -522,7 +522,7 @@ pub fn version_before_log_context<S: Rows + Log + ?Sized>(
         let field = op.field_name.as_deref();
         match op.op_type.as_str() {
             "create_metarecord" => rows.clear(),
-            "delete_metarecord" | "set_metarecord" => rows = store.snapshots(op.id)?,
+            "delete_metarecord" | "set_metarecord" => rows = store.before_rows(op.id)?,
             "append_field" => {
                 for added in store.added(op.id)? {
                     if let Some(at) = rows.iter().position(|r| *r == added) {
@@ -530,11 +530,11 @@ pub fn version_before_log_context<S: Rows + Log + ?Sized>(
                     }
                 }
             }
-            "delete_field" => rows.extend(store.snapshots(op.id)?),
+            "delete_field" => rows.extend(store.before_rows(op.id)?),
             // A set and the file operations: their field is what they took off.
             _ => {
                 rows.retain(|r| Some(r.name.as_str()) != field);
-                rows.extend(store.snapshots(op.id)?);
+                rows.extend(store.before_rows(op.id)?);
             }
         }
     }

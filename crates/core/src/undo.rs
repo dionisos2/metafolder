@@ -72,7 +72,7 @@ impl LogOp {
     }
 
     /// The daemon's — by its origin, or failing that its type — or an
-    /// unlogged write (no snapshots, nothing to invert): never the user's to
+    /// unlogged write (no before, nothing to invert): never the user's to
     /// undo or redo.
     fn is_daemons(&self) -> bool {
         self.origin.as_deref() == Some(ORIGIN_WATCHER)

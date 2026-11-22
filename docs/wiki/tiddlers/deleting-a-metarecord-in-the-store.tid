@@ -20,7 +20,7 @@ in memory.
 |its id out of `live_metarecords`; its record (`metarecords`) stays |what makes it gone from every answer; the record is what a restoration finds |
 |`field_types`, the histograms |they count rows, and no reader can sift a count; both are small tables |
 |its parent out of the `parents` set, if it was the last child |a fact about ''another'' metarecord |
-|the operation and its snapshots |the log, appended ([[The operation log]]) |
+|the operation and its before |the log, appended ([[The operation log]]) |
 
 Everything else stays: the postings (`nothing` included), the trigrams, the counts,
 the parent holders and descendants, its `index_raw_holder` keys, the id's mapping to

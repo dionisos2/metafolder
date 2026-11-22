@@ -42,7 +42,7 @@ const op = (id: number, logContext: number) => ({
   field_name: 'tag',
   entity_uuid: null,
 });
-/** What `GET /log/contexts/:id?op=` answers: the operation with its snapshots. */
+/** What `GET /log/contexts/:id?op=` answers: the operation with its before. */
 const DETAIL = (id: number, logContext: number) => ({
   log_context: { id: logContext, name: 'mf tag add', created: 0, is_head: false, operation_count: 2 },
   operations: [
@@ -52,7 +52,7 @@ const DETAIL = (id: number, logContext: number) => ({
       entity_uuid: ENTITY,
       field_name: 'tag',
       reverts_op_id: null,
-      snapshots_before: [
+      before: [
         { field_name: 'tag', value_type: 'string', value_text: 'old' },
         { field_name: 'rating', value_type: 'int', value_int: 3 },
       ],
@@ -336,7 +336,7 @@ describe('log panel: no operation is read until a log context is gone into', () 
     await settle();
     const urls = p.api.daemon.call.mock.calls.map((c) => c[1]);
     expect(urls).toContain('/repos/r/log/contexts?parent=9&limit=500');
-    expect(urls).toContain('/repos/r/log/contexts/9?newest=1&limit=500&snapshots=0');
+    expect(urls).toContain('/repos/r/log/contexts/9?newest=1&limit=500&before=0');
     expect(p.rows()).toEqual(['op 12: set_field tag']);
   });
 

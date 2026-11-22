@@ -5,7 +5,7 @@ audience: dev
 summary: A write adding a value to, removing it from, or setting a field of many records, or deleting them, is one entry in the log, which reads as one operation per record; no record is read to write it.
 
 A write that adds one value to a field of ten thousand records, or removes it, used
-to read each record to log what it held and to write one operation, its two snapshots
+to read each record to log what it held and to write one operation, its two states
 and three index keys for it. It is one entry ([[Log storage]]): the field, the value,
 and the records that ''changed'' — those that lacked the value, or held it. Which ones
 those are comes from the holders of the value ([[Mass writes in the store]]), not from

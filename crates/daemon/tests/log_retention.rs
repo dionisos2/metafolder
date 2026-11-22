@@ -90,7 +90,7 @@ fn test_trim_drops_the_snapshots_of_pruned_operations() {
         written.into_iter().filter(|&op| conn.op(op).unwrap().is_none()).collect();
     assert!(!pruned.is_empty(), "the trim pruned nothing");
     for op in pruned {
-        assert!(conn.snapshots(op).unwrap().is_empty(), "op {op} left snapshots");
+        assert!(conn.before_rows(op).unwrap().is_empty(), "op {op} left snapshots");
         assert!(conn.added(op).unwrap().is_empty(), "op {op} left what it added");
     }
 }

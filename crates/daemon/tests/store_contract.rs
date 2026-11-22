@@ -127,7 +127,7 @@ fn the_log_walks_back_from_head() {
     assert_eq!(last.field_name.as_deref(), Some("rating"));
     // The log keeps what a write took off: no state a write left, and no
     // version (doc "Log storage").
-    assert!(store.snapshots(head).unwrap().is_empty(), "no rating before");
+    assert!(store.before_rows(head).unwrap().is_empty(), "no rating before");
     assert!(store.added(head).unwrap().is_empty(), "not an append");
 
     // The read back from HEAD: newest first, bounded or whole.

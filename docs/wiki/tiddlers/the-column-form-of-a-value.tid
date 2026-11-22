@@ -2,11 +2,11 @@ title: The column form of a value
 tags: [[Data model]]
 kind: reference
 audience: dev
-summary: A value's column form — its value_type and the columns that type uses — which is how the wire and a log snapshot show it.
+summary: A value's column form — its value_type and the columns that type uses — which is how the wire and the before of an operation show it.
 
 A row's value is persisted in a ''column form'': its `value_type` and the one or two
 columns that type uses (`crates/daemon/src/rows.rs`, `encode_value`/`decode_value`).
-It is the form a log snapshot shows on the wire ([[Log endpoints]]). The store wrote
+It is the form the before of an operation takes on the wire ([[Log endpoints]]). The store wrote
 it too until November 2026; it now writes a compact form of its own
 ([[Value encoding in the store]]).
 

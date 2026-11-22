@@ -171,7 +171,7 @@ pub fn changed_since<S: crate::store::Store + ?Sized>(store: &S, op: &OpRow) -> 
         }
         "delete_field" => {
             let Some(name) = op.field_name.as_deref() else { return Ok(Changed::No) };
-            let before = store.snapshots(op.id)?;
+            let before = store.before_rows(op.id)?;
             let now = store.rows_named(entity, name)?;
             Some(!before.iter().any(|b| now.iter().any(|r| r.value == b.value)))
         }
@@ -217,7 +217,7 @@ pub fn left_by<S: crate::store::Store + ?Sized>(
     let cell = Cell { entity: op.entity_uuid, field: Some(name.to_string()) };
     for later in store.entity_ops_after(op.entity_uuid, op.id)? {
         if cell.intersects(&Cell::of(&later)) {
-            let before = store.snapshots(later.id)?;
+            let before = store.before_rows(later.id)?;
             return Ok(before.into_iter().filter(|r| r.name == name).collect());
         }
     }
@@ -314,7 +314,7 @@ pub fn written_as(op: &OpRow) -> OpType {
 ///
 /// Row ids are *not* restored — a row put back gets a fresh id, since the old
 /// one may have been handed out since — so nothing here addresses a row by the
-/// id a snapshot recorded: an append is undone *by value* (two rows of one name
+/// id the log recorded: an append is undone *by value* (two rows of one name
 /// and value are interchangeable, doc "No duplicate rows"). A metarecord does
 /// keep its uuid, unique by construction.
 pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
@@ -361,10 +361,10 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         // correction from a change (doc "Log storage").
         writer.reverting(Some(op.id));
         // Read through the writer's own transaction, so the state the revert
-        // is computed from is the state it is written into. Each inverse needs
-        // one side of the snapshot at most, and reading a side costs a key
-        // even when empty: only the side used is read.
-        let before = |writer: &Writer| writer.store().snapshots(op.id);
+        // is computed from is the state it is written into. An inverse reads
+        // the before only if it needs it: reading it costs a key even when
+        // empty.
+        let before = |writer: &Writer| writer.store().before_rows(op.id);
         match op.op_type.as_str() {
             "create_metarecord" => {
                 // Already gone: there is nothing left to take back.
@@ -410,7 +410,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                 anyhow::bail!("operation {} is an unlogged write and cannot be reverted", op.id)
             }
             // `set_field` and the three file types are cell-scoped: their
-            // before-snapshot is the whole cell.
+            // before is the whole cell.
             _ => {
                 let name = op
                     .field_name

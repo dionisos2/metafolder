@@ -1,7 +1,7 @@
 title: log panel
 tags: Panel [[Event log]]
 kind: reference
-aliases: log-detail snapshot before after diff
+aliases: log-detail before after diff
 summary: The repository's history as a tree of log contexts — a unit of work per row (a command, a script's run, the watcher's flushes folded), opening down to single operations, with badges saying what each is.
 
 Open it with `panel:open here log` (<<key "panel:open here log" "t o">>). One row per
@@ -16,7 +16,7 @@ breadcrumb above it says where it is, each step a way back.
 The rows of the top level are the daemon's ''summaries'' of the log contexts ([[Log context summaries]]):
 the panel reads no operation to list them, so a write to ten thousand records is one row
 read as cheaply as one to a single record. A log context's contents — the log contexts nested in it and
-the newest five hundred of its own operations, without their snapshots — are read when it
+the newest five hundred of its own operations, without their before — are read when it
 is gone into, and again by a refresh that finds the panel inside it.
 
 A log context row shows its number, name and description, the time of its newest operation,

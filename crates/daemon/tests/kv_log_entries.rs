@@ -66,13 +66,13 @@ fn an_operation_on_one_metarecord_is_two_keys() {
     assert_eq!(log_keys(&store), two_keys(), "a creation");
     let op = last_op(&store);
     assert_eq!((op.op_type.as_str(), op.entity_uuid), ("create_metarecord", uuid));
-    assert!(store.snapshots(op.id).unwrap().is_empty(), "nothing was there before");
+    assert!(store.before_rows(op.id).unwrap().is_empty(), "nothing was there before");
 
     write(&mut store, |w| w.set_field(uuid, "a", s("two")).unwrap());
     assert_eq!(log_keys(&store), two_keys(), "a replacement");
     let op = last_op(&store);
     assert_eq!((op.op_type.as_str(), op.field_name.as_deref()), ("set_field", Some("a")));
-    assert_eq!(store.snapshots(op.id).unwrap(), vec![row("a", s("one"))], "what it replaced");
+    assert_eq!(store.before_rows(op.id).unwrap(), vec![row("a", s("one"))], "what it replaced");
 }
 
 #[test]
@@ -85,19 +85,19 @@ fn an_append_keeps_the_value_it_added_and_a_removal_the_value_it_took() {
     let op = last_op(&store);
     assert_eq!(op.op_type, "append_field");
     assert_eq!(store.added(op.id).unwrap(), vec![row("tag", s("y"))]);
-    assert!(store.snapshots(op.id).unwrap().is_empty());
+    assert!(store.before_rows(op.id).unwrap().is_empty());
 
     write(&mut store, |w| w.delete_fields_valued(uuid, "tag", &s("y")).unwrap());
     let op = last_op(&store);
     assert_eq!(op.op_type, "delete_field");
-    assert_eq!(store.snapshots(op.id).unwrap(), vec![row("tag", s("y"))], "the value removed");
+    assert_eq!(store.before_rows(op.id).unwrap(), vec![row("tag", s("y"))], "the value removed");
     assert!(store.added(op.id).unwrap().is_empty());
 
     // Every row of a name: the field unset, each row its before.
     write(&mut store, |w| w.append_field(uuid, "tag", s("z")).unwrap());
     write(&mut store, |w| w.delete_fields_named(uuid, "tag").unwrap());
     let op = last_op(&store);
-    let mut before = store.snapshots(op.id).unwrap();
+    let mut before = store.before_rows(op.id).unwrap();
     before.sort_by_key(|r| format!("{r:?}"));
     assert_eq!(before, vec![row("tag", s("x")), row("tag", s("z"))]);
 }
@@ -163,7 +163,7 @@ fn a_pending_deletion_reads_its_before_in_the_records_then_in_its_chunks() {
     let head = store.head().unwrap().unwrap();
     let ops = store.ops_back(head, Some(300)).unwrap();
     let before = |store: &KvStore| -> Vec<Vec<FieldRow>> {
-        ops.iter().map(|o| store.snapshots(o.id).unwrap()).collect()
+        ops.iter().map(|o| store.before_rows(o.id).unwrap()).collect()
     };
     let pending = before(&store);
     for (k, rows) in pending.iter().enumerate() {

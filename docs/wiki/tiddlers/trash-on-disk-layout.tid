@@ -50,7 +50,7 @@ The trashing finds what to capture by the target's ''uuid'' and its ''exact'' pa
 (`tree/resolve-path` with `form: "verbatim"`), never by a query on the text of its
 path, which a sibling really named `caf%E9` would also match.
 
-The fields are kept as JSON, unlike field rows and log snapshots, which the
+The fields are kept as JSON, unlike field rows and the log's before, which the
 daemon splits into typed columns because it queries them. Nothing queries these:
 they leave the daemon as JSON and go back to it as JSON.
 

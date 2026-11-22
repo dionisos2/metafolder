@@ -1445,7 +1445,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.op(id))
             }
-            fn snapshots(&self, op_id: i64) -> Result<Vec<FieldRow>> {
+            fn before_rows(&self, op_id: i64) -> Result<Vec<FieldRow>> {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.before_rows(op_id))
             }

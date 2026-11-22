@@ -10,7 +10,7 @@ mounts, the query source. `kvstore/` is the one implementation.
 
 |!Trait |!What |
 |`Rows` |the data model's primary state: a metarecord's existence and version, its rows (all, or by name), in no particular order; insert a row, delete the row holding a value under a name; create and delete a metarecord; the forest's positions; and, off the indexes with no record read, the ids holding a field (`holder_ids`) or a value (`value_holder_ids`: its posting, `nothing`'s included) |
-|`Log` |writes, operations and their snapshots, one operation by id, the bounded backward reads, HEAD and the first operation, log contexts, the range deletions of pruning and retention |
+|`Log` |writes, operations and their before, one operation by id, the bounded backward reads, HEAD and the first operation, log contexts, the range deletions of pruning and retention |
 |`WriteTxn` |one write transaction: one `log::Writer` write |
 |`Begin` |opens a transaction; also `check`, `reindex`, `backup_to`, and the interrupter a task's Stop uses |
 |`Database` |all of it: what a loaded repository holds (`store::Handle`) |

@@ -389,7 +389,7 @@ fn test_create_record_writes_log() {
     assert_eq!(op.entity_uuid, m.uuid);
 
     // A creation took nothing off, and the log keeps no state it left.
-    assert_eq!(conn.snapshots(op.id).unwrap().len(), 0);
+    assert_eq!(conn.before_rows(op.id).unwrap().len(), 0);
     assert_eq!(conn.added(op.id).unwrap().len(), 0);
 
     // HEAD points at the operation.
@@ -421,7 +421,7 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
 
     // Log: the before-snapshot has the two old rows.
     let op = ops_of_type(&conn, "set_field").pop().expect("a set_field operation");
-    assert_eq!(conn.snapshots(op.id).unwrap().len(), 2);
+    assert_eq!(conn.before_rows(op.id).unwrap().len(), 2);
     assert_eq!(
         conn.version_before_log_context(op.log_context_id, m.uuid).unwrap(),
         Some(m.version),
@@ -513,7 +513,7 @@ fn test_remove_value_removes_single_row() {
 // ── Writer: delete entry ──────────────────────────────────────────────────────
 
 #[test]
-fn test_delete_record_removes_everything_and_snapshots_before() {
+fn test_delete_record_removes_everything_and_logs_its_before() {
     let (mut conn, _dir) = test_conn();
     let m = create(&mut conn, vec![Field::new("a", Value::Int(1)), Field::new("b", Value::Int(2))]);
 
@@ -526,7 +526,7 @@ fn test_delete_record_removes_everything_and_snapshots_before() {
     assert!(conn.version(m.uuid).unwrap().is_none());
 
     let op = ops_of_type(&conn, "delete_metarecord").pop().expect("a delete operation");
-    assert_eq!(conn.snapshots(op.id).unwrap().len(), 2);
+    assert_eq!(conn.before_rows(op.id).unwrap().len(), 2);
 }
 
 // ── Writer: write grouping and HEAD chain ──────────────────────────────────
@@ -585,7 +585,7 @@ fn test_large_revision_chain_across_bulk_chunks() {
         }
         // A new field: nothing taken off (the log keeps no version, doc "Log
         // storage").
-        assert_eq!(conn.snapshots(op.id).unwrap().len(), 0, "before-snapshot of op {i}");
+        assert_eq!(conn.before_rows(op.id).unwrap().len(), 0, "before-snapshot of op {i}");
     }
     assert_eq!(conn.head().unwrap(), Some(ops.last().unwrap().id));
 }

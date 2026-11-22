@@ -497,7 +497,7 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
         // For field-scoped ops (set_field, file_*) the field name precedes
         // them to make multi-field writes readable.
         let prefix = op["field_name"].as_str().map(|f| format!("{f} ")).unwrap_or_default();
-        println!("    {prefix}before:  {}", fmt_snapshots(op["snapshots_before"].as_array()));
+        println!("    {prefix}before:  {}", fmt_before(op["before"].as_array()));
     }
     Ok(0)
 }
@@ -517,18 +517,18 @@ fn fmt_no_operation(children: Option<&Vec<Json>>) -> String {
     }
 }
 
-/// Formats a list of snapshot rows as a comma-separated value list. For
+/// Formats the rows an operation took off as a comma-separated value list. For
 /// `tree_ref` values only the `value_name` component is shown (spec note).
-fn fmt_snapshots(rows: Option<&Vec<Json>>) -> String {
+fn fmt_before(rows: Option<&Vec<Json>>) -> String {
     let Some(rows) = rows else { return "(absent)".into() };
     if rows.is_empty() {
         return "(absent)".into();
     }
-    let parts: Vec<String> = rows.iter().map(fmt_snapshot_value).collect();
+    let parts: Vec<String> = rows.iter().map(fmt_row_value).collect();
     parts.join(", ")
 }
 
-fn fmt_snapshot_value(row: &Json) -> String {
+fn fmt_row_value(row: &Json) -> String {
     match row["value_type"].as_str().unwrap_or("") {
         "nothing" => "Nothing".into(),
         "string" => format!("\"{}\"", row["value_text"].as_str().unwrap_or("")),

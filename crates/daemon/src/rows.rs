@@ -1,8 +1,8 @@
 //! A repository's rows as the storage layer hands them over, and the column
 //! form a value is stored in: `value_type` and the one or two columns its type
-//! uses. The key-value store keeps its rows in that form, and the log's
-//! snapshots are shown in it (doc "Log storage"), so it is a persisted format:
-//! changing it is a migration.
+//! uses. The store keeps its values in a compact encoding of its own (doc
+//! "Value encoding in the store"); the log shows the before of an operation
+//! in this form (doc "Log endpoints"), which is the wire's.
 
 use anyhow::{bail, Context, Result};
 use uuid::Uuid;

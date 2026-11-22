@@ -9,7 +9,7 @@
 import { byId, el, formatValue, openButton, pathText, qs } from '/__ui.js';
 import { createListCursor } from '/__list-cursor.js';
 import { underRoot } from '/__file-actions.js';
-import { rowsByField } from './snapshots.js';
+import { rowsByField } from './before.js';
 import {
   buildTree,
   countOf,
@@ -45,7 +45,7 @@ const OP_LABELS = /** @type {Record<string, string>} */ ({
  * One operation of `GET /log/contexts/:id?op=`, with the rows it took off.
  * @typedef {{id: number, op_type: string, entity_uuid: string,
  *            field_name: string|null, reverts_op_id: number|null,
- *            snapshots_before: import('./snapshots.js').Snapshot[]}} Detail
+ *            before: import('./before.js').BeforeRow[]}} Detail
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
@@ -174,7 +174,7 @@ export async function mount(root, metafolder) {
   }
 
   /** Reads what a log context holds — the log contexts nested in it, and the newest of its
-   *  own operations, without their snapshots — and puts it in its node.
+   *  own operations, without their before — and puts it in its node.
    *  @param {Node} node */
   async function loadLevel(node) {
     if (node.kind !== 'logContext' || repo === null) return;
@@ -186,7 +186,7 @@ export async function mount(root, metafolder) {
         ? /** @type {Promise<{log_context?: {operation_count?: number}, operations?: Op[]}>} */ (
           daemon.call(
             'GET',
-            `/repos/${repo}/log/contexts/${node.id}?newest=1&limit=${LEVEL_OPS}&snapshots=0`,
+            `/repos/${repo}/log/contexts/${node.id}?newest=1&limit=${LEVEL_OPS}&before=0`,
           )
         )
         : Promise.resolve({ log_context: { operation_count: 0 }, operations: [] }),
@@ -418,7 +418,7 @@ export async function mount(root, metafolder) {
     );
   }
 
-  /** Reads what the operation gone into changed (its snapshots). */
+  /** Reads what the operation gone into changed (its before). */
   async function loadDetail() {
     const mine = ++detailGeneration;
     const op = shownOp();
@@ -525,7 +525,7 @@ export async function mount(root, metafolder) {
       opBody.replaceChildren(el('p', { class: 'placeholder' }, 'Loading…'));
       return;
     }
-    const shown = rowsByField(op.snapshots_before ?? []);
+    const shown = rowsByField(op.before ?? []);
     const children = [
       el(
         'div',

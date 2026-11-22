@@ -208,7 +208,7 @@ fn revert_plan_json(
     for op in ops {
         let action = crate::revert::fs_action(conn, op)?;
         requires_lock |= action.is_some();
-        let restores = snapshots_json(conn, op.id)?;
+        let restores = before_json(conn, op.id)?;
         // A warning, never a refusal (doc "Reverting onto the current state").
         let changed_since = match crate::revert::changed_since(conn, op)? {
             crate::revert::Changed::No => serde_json::Value::Null,
@@ -227,8 +227,8 @@ fn revert_plan_json(
                     // Undoing a move: from where the move left the file back
                     // to where it was (the rows it took off).
                     let left = crate::revert::left_by(conn, op, "mfr_path")?;
-                    let from = snapshot_abs_path(conn, cache, root, left)?;
-                    let to = snapshot_abs_path(conn, cache, root, conn.snapshots(op.id)?)?;
+                    let from = rows_abs_path(conn, cache, root, left)?;
+                    let to = rows_abs_path(conn, cache, root, conn.before_rows(op.id)?)?;
                     if let (Some(from), Some(to)) = (from, to) {
                         v["from"] = json!(from);
                         v["to"] = json!(to);

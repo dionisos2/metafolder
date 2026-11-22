@@ -120,7 +120,7 @@ fn the_log_reads_a_deletion_per_record_with_the_rows_it_had() {
     );
     for op in &ops {
         assert_eq!(op.op_type, "delete_metarecord");
-        let before = store.snapshots(op.id).unwrap();
+        let before = store.before_rows(op.id).unwrap();
         assert_eq!(before.len(), 2, "its two rows: {before:?}");
         assert!(before.iter().any(|r| r.name == "tag"));
         assert!(before.iter().any(|r| r.name == "rank"));
@@ -141,7 +141,7 @@ fn a_fold_deletes_the_records_and_the_log_keeps_their_rows() {
             .iter()
             .map(|o| {
                 let mut rows: Vec<String> = store
-                    .snapshots(o.id)
+                    .before_rows(o.id)
                     .unwrap()
                     .iter()
                     .map(|r| format!("{}={:?}", r.name, r.value))
@@ -349,7 +349,7 @@ fn undoing_a_folded_mass_delete_keeps_the_dense_ids() {
         assert_eq!(Rows::rows(&store, u).unwrap().len(), 2);
     }
     // The rows the deletion took are still the log's to say.
-    assert_eq!(store.snapshots(ops[0].id).unwrap().len(), 2);
+    assert_eq!(store.before_rows(ops[0].id).unwrap().len(), 2);
     while store.fold_step().unwrap() {}
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
     sound(&store);
@@ -471,10 +471,10 @@ fn giving_a_pending_deletion_back_keeps_the_counts_the_parents_and_the_rest_pend
     assert!(Rows::exists(&store, root).unwrap());
     // The deletion's rows are still the log's to say, folded or given back.
     for op in &ops[30..] {
-        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
+        assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "{op:?}");
     }
     for op in &ops[..30] {
-        assert!(!store.snapshots(op.id).unwrap().is_empty(), "{op:?}");
+        assert!(!store.before_rows(op.id).unwrap().is_empty(), "{op:?}");
     }
 }
 
@@ -518,7 +518,7 @@ fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
     );
     let rows_of = |store: &KvStore, op_id: i64| {
         let mut rows: Vec<_> = store
-            .snapshots(op_id)
+            .before_rows(op_id)
             .unwrap()
             .into_iter()
             .map(|r| (r.name, format!("{:?}", r.value)))
@@ -527,7 +527,7 @@ fn the_rows_a_deletion_took_are_kept_when_a_record_given_back_is_written_to() {
         rows
     };
     for op in &ops {
-        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
+        assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "{op:?}");
     }
     let op = ops.iter().find(|o| o.entity_uuid == touched).unwrap();
     assert_eq!(
@@ -581,7 +581,7 @@ fn a_write_to_many_records_keeps_the_rows_a_deletion_took() {
     );
     for op in &ops {
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
-        let rows = store.snapshots(op.id).unwrap();
+        let rows = store.before_rows(op.id).unwrap();
         let tags: Vec<_> = rows.iter().filter(|r| r.name == "tag").map(|r| &r.value).collect();
         assert_eq!(tags, vec![&s(["blue", "green"][i % 2])], "the rows it took, record {i}");
     }
@@ -614,7 +614,7 @@ fn a_deletion_given_back_and_made_again_keeps_the_rows_of_the_first() {
     while store.fold_step().unwrap() {}
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 0);
     for op in ops.iter().chain(&again) {
-        let rows = store.snapshots(op.id).unwrap();
+        let rows = store.before_rows(op.id).unwrap();
         assert_eq!(rows.len(), 2, "{op:?}");
     }
     sound(&store);
@@ -642,7 +642,7 @@ fn a_reindex_keeps_the_rows_of_the_records_a_deletion_gave_back() {
     });
     store.reindex().unwrap();
     for op in &ops {
-        let rows = store.snapshots(op.id).unwrap();
+        let rows = store.before_rows(op.id).unwrap();
         assert_eq!(rows.len(), 2, "{op:?}");
         let tag = rows.iter().find(|r| r.name == "tag").unwrap();
         let i = uuids.iter().position(|u| *u == op.entity_uuid).unwrap();
@@ -741,7 +741,7 @@ fn a_reindex_folds_a_pending_deletion_and_keeps_what_the_log_says() {
             .ops_after(head)
             .unwrap()
             .iter()
-            .map(|o| (o.entity_uuid, store.snapshots(o.id).unwrap().len()))
+            .map(|o| (o.entity_uuid, store.before_rows(o.id).unwrap().len()))
             .collect()
     };
     let before = says(&store);
@@ -767,7 +767,7 @@ fn a_prune_in_the_middle_of_a_pending_deletion_keeps_it_whole_with_its_rows() {
     let left = store.ops_after(head).unwrap();
     assert_eq!(left.len(), 30);
     for op in &left {
-        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
+        assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "{op:?}");
     }
     sound(&store);
 }
@@ -1136,7 +1136,7 @@ fn a_deletion_given_back_then_deleted_again_keeps_its_rows() {
             while store.fold_step().unwrap() {}
         }
         for op in &first {
-            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "fold: {fold}");
+            assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "fold: {fold}");
         }
     }
 }
@@ -1169,19 +1169,19 @@ fn a_prune_takes_the_rows_kept_of_the_deletions_it_removes() {
             while store.fold_step().unwrap() {}
         }
         for op in &ops {
-            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "given back: {given_back}");
+            assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "given back: {given_back}");
         }
         // Inside the deletion, it is kept whole; past it, it goes whole.
         metafolder_daemon::log::prune(&mut store, ops[10].id).unwrap();
         for op in &ops {
-            assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "given back: {given_back}");
+            assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "given back: {given_back}");
         }
         let after = records(&mut store, 1);
         let target = store.head().unwrap().unwrap();
         metafolder_daemon::log::prune(&mut store, target).unwrap();
         for op in &ops {
             assert!(
-                store.snapshots(op.id).unwrap().is_empty(),
+                store.before_rows(op.id).unwrap().is_empty(),
                 "given back: {given_back}, operation {} pruned",
                 op.id
             );
@@ -1341,12 +1341,12 @@ fn a_deletion_is_a_pending_write_that_its_undo_leaves() {
     write(&mut store, |w| w.set_field(uuids[7], "tag", s("purple")).unwrap());
     assert_eq!(store.last_write_keys().get("pending_writes"), Some(&1), "the record taken off");
     for op in &ops {
-        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
+        assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "{op:?}");
     }
     store.fold().unwrap();
     assert_eq!(store.wear().unwrap().pending_writes, 0);
     for op in &ops {
-        assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
+        assert_eq!(store.before_rows(op.id).unwrap().len(), 2, "{op:?}");
     }
     sound(&store);
 }

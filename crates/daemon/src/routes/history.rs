@@ -3,20 +3,20 @@
 
 use super::*;
 
-/// Serializes one operation row, optionally with its snapshots.
+/// Serializes one operation row, optionally with its before (the rows it took off).
 fn op_json(
     conn: &dyn crate::store::Store,
     op: &crate::log::OpRow,
-    include_snapshots: bool,
+    include_before: bool,
 ) -> Result<serde_json::Value, ApiError> {
-    Ok(crate::log_view::op_json(conn, op, include_snapshots)?)
+    Ok(crate::log_view::op_json(conn, op, include_before)?)
 }
 
-pub(super) fn snapshots_json(
+pub(super) fn before_json(
     conn: &dyn crate::store::Store,
     op_id: i64,
 ) -> Result<serde_json::Value, ApiError> {
-    Ok(crate::log_view::snapshots_json(conn, op_id)?)
+    Ok(crate::log_view::before_json(conn, op_id)?)
 }
 
 /// A log context with its ancestors, innermost first (`GET /contexts/:id`).
@@ -114,7 +114,7 @@ pub(super) struct LogParams {
     #[serde(default)]
     until: Option<i64>,
     #[serde(default)]
-    include_snapshots: Option<bool>,
+    include_before: Option<bool>,
 }
 
 pub(super) async fn get_log(
@@ -129,7 +129,7 @@ pub(super) async fn get_log(
         entity: params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?,
         since: params.since,
         until: params.until,
-        include_snapshots: params.include_snapshots.unwrap_or(false),
+        include_before: params.include_before.unwrap_or(false),
     };
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
@@ -196,7 +196,7 @@ pub(super) async fn get_log_since(
 
 /// Which operations of a log context `GET /log/contexts/:id` details: a window
 /// (`offset`/`limit`) or one operation by id (`op`). A log context can hold every
-/// operation of a reconcile, and each carries its snapshots.
+/// operation of a reconcile, and each carries its before.
 #[derive(Deserialize)]
 pub(super) struct LogContextParams {
     #[serde(default)]
@@ -209,14 +209,14 @@ pub(super) struct LogContextParams {
     /// operations come newest first.
     #[serde(default)]
     newest: Option<u8>,
-    /// `0`: the operations come without their snapshots, which a list does
-    /// not show.
+    /// `0`: the operations come without their before, which a list does not
+    /// show.
     #[serde(default)]
-    snapshots: Option<u8>,
+    before: Option<u8>,
 }
 
 /// `GET /log/contexts/:id` (or `head`, the log context of the newest operation): a
-/// log context and its own operations, with their snapshots.
+/// log context and its own operations, with their before.
 pub(super) async fn get_log_context_detail(
     State(state): State<Arc<AppState>>,
     Path((repo, id)): Path<(String, String)>,
@@ -266,12 +266,12 @@ pub(super) async fn get_log_context_detail(
                 .take(params.limit.unwrap_or(usize::MAX))
                 .collect(),
         };
-        let snapshots = params.snapshots != Some(0);
+        let before = params.before != Some(0);
         let mut ops = Vec::with_capacity(selected.len());
         for op_id in selected {
             let op = crate::store::Log::op(&*conn, op_id)?
                 .ok_or_else(|| ApiError::internal(format!("operation {op_id} vanished")))?;
-            ops.push(op_json(&conn, &op, snapshots)?);
+            ops.push(op_json(&conn, &op, before)?);
         }
         Ok(Json(json!({"log_context": log_context, "operations": ops})))
     })
@@ -397,7 +397,7 @@ pub(super) async fn prune_log(
 /// Resolves the `mfr_path` among `rows` to an absolute path, for
 /// the `from`/`to` of a `move_file` action — as its exact bytes, which is what
 /// a client moves (doc "Tree names").
-pub(super) fn snapshot_abs_path(
+pub(super) fn rows_abs_path(
     conn: &dyn crate::store::Store,
     cache: &crate::forest::Forest,
     root: &std::path::Path,

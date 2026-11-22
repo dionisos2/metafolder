@@ -1,6 +1,6 @@
 //! The logged write flow (doc "Log storage"). Every write to
 //! the data tables goes through a [`Writer`], which records, under a log context
-//! (doc "Log contexts"), one operation per atomic change with before/after snapshots, and keeps the
+//! (doc "Log contexts"), one operation per atomic change with its before (the rows it took off), and keeps the
 //! `log_head` pointer (the newest operation) consistent with the data tables — all
 //! in one store transaction. The log is a sequence, not a tree: nothing moves
 //! back over it (doc "The operation log").
@@ -1003,7 +1003,7 @@ impl<'c> Writer<'c> {
 
     /// Replaces all rows for `(uuid, name)` with the given set of values
     /// (multi-map), in a single `SetField` operation. A revert's `set_field`
-    /// inverse restores *all* snapshot rows, so this needs nothing of its own.
+    /// inverse restores *all* the rows of its before, so this needs nothing of its own.
     pub fn set_field_multi(&mut self, uuid: Uuid, name: &str, values: Vec<Value>) -> Result<()> {
         self.set_field_multi_as(OpType::SetField, uuid, name, values)
     }
@@ -1524,7 +1524,7 @@ impl<'c> Writer<'c> {
         let Some(name) = first.field_name.clone() else { return Ok(false) };
         // Putting a value back is a write like any other: its type is checked.
         if first.op_type == "delete_field" {
-            for row in self.tx.snapshots(first.id)? {
+            for row in self.tx.before_rows(first.id)? {
                 self.validate_value_type(&name, &row.value)?;
             }
         }
@@ -1772,7 +1772,7 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
-    /// Bulk-inserts the buffered `operation` and `op_snapshot` rows,
+    /// Appends the buffered operations to the log,
     /// advancing the running chain head.
     ///
     /// The store assigns the operation ids (from its sequence, never reused)

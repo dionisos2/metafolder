@@ -108,7 +108,7 @@ async fn test_log_and_filters() {
     assert_eq!(ops[2]["op_type"], "set_field");
     assert_eq!(ops[2]["field_name"], "a");
     assert!(!log["log_contexts"].as_array().unwrap().is_empty());
-    assert!(ops[0].get("snapshots_before").is_none(), "snapshots off by default");
+    assert!(ops[0].get("before").is_none(), "snapshots off by default");
 
     // Filter by entry.
     let filtered = get_log(&app, &repo, &format!("?metarecord_uuid={uuid}")).await;
@@ -120,12 +120,12 @@ async fn test_log_and_filters() {
     assert_eq!(limited_ops.len(), 1);
     assert_eq!(limited_ops[0]["id"].as_i64().unwrap(), head);
 
-    // include_snapshots.
-    let with_snaps = get_log(&app, &repo, "?include_snapshots=true").await;
-    let last = with_snaps["operations"].as_array().unwrap().last().unwrap().clone();
-    assert_eq!(last["snapshots_before"][0]["value_int"], 1);
+    // include_before.
+    let with_before = get_log(&app, &repo, "?include_before=true").await;
+    let last = with_before["operations"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(last["before"][0]["value_int"], 1);
     // The log keeps no state a write left, and says none.
-    assert!(last.get("snapshots_after").is_none(), "{last}");
+    assert!(last.get("after").is_none(), "{last}");
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -174,7 +174,7 @@ async fn test_log_context_detail() {
     assert_eq!(detail["log_context"]["is_head"], true);
     let ops = detail["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
-    assert!(ops[0]["snapshots_before"].is_array(), "snapshots always included here");
+    assert!(ops[0]["before"].is_array(), "snapshots always included here");
 
     // 404 on a missing log context.
     let (status, _) =
@@ -231,7 +231,7 @@ async fn test_revision_detail_pages_its_operations() {
     let ops = one["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 1);
     assert_eq!(ops[0]["id"].as_i64().unwrap(), all[2]);
-    assert!(ops[0]["snapshots_before"].is_array());
+    assert!(ops[0]["before"].is_array());
 
     // An operation of another write is not this write's.
     let (status, _) =

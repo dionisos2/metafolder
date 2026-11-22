@@ -1,53 +1,53 @@
-// log panel (panel-types/log/snapshots.js): the rows an operation took off,
+// log panel (panel-types/log/before.js): the rows an operation took off,
 // read back as values and grouped by field, which is what the panel shows as
 // "what this operation replaced".
 
 import { describe, expect, test } from 'vitest';
 import {
   rowsByField,
-  snapshotValue,
-} from '../../default-config/panel-types/log/snapshots.js';
+  rowValue,
+} from '../../default-config/panel-types/log/before.js';
 
 const ZERO = '0'.repeat(32);
 const A = 'a'.repeat(32);
 const B = 'b'.repeat(32);
 
-describe('snapshotValue', () => {
+describe('rowValue', () => {
   test('reads each raw column form back as a value', () => {
-    expect(snapshotValue({ value_type: 'nothing' })).toEqual({ type: 'nothing' });
-    expect(snapshotValue({ value_type: 'string', value_text: 'x' })).toEqual({
+    expect(rowValue({ value_type: 'nothing' })).toEqual({ type: 'nothing' });
+    expect(rowValue({ value_type: 'string', value_text: 'x' })).toEqual({
       type: 'string',
       value: 'x',
     });
-    expect(snapshotValue({ value_type: 'int', value_int: 3 })).toEqual({ type: 'int', value: 3 });
-    expect(snapshotValue({ value_type: 'float', value_real: 1.5 })).toEqual({
+    expect(rowValue({ value_type: 'int', value_int: 3 })).toEqual({ type: 'int', value: 3 });
+    expect(rowValue({ value_type: 'float', value_real: 1.5 })).toEqual({
       type: 'float',
       value: 1.5,
     });
-    expect(snapshotValue({ value_type: 'bool', value_int: 1 })).toEqual({
+    expect(rowValue({ value_type: 'bool', value_int: 1 })).toEqual({
       type: 'bool',
       value: true,
     });
-    expect(snapshotValue({ value_type: 'datetime', value_int: 0 })).toEqual({
+    expect(rowValue({ value_type: 'datetime', value_int: 0 })).toEqual({
       type: 'datetime',
       value: '1970-01-01T00:00:00.000Z',
     });
-    expect(snapshotValue({ value_type: 'ref', value_uuid: A })).toEqual({ type: 'ref', value: A });
-    expect(snapshotValue({ value_type: 'refbase', value_uuid: A })).toEqual({
+    expect(rowValue({ value_type: 'ref', value_uuid: A })).toEqual({ type: 'ref', value: A });
+    expect(rowValue({ value_type: 'refbase', value_uuid: A })).toEqual({
       type: 'refbase',
       value: A,
     });
     expect(
-      snapshotValue({ value_type: 'externalref', value_uuid: A, value_ref_repo: B }),
+      rowValue({ value_type: 'externalref', value_uuid: A, value_ref_repo: B }),
     ).toEqual({ type: 'externalref', value: { repo: B, metarecord: A } });
   });
 
   test('a tree_ref under the zero uuid is a forest root', () => {
-    expect(snapshotValue({ value_type: 'tree_ref', value_uuid: ZERO, value_name: 'r' })).toEqual({
+    expect(rowValue({ value_type: 'tree_ref', value_uuid: ZERO, value_name: 'r' })).toEqual({
       type: 'tree_ref',
       value: { parent: null, name: 'r' },
     });
-    expect(snapshotValue({ value_type: 'tree_ref', value_uuid: A, value_name: 'f' })).toEqual({
+    expect(rowValue({ value_type: 'tree_ref', value_uuid: A, value_name: 'f' })).toEqual({
       type: 'tree_ref',
       value: { parent: A, name: 'f' },
     });

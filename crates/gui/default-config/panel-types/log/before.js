@@ -5,23 +5,23 @@
 const ZERO_UUID = '0'.repeat(32);
 
 /**
- * One snapshot row of `GET /log/contexts/:id`, in its raw column form
+ * One row of the before of an operation in `GET /log/contexts/:id`, in its raw column form
  * (null columns omitted).
  * @typedef {{field_name?: string, value_type: string,
  *            value_text?: string, value_int?: number, value_real?: number,
  *            value_uuid?: string, value_ref_repo?: string,
- *            value_name?: string}} Snapshot
+ *            value_name?: string}} BeforeRow
  *
  * One field as the panel displays it: the values the operation took off.
  * @typedef {{field: string, values: Metafolder.Value[]}} FieldRows
  */
 
 /**
- * The value a snapshot row holds, in the API's `{type, value}` form.
- * @param {Snapshot} s
+ * The value a row of a before holds, in the API's `{type, value}` form.
+ * @param {BeforeRow} s
  * @returns {Metafolder.Value}
  */
-export function snapshotValue(s) {
+export function rowValue(s) {
   switch (s.value_type) {
     case 'nothing':
       return /** @type {Metafolder.Value} */ ({ type: 'nothing' });
@@ -62,20 +62,20 @@ export function snapshotValue(s) {
  * the fields first appear: what the panel shows of an operation. The log keeps
  * these rows and not the ones the operation left.
  *
- * @param {Snapshot[]} snapshots
+ * @param {BeforeRow[]} rows
  * @returns {FieldRows[]}
  */
-export function rowsByField(snapshots) {
+export function rowsByField(rows) {
   /** @type {Map<string, Metafolder.Value[]>} */
   const byField = new Map();
-  for (const s of snapshots) {
+  for (const s of rows) {
     const name = s.field_name ?? '';
     let values = byField.get(name);
     if (!values) {
       values = [];
       byField.set(name, values);
     }
-    values.push(snapshotValue(s));
+    values.push(rowValue(s));
   }
   return [...byField].map(([field, values]) => ({ field, values }));
 }
