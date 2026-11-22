@@ -914,7 +914,7 @@ impl Read<'_> {
         if let Some(holders) = self.holders {
             return holders(name);
         }
-        let mut ids = derived::read_set(self.t, self.r, derived::ABSENT, Some(name))?;
+        let mut ids = derived::read_set(self.t, self.r, derived::IndexSet::Nothing, Some(name))?;
         for bit in derived::read_counts(self.t, self.r, name)? {
             ids |= bit;
         }
@@ -929,7 +929,7 @@ impl Read<'_> {
         }
         self.count(1)?;
         let Some(key) = derived::value_key(value) else {
-            return derived::read_set(self.t, self.r, derived::ABSENT, Some(name));
+            return derived::read_set(self.t, self.r, derived::IndexSet::Nothing, Some(name));
         };
         let stored = derived::read_prefix_set(
             self.t,

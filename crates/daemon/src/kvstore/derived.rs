@@ -49,31 +49,61 @@ use crate::store::Rows;
 /// sets; 10: the fields' pending index writes; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`.
 pub(super) const DERIVED_VERSION: i64 = 25;
 
-/// Set kinds: which set a bitmap is, its table ([`set_table`]) and the key it
-/// has there (doc "Store tables"). No key holds them.
-pub(super) const ABSENT: u8 = 2;
-pub(super) const PARENTS: u8 = 3;
+/// The sets of the index, by what they hold (doc "Store tables"): each is in
+/// a table ([`IndexSet::table`]) under a key of its own ([`set_key`]). Their
+/// numbers are no key's, only the check's tags.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(super) enum IndexSet {
+    /// The holders of `nothing` in a field: a key among the holders of its
+    /// values ([`NOTHING_TAG`]).
+    Nothing = 2,
+    /// The ids that are the parent of a node in a `tree_ref` field.
+    Parents = 3,
+    /// The texts too long to be split in trigrams (see [`TRIGRAM_MAX`]).
+    LongTexts = 4,
+    /// The ids pointing at a metarecord in a field — a folder's children —
+    /// keyed by field *and* the target's dense id ([`KvTxn::target_id`]): a
+    /// folder filter is one bitmap, a read per 65 536 children.
+    ParentHolders = 5,
+    /// Every id below a node of a forest, keyed by field and the node's dense
+    /// id — what makes a subtree one bitmap read (doc "The forest in the
+    /// store"). Kept for every `tree_ref` field: a node holds one position per
+    /// forest (doc "One position per forest"), so the tree is a tree and a
+    /// move is set arithmetic.
+    Descendants = 6,
+    /// The holders of one value of a field (keyed by field and value key,
+    /// then chunk): every value that has a holder. A value's holders are its
+    /// run, in the order of the keys, and go with its last holder.
+    ValueHolders = 7,
+    /// In a field whose trigrams are kept by metarecord: the ids written
+    /// since the last fold, whose trigrams are not built yet — every text
+    /// search checks them (doc "Text search in the store").
+    TrigramPending = 9,
+    /// How many non-`nothing` rows of a field each id holds, as one set per
+    /// bit of the count (keyed by field and bit number): the ids holding a
+    /// value are those in any of them, the ids holding several those in any
+    /// but the first. A count is what a write to many records can keep
+    /// without reading one: adding a value to the ids that lack it is an
+    /// increment, which on bitmaps is a few set operations whatever the
+    /// number of ids (doc "Store tables").
+    ValueCounts = 11,
+}
 
-/// The texts too long to be split in trigrams (see [`TRIGRAM_MAX`]).
-pub(super) const LONG_TEXTS: u8 = 4;
-/// The ids pointing at a metarecord in a field — a `ref`'s referrers, a
-/// folder's children — keyed by field *and* the target's dense id
-/// ([`KvTxn::target_id`]): a folder filter is one bitmap, a read per 65 536
-/// children (doc "Store tables", `children`).
-pub(super) const REFERRERS: u8 = 5;
-
-/// Every id below a node of a forest, keyed by field and the node's dense id — what makes a
-/// subtree one bitmap read (doc "The forest in the store").
-/// Kept for every `tree_ref` field: a node holds one position per forest
-/// (doc "One position per forest"), so the tree is a tree and a
-/// move is set arithmetic.
-pub(super) const DESCENDANTS: u8 = 6;
-
-/// The holders of one value of a field (keyed by field and value key, then
-/// chunk): every value that has a holder (doc "Store tables", `postings`).
-/// The value partition is gone: a posting is a value's run, in the order of
-/// the keys, and goes with its last holder.
-pub(super) const POSTINGS: u8 = 7;
+impl IndexSet {
+    /// The table the set is in.
+    pub(super) fn table(self) -> Bitmaps {
+        match self {
+            IndexSet::Parents => Bitmaps::Parents,
+            IndexSet::LongTexts => Bitmaps::LongTexts,
+            IndexSet::ParentHolders => Bitmaps::ParentHolders,
+            IndexSet::Descendants => Bitmaps::Descendants,
+            IndexSet::ValueHolders | IndexSet::Nothing => Bitmaps::ValueHolders,
+            IndexSet::TrigramPending => Bitmaps::TrigramPending,
+            IndexSet::ValueCounts => Bitmaps::ValueCounts,
+        }
+    }
+}
 
 /// The type tag a position's name is filed under among the holders of the
 /// values of its field: a text's — a position's `:value` is its name (doc
@@ -84,15 +114,6 @@ pub(super) const NAME_TAG: u8 = 2;
 /// value's type tag, so that a range of one type never meets it; a walk of
 /// every value steps over it.
 pub(super) const NOTHING_TAG: u8 = 0xFF;
-
-/// How many non-`Nothing` rows of a field each id holds, as one set per bit
-/// of the count (keyed by field and bit number): the ids holding a value are
-/// those in any of them, the ids holding several those in any but the
-/// first. A count is what a write to many records can keep without reading
-/// one: adding a value to the ids that lack it is an increment, which on
-/// bitmaps is a few set operations whatever the number of ids (doc "Store
-/// tables").
-pub(super) const COUNT: u8 = 11;
 
 /// The bits a count is kept on: no record holds 2³² values of a field.
 pub(super) const COUNT_BITS: u8 = 32;
@@ -105,7 +126,7 @@ pub(super) fn count_prefix(field: &str, bit: u8) -> Vec<u8> {
 /// `field`'s counts, a set per bit, the lowest first — as many as the
 /// largest count needs.
 pub(super) fn read_counts(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<RoaringBitmap>> {
-    let prefix = set_prefix(COUNT, Some(field));
+    let prefix = set_prefix(IndexSet::ValueCounts, Some(field));
     let mut out: Vec<RoaringBitmap> = Vec::new();
     for entry in Bitmaps::ValueCounts.db(t).prefix_iter(r, &prefix)? {
         let (k, v) = entry?;
@@ -151,11 +172,6 @@ pub(super) fn counted_over(counts: &[RoaringBitmap], n: u64) -> RoaringBitmap {
     }
     over
 }
-
-/// In a field whose trigrams are kept by metarecord: the ids written since
-/// the last fold, whose trigrams are not built yet — every text search checks
-/// them (doc "Text search in the store").
-pub(super) const GRAM_PENDING: u8 = 9;
 
 /// The dense id standing for "no parent": what a forest's roots are filed
 /// under. No metarecord gets it — ids start at 1.
@@ -213,8 +229,8 @@ pub(super) fn descendants_prefix(field: &str, node: u32) -> Vec<u8> {
     [&name_key(field)[..], &node.to_be_bytes()].concat()
 }
 
-/// The key of the referrers of `target` in `field`, without its chunk.
-pub(super) fn referrers_prefix(field: &str, target: u32) -> Vec<u8> {
+/// The key of the holders of `target` as a parent in `field`, without its chunk.
+pub(super) fn parent_holders_prefix(field: &str, target: u32) -> Vec<u8> {
     [&name_key(field)[..], &target.to_be_bytes()].concat()
 }
 
@@ -306,21 +322,6 @@ impl Bitmaps {
     }
 }
 
-/// The table a set kind is kept in: `nothing`'s holders among those of the
-/// field's values.
-pub(super) fn set_table(kind: u8) -> Bitmaps {
-    match kind {
-        PARENTS => Bitmaps::Parents,
-        LONG_TEXTS => Bitmaps::LongTexts,
-        REFERRERS => Bitmaps::ParentHolders,
-        DESCENDANTS => Bitmaps::Descendants,
-        POSTINGS | ABSENT => Bitmaps::ValueHolders,
-        GRAM_PENDING => Bitmaps::TrigramPending,
-        COUNT => Bitmaps::ValueCounts,
-        other => unreachable!("no set kind {other}"),
-    }
-}
-
 /// The live metarecords, as committed: the union of the chunks of
 /// `live_metarecords`.
 pub(super) fn read_live(t: &Tables, r: &RoTxn<'_>) -> Result<RoaringBitmap> {
@@ -336,7 +337,8 @@ pub(super) fn read_live(t: &Tables, r: &RoTxn<'_>) -> Result<RoaringBitmap> {
 /// the field's long-text set instead, and every search checks it.
 pub(crate) const TRIGRAM_MAX: usize = 512;
 
-/// Partitions.
+/// Which holders of a field a key is among: of a value, or — on a position
+/// field — of a name, filed under [`NAME_TAG`] ([`part_posting_prefix`]).
 pub(super) const VALUE: u8 = 0;
 pub(super) const NAME: u8 = 1;
 
@@ -571,11 +573,11 @@ pub(crate) fn target_of(value: &Value) -> Option<[u8; 16]> {
     }
 }
 
-/// The key of a chunk of a set, in its table ([`set_table`]).
-pub(super) fn set_key(kind: u8, field: Option<&str>, chunk: u16) -> Vec<u8> {
+/// The key of a chunk of a set, in its table ([`IndexSet::table`]).
+pub(super) fn set_key(set: IndexSet, field: Option<&str>, chunk: u16) -> Vec<u8> {
     // `nothing` is a value with a key of its own among the holders of the
     // field's values: its type byte alone (doc "Store tables").
-    if kind == ABSENT {
+    if set == IndexSet::Nothing {
         let field = field.expect("the holders of nothing are a field's");
         return [&name_key(field)[..], &[NOTHING_TAG], &chunk.to_be_bytes()].concat();
     }
@@ -588,8 +590,8 @@ pub(super) fn set_key(kind: u8, field: Option<&str>, chunk: u16) -> Vec<u8> {
 }
 
 /// The prefix of every chunk of a set.
-pub(super) fn set_prefix(kind: u8, field: Option<&str>) -> Vec<u8> {
-    let mut k = set_key(kind, field, 0);
+pub(super) fn set_prefix(set: IndexSet, field: Option<&str>) -> Vec<u8> {
+    let mut k = set_key(set, field, 0);
     k.truncate(k.len() - 2);
     k
 }
@@ -608,12 +610,12 @@ pub(super) fn decode_set(bytes: &[u8]) -> Result<RoaringBitmap> {
 pub(super) fn read_set(
     t: &Tables,
     r: &RoTxn<'_>,
-    kind: u8,
+    set: IndexSet,
     field: Option<&str>,
 ) -> Result<RoaringBitmap> {
-    let prefix = set_prefix(kind, field);
+    let prefix = set_prefix(set, field);
     let mut out = RoaringBitmap::new();
-    for entry in set_table(kind).db(t).prefix_iter(r, &prefix)? {
+    for entry in set.table().db(t).prefix_iter(r, &prefix)? {
         let (k, v) = entry?;
         // The field name's terminator keeps a longer name out of the prefix;
         // only the 2-byte chunk follows it.
@@ -709,7 +711,7 @@ impl KvTxn<'_> {
     /// which the children deleted since the last reindex still are.
     fn has_live_kids(&self, parent: u32, field: &str, except: Option<u32>) -> Result<bool> {
         let mut kids =
-            self.read_chunked(Bitmaps::ParentHolders, &referrers_prefix(field, parent))?;
+            self.read_chunked(Bitmaps::ParentHolders, &parent_holders_prefix(field, parent))?;
         if let Some(id) = except {
             kids.remove(id);
         }
@@ -721,12 +723,12 @@ impl KvTxn<'_> {
     /// at [`Self::flush_sets`].
     pub(super) fn set_member(
         &self,
-        kind: u8,
+        set: IndexSet,
         field: Option<&str>,
         id: u32,
         member: bool,
     ) -> Result<()> {
-        self.chunk_member(set_table(kind), &set_prefix(kind, field), id, member)
+        self.chunk_member(set.table(), &set_prefix(set, field), id, member)
     }
 
     /// [`Self::set_member`] for a chunked bitmap of `table`, the key without
@@ -983,7 +985,7 @@ impl KvTxn<'_> {
         }
         for field in self.parent_fields(id)? {
             if self.has_live_kids(id, &field, None)? {
-                self.set_member(PARENTS, Some(&field), id, true)?;
+                self.set_member(IndexSet::Parents, Some(&field), id, true)?;
             }
         }
         Ok(())
@@ -1052,14 +1054,14 @@ impl KvTxn<'_> {
                 let pid =
                     self.target_id(&target_of(&row.value).expect("a position has a parent"))?;
                 if pid != NO_TARGET {
-                    self.set_member(PARENTS, Some(&row.name), pid, true)?;
+                    self.set_member(IndexSet::Parents, Some(&row.name), pid, true)?;
                 }
             }
         }
         self.chunk_member(Bitmaps::LiveMetarecords, &[], id, true)?;
         for field in self.parent_fields(id)? {
             if self.has_live_kids(id, &field, None)? {
-                self.set_member(PARENTS, Some(&field), id, true)?;
+                self.set_member(IndexSet::Parents, Some(&field), id, true)?;
             }
         }
         Ok(Some(rows.to_vec()))
@@ -1116,7 +1118,7 @@ impl KvTxn<'_> {
             let pid = self.target_id(&parent)?;
             let Some(id) = self.id(uuid.as_bytes())? else { return Ok(()) };
             if pid != NO_TARGET && !self.has_live_kids(pid, field, Some(id))? {
-                self.set_member(PARENTS, Some(field), pid, false)?;
+                self.set_member(IndexSet::Parents, Some(field), pid, false)?;
             }
         }
         Ok(())
@@ -1189,11 +1191,11 @@ impl KvTxn<'_> {
                 // to date below): it counts only if it keeps a row there.
                 let stays = rows.iter().any(|r| target_of(&r.value) == Some(parent));
                 let member = delta > 0 || self.has_live_kids(pid, field, (!stays).then_some(id))?;
-                self.set_member(PARENTS, Some(field), pid, member)?;
+                self.set_member(IndexSet::Parents, Some(field), pid, member)?;
             }
         }
-        let absent = rows.iter().any(|r| matches!(r.value, Value::Nothing));
-        self.set_member(ABSENT, Some(field), id, absent)?;
+        let nothing = rows.iter().any(|r| matches!(r.value, Value::Nothing));
+        self.set_member(IndexSet::Nothing, Some(field), id, nothing)?;
         let valued = rows.iter().filter(|r| !matches!(r.value, Value::Nothing)).count();
         self.derive_count(field, id, valued as u64, value, count_before)?;
         // Trigrams give candidates, which a search always checks: a text
@@ -1205,11 +1207,16 @@ impl KvTxn<'_> {
         if search_text(value).is_some() {
             let long =
                 rows.iter().filter_map(|r| search_text(&r.value)).any(|t| t.len() > TRIGRAM_MAX);
-            self.set_member(LONG_TEXTS, Some(field), id, long)?;
+            self.set_member(IndexSet::LongTexts, Some(field), id, long)?;
         }
         if let (Some((target, tid)), false) = (target, eventful) {
             let held = rows.iter().any(|r| target_of(&r.value) == Some(target));
-            self.chunk_member(Bitmaps::ParentHolders, &referrers_prefix(field, tid), id, held)?;
+            self.chunk_member(
+                Bitmaps::ParentHolders,
+                &parent_holders_prefix(field, tid),
+                id,
+                held,
+            )?;
         }
         match value {
             Value::TreeRef { parent: Some(parent), .. } => {
@@ -1265,16 +1272,20 @@ impl KvTxn<'_> {
     /// sees them.
     pub(super) fn holder_ids_now(&self, field: &str) -> Result<RoaringBitmap> {
         let mut out = self.holders_now(field)?;
-        out |= self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field)))?;
+        out |= self
+            .read_chunked(IndexSet::Nothing.table(), &set_prefix(IndexSet::Nothing, Some(field)))?;
         Ok(out)
     }
 
     /// The ids holding `value` in `field` as the transaction sees them — for
-    /// `Nothing`, the field's `absent` set ([`crate::store::Rows::value_holder_ids`]).
+    /// `Nothing`, the holders of `nothing` in the field ([`crate::store::Rows::value_holder_ids`]).
     pub(super) fn value_holders_now(&self, field: &str, value: &Value) -> Result<RoaringBitmap> {
         match value_key(value) {
             Some(key) => self.effective(field, value, &key),
-            None => self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field))),
+            None => self.read_chunked(
+                IndexSet::Nothing.table(),
+                &set_prefix(IndexSet::Nothing, Some(field)),
+            ),
         }
     }
 
@@ -1286,7 +1297,8 @@ impl KvTxn<'_> {
         for bit in 0..COUNT_BITS {
             counts.push(self.read_chunked(Bitmaps::ValueCounts, &count_prefix(field, bit))?);
         }
-        let unknown = self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field)))?;
+        let unknown = self
+            .read_chunked(IndexSet::Nothing.table(), &set_prefix(IndexSet::Nothing, Some(field)))?;
         // With a `Nothing` row, one value less makes as many rows.
         let mut over = counted_over(&counts, n);
         over |= match n.checked_sub(1) {
@@ -1342,7 +1354,7 @@ impl KvTxn<'_> {
     ) -> Result<()> {
         let mut state = self.gram_state(field)?;
         if state.by_ids {
-            return self.set_member(GRAM_PENDING, Some(field), id, true);
+            return self.set_member(IndexSet::TrigramPending, Some(field), id, true);
         }
         let Some(key) = new_text else { return Ok(()) };
         let before = state;
@@ -1374,8 +1386,8 @@ impl KvTxn<'_> {
             // No trigram is kept by metarecord yet: every holder is pending.
             let holders = self.holders_now(field)?;
             self.chunk_apply(
-                set_table(GRAM_PENDING),
-                &set_prefix(GRAM_PENDING, Some(field)),
+                IndexSet::TrigramPending.table(),
+                &set_prefix(IndexSet::TrigramPending, Some(field)),
                 &holders,
                 true,
             )?;
@@ -1419,8 +1431,10 @@ impl KvTxn<'_> {
         if !state.by_ids {
             return Ok(0);
         }
-        let pending =
-            self.read_chunked(set_table(GRAM_PENDING), &set_prefix(GRAM_PENDING, Some(field)))?;
+        let pending = self.read_chunked(
+            IndexSet::TrigramPending.table(),
+            &set_prefix(IndexSet::TrigramPending, Some(field)),
+        )?;
         Ok(pending.len() + u64::from(state.leftovers))
     }
 
@@ -1433,8 +1447,10 @@ impl KvTxn<'_> {
             if !state.by_ids {
                 return Ok(());
             }
-            let pending = self
-                .read_chunked(set_table(GRAM_PENDING), &set_prefix(GRAM_PENDING, Some(&field)))?;
+            let pending = self.read_chunked(
+                IndexSet::TrigramPending.table(),
+                &set_prefix(IndexSet::TrigramPending, Some(&field)),
+            )?;
             for id in &pending {
                 let uuid = match t.uuids.get(&self.txn.borrow(), &id.to_be_bytes())? {
                     Some(uuid) => uuid_of(uuid),
@@ -1456,8 +1472,8 @@ impl KvTxn<'_> {
                 }
             }
             self.chunk_apply(
-                set_table(GRAM_PENDING),
-                &set_prefix(GRAM_PENDING, Some(&field)),
+                IndexSet::TrigramPending.table(),
+                &set_prefix(IndexSet::TrigramPending, Some(&field)),
                 &pending,
                 false,
             )?;
@@ -2169,7 +2185,7 @@ impl KvStore {
                     }
                 }
                 if matches!(row.value, Value::Nothing) {
-                    group.absent = true;
+                    group.nothing = true;
                 } else {
                     group.valued += 1;
                 }
@@ -2181,7 +2197,7 @@ impl KvStore {
         group.flush(sink)?;
         for (field, set) in &parents {
             for id in set {
-                sink(Side::Expected, Entry::set(PARENTS, field, id))?;
+                sink(Side::Expected, Entry::set(IndexSet::Parents, field, id))?;
             }
         }
         let names: HashMap<u32, &str> =
@@ -2232,19 +2248,19 @@ impl KvStore {
 
         // Got: the derived tables, as they are.
         let tables = [
-            (Bitmaps::Parents, PARENTS),
-            (Bitmaps::LongTexts, LONG_TEXTS),
-            (Bitmaps::ParentHolders, REFERRERS),
-            (Bitmaps::Descendants, DESCENDANTS),
-            (Bitmaps::ValueHolders, POSTINGS),
-            (Bitmaps::ValueCounts, COUNT),
+            (Bitmaps::Parents, IndexSet::Parents),
+            (Bitmaps::LongTexts, IndexSet::LongTexts),
+            (Bitmaps::ParentHolders, IndexSet::ParentHolders),
+            (Bitmaps::Descendants, IndexSet::Descendants),
+            (Bitmaps::ValueHolders, IndexSet::ValueHolders),
+            (Bitmaps::ValueCounts, IndexSet::ValueCounts),
         ];
-        for (table, kind) in tables {
+        for (table, set) in tables {
             for entry in table.db(t).iter(r)? {
                 let (k, v) = entry?;
                 let (name, rest) = unesc(k)?;
                 let field = std::str::from_utf8(&name).context("a field name")?;
-                if kind == POSTINGS {
+                if set == IndexSet::ValueHolders {
                     // A posting is an entry per holder of its value or name.
                     let key = &rest[..rest.len() - 2];
                     let tag = VALUE;
@@ -2252,7 +2268,7 @@ impl KvStore {
                         // `nothing`'s holders: what the rows say as absence.
                         for id in decode_set(v)? {
                             if !sifted(id) {
-                                sink(Side::Got, Entry::set(ABSENT, field, id))?;
+                                sink(Side::Got, Entry::set(IndexSet::Nothing, field, id))?;
                             }
                         }
                         continue;
@@ -2271,12 +2287,12 @@ impl KvStore {
                     }
                     continue;
                 }
-                let (space, tag, key) = match kind {
-                    REFERRERS => (REFERRER, 0, &rest[..4]),
-                    DESCENDANTS => (DESCENDANT, 0, &rest[..4]),
+                let (space, tag, key) = match set {
+                    IndexSet::ParentHolders => (PARENT_HOLDER, 0, &rest[..4]),
+                    IndexSet::Descendants => (DESCENDANT, 0, &rest[..4]),
                     // One bit of the counts: a set of its own.
-                    COUNT => (SET, COUNT_TAG + rest[0], &rest[..0]),
-                    _ => (SET, kind, &rest[..0]),
+                    IndexSet::ValueCounts => (SET, COUNT_TAG + rest[0], &rest[..0]),
+                    _ => (SET, set as u8, &rest[..0]),
                 };
                 for id in decode_set(v)? {
                     if !sifted(id) {
@@ -2403,12 +2419,32 @@ impl Diff {
 
 /// The key spaces [`KvStore::check_derived`] compares entry by entry, by the
 /// name its lines give them.
-const SPACES: [&str; 5] = ["set", "referrer", "descendant", "part", "raw holder"];
+const SPACES: [&str; 5] = ["set", "parent holder", "descendant", "part", "raw holder"];
 const SET: usize = 0;
-/// The tag of a set holding a bit of the counts ([`COUNT`]): this, plus the
-/// bit's number — past every set kind.
+/// The tag of a set holding a bit of the counts ([`IndexSet::ValueCounts`]): this, plus the
+/// bit's number — past every [`IndexSet`].
 const COUNT_TAG: u8 = 100;
-const REFERRER: usize = 1;
+
+/// The set a tag of the check stands for, as a line names it.
+fn set_name(tag: u8) -> String {
+    if tag >= COUNT_TAG {
+        return format!("count bit {}", tag - COUNT_TAG);
+    }
+    let sets = [
+        IndexSet::Nothing,
+        IndexSet::Parents,
+        IndexSet::LongTexts,
+        IndexSet::ParentHolders,
+        IndexSet::Descendants,
+        IndexSet::ValueHolders,
+        IndexSet::TrigramPending,
+        IndexSet::ValueCounts,
+    ];
+    sets.into_iter()
+        .find(|s| *s as u8 == tag)
+        .map_or_else(|| format!("set {tag}"), |s| format!("{s:?}"))
+}
+const PARENT_HOLDER: usize = 1;
 const DESCENDANT: usize = 2;
 const PART: usize = 3;
 const RAW: usize = 4;
@@ -2433,7 +2469,7 @@ enum Side {
 #[derive(Clone, Copy)]
 struct Entry<'a> {
     space: usize,
-    /// The set kind, or the partition.
+    /// The [`IndexSet`], or the partition.
     tag: u8,
     field: &'a str,
     /// A partition key, or the uuid a referrer, a descendant or a child is
@@ -2445,8 +2481,8 @@ struct Entry<'a> {
 }
 
 impl<'a> Entry<'a> {
-    fn set(kind: u8, field: &'a str, id: u32) -> Entry<'a> {
-        Entry { space: SET, tag: kind, field, key: &[], id, count: 1 }
+    fn set(set: IndexSet, field: &'a str, id: u32) -> Entry<'a> {
+        Entry { space: SET, tag: set as u8, field, key: &[], id, count: 1 }
     }
 
     /// A hash of the whole entry; `buf` is scratch space.
@@ -2480,8 +2516,8 @@ impl<'a> Entry<'a> {
             })
         };
         Ok(match self.space {
-            SET => format!("({}, {field:?}, {who})", self.tag),
-            REFERRER | DESCENDANT => format!("({field:?}, {}, {who})", target()?),
+            SET => format!("({}, {field:?}, {who})", set_name(self.tag)),
+            PARENT_HOLDER | DESCENDANT => format!("({field:?}, {}, {who})", target()?),
             PART => format!("({field:?}, {}, {:?}, {who}): {}", self.tag, self.key, self.count),
             _ => format!(
                 "({}, {field:?}, {:?}, {who})",
@@ -2509,7 +2545,7 @@ struct Group {
     targets: BTreeSet<u32>,
     /// Non-`Nothing` rows.
     valued: usize,
-    absent: bool,
+    nothing: bool,
     long: bool,
 }
 
@@ -2530,11 +2566,11 @@ impl Group {
             emit(RAW, 0, raw, 1)?;
         }
         for target in &self.targets {
-            emit(REFERRER, 0, &target.to_be_bytes(), 1)?;
+            emit(PARENT_HOLDER, 0, &target.to_be_bytes(), 1)?;
         }
-        for (kind, holds) in [(ABSENT, self.absent), (LONG_TEXTS, self.long)] {
+        for (set, holds) in [(IndexSet::Nothing, self.nothing), (IndexSet::LongTexts, self.long)] {
             if holds {
-                emit(SET, kind, &[], 1)?;
+                emit(SET, set as u8, &[], 1)?;
             }
         }
         // The count of values, a set per bit.
@@ -2572,7 +2608,9 @@ impl GramCheck {
             let state = GramState::decode(t.index_trigram_state.get(r, &gram_state_key(field))?)?;
             let mut pending = RoaringBitmap::new();
             let pending_db = Bitmaps::TrigramPending.db(t);
-            for entry in pending_db.prefix_iter(r, &set_prefix(GRAM_PENDING, Some(field)))? {
+            for entry in
+                pending_db.prefix_iter(r, &set_prefix(IndexSet::TrigramPending, Some(field)))?
+            {
                 pending |= decode_set(entry?.1)?;
             }
             self.fields.insert(field.to_string(), (state, pending));
@@ -2682,7 +2720,7 @@ impl Detail {
     fn report(&self, diff: &mut Diff) {
         // Referrers and descendants first, then the sets, as the lines have
         // always come.
-        for space in [REFERRER, DESCENDANT, SET, PART, RAW] {
+        for space in [PARENT_HOLDER, DESCENDANT, SET, PART, RAW] {
             let (expected, got) = (&self.sides[0][space], &self.sides[1][space]);
             let what = SPACES[space];
             for e in expected.difference(got) {
@@ -2855,7 +2893,7 @@ mod tests {
         let cases: [(&str, Bitmaps, Vec<u8>); 3] = [
             ("set missing: ", Bitmaps::ValueCounts, count_prefix("kind", 0)),
             ("descendant missing: ", Bitmaps::Descendants, vec![]),
-            ("referrer missing: ", Bitmaps::ParentHolders, vec![]),
+            ("parent holder missing: ", Bitmaps::ParentHolders, vec![]),
         ];
         for (expected, table, prefix) in cases {
             let (store, _dir) = populated();

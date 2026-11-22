@@ -32,8 +32,7 @@ use roaring::RoaringBitmap;
 use super::super::{get_value, name_key, put_value, In, KvStore, KvTxn, Out, Tables};
 use super::{
     count_prefix, decode_set, hist_bucket, hist_key, posting_prefix, search_text, set_prefix,
-    set_table, unesc, value_key, Bitmaps, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS,
-    TRIGRAM_MAX,
+    unesc, value_key, Bitmaps, IndexSet, COUNT_BITS, TRIGRAM_MAX,
 };
 
 pub(crate) use crate::store::MassKind as Kind;
@@ -202,7 +201,7 @@ impl KvTxn<'_> {
     /// index write: not on a forest, whose positions are written one by one (doc
     /// "One position per forest"); nor the removal of a text too long for
     /// trigrams, the long-text set needing to know whether another such text
-    /// stays on the record. A `Nothing` is the field's `absent` set, and a
+    /// stays on the record. A `Nothing` is the holders of `nothing` in the field, and a
     /// text past its key's length a posting under a hashed key, like any
     /// value.
     pub(in super::super) fn mass_eligible(
@@ -245,11 +244,16 @@ impl KvTxn<'_> {
             }
         }
         let index_write = IndexWrite::new(kind, values, ids);
-        // A `Nothing` added or removed is the field's `absent` set, at once:
+        // A `Nothing` added or removed is the holders of `nothing` in the field, at once:
         // no value is counted, and no index write is needed to replay it.
         if kind != Kind::Replace && index_write.keys.is_empty() {
-            let absent = set_prefix(ABSENT, Some(field));
-            self.chunk_apply(set_table(ABSENT), &absent, &index_write.ids, kind == Kind::Add)?;
+            let nothing = set_prefix(IndexSet::Nothing, Some(field));
+            self.chunk_apply(
+                IndexSet::Nothing.table(),
+                &nothing,
+                &index_write.ids,
+                kind == Kind::Add,
+            )?;
             return self.append_entries(kind, field, &listed, &index_write.ids);
         }
         match kind {
@@ -263,8 +267,8 @@ impl KvTxn<'_> {
                     self.mass_grams(field, value, &gain)?;
                     if search_text(value).is_some_and(|t| t.len() > TRIGRAM_MAX) {
                         self.chunk_apply(
-                            set_table(LONG_TEXTS),
-                            &set_prefix(LONG_TEXTS, Some(field)),
+                            IndexSet::LongTexts.table(),
+                            &set_prefix(IndexSet::LongTexts, Some(field)),
                             &gain,
                             true,
                         )?;
@@ -288,8 +292,8 @@ impl KvTxn<'_> {
                 }
                 let unknown = index_write.values.iter().any(|v| matches!(v, Value::Nothing));
                 self.chunk_apply(
-                    set_table(ABSENT),
-                    &set_prefix(ABSENT, Some(field)),
+                    IndexSet::Nothing.table(),
+                    &set_prefix(IndexSet::Nothing, Some(field)),
                     &index_write.ids,
                     unknown,
                 )?;
@@ -299,8 +303,8 @@ impl KvTxn<'_> {
                     .filter_map(search_text)
                     .any(|t| t.len() > TRIGRAM_MAX);
                 self.chunk_apply(
-                    set_table(LONG_TEXTS),
-                    &set_prefix(LONG_TEXTS, Some(field)),
+                    IndexSet::LongTexts.table(),
+                    &set_prefix(IndexSet::LongTexts, Some(field)),
                     &index_write.ids,
                     long,
                 )?;
@@ -439,8 +443,8 @@ impl KvTxn<'_> {
         let Some(first) = ids.min() else { return Ok(()) };
         if self.gram_state(field)?.by_ids {
             return self.chunk_apply(
-                set_table(GRAM_PENDING),
-                &set_prefix(GRAM_PENDING, Some(field)),
+                IndexSet::TrigramPending.table(),
+                &set_prefix(IndexSet::TrigramPending, Some(field)),
                 ids,
                 true,
             );
@@ -450,8 +454,8 @@ impl KvTxn<'_> {
         // The field may have turned by metarecord on that text.
         if self.gram_state(field)?.by_ids {
             self.chunk_apply(
-                set_table(GRAM_PENDING),
-                &set_prefix(GRAM_PENDING, Some(field)),
+                IndexSet::TrigramPending.table(),
+                &set_prefix(IndexSet::TrigramPending, Some(field)),
                 ids,
                 true,
             )?;
@@ -719,8 +723,9 @@ impl KvTxn<'_> {
                 .value;
             out.push((value, places(&holders)));
         }
-        let unknown =
-            &self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field)))? & ids;
+        let unknown = &self
+            .read_chunked(IndexSet::Nothing.table(), &set_prefix(IndexSet::Nothing, Some(field)))?
+            & ids;
         if !unknown.is_empty() {
             out.push((Value::Nothing, places(&unknown)));
         }

@@ -13,14 +13,6 @@ Inventory from a diff of =dddf9437= (before the review) against =main=; the old
 names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 (=kvstore/mod.rs=) stay: they are the conversion's.
 
-** The vocabulary of the former kinds
-The byte of a former kind at the head of the index keys is gone (derived 25, November
-2026): the code names a table by =derived::Bitmaps=. What stays of the kinds is a
-vocabulary: the constants =PARENTS=, =ABSENT=, =REFERRERS=, =POSTINGS=, =COUNT=… as
-names of logical sets (=set_table=, the check's tags), the "part" =VALUE= / =NAME= of
-=source.rs=, "absent", "referrers", "postings", =gram_*= — to be gone through case by
-case.
-
 ** Concepts gone or changed
 - "snapshot" / =snaps= for the log: now a target and its before (=log_targets=).
   =snaps= stays in the sync store (=sync.rs=), left out of the review.

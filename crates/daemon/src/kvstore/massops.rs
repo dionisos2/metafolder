@@ -16,8 +16,8 @@ use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 use super::derived::{
-    count_prefix, decode_set, dense, referrers_prefix, set_prefix, set_table, Bitmaps, COUNT_BITS,
-    NO_TARGET, PARENTS, REFERRERS,
+    count_prefix, decode_set, dense, parent_holders_prefix, set_prefix, Bitmaps, IndexSet,
+    COUNT_BITS, NO_TARGET,
 };
 use super::entry::{self, Effect, Entry, FileAction, Header, Params};
 use super::mass::{entry_key, Written};
@@ -99,12 +99,12 @@ impl KvTxn<'_> {
         let changed = match kind {
             Kind::Add | Kind::Remove => {
                 let value = &values[0];
-                // A `Nothing` is held where the field's `absent` set says.
+                // A `Nothing` is held where the holders of `nothing` in the field says.
                 let have = match super::derived::value_key(value) {
                     Some(key) => self.effective(field, value, &key)?,
                     None => self.read_chunked(
-                        set_table(super::derived::ABSENT),
-                        &set_prefix(super::derived::ABSENT, Some(field)),
+                        super::derived::IndexSet::Nothing.table(),
+                        &set_prefix(super::derived::IndexSet::Nothing, Some(field)),
                     )?,
                 };
                 let changed = if kind == Kind::Add { ids - &have } else { ids & &have };
@@ -273,11 +273,13 @@ impl KvTxn<'_> {
         // children are unpicked one by one.
         let left = &universe - &changed;
         for field in &positional {
-            let parents =
-                self.read_chunked(set_table(PARENTS), &set_prefix(PARENTS, Some(field)))?;
+            let parents = self.read_chunked(
+                IndexSet::Parents.table(),
+                &set_prefix(IndexSet::Parents, Some(field)),
+            )?;
             for parent in &parents & &changed {
-                let kids =
-                    self.read_chunked(Bitmaps::ParentHolders, &referrers_prefix(field, parent))?;
+                let kids = self
+                    .read_chunked(Bitmaps::ParentHolders, &parent_holders_prefix(field, parent))?;
                 if !(&kids & &left).is_empty() {
                     return Ok(None);
                 }
@@ -318,12 +320,12 @@ impl KvTxn<'_> {
         Ok(Some(MassApplied { changed, last_op: last, touches_watch }))
     }
 
-    /// The fields with data under set kind `kind` (counts, referrers): the
-    /// names the keys of that kind begin with.
-    fn fields_with_sets(&self, kind: u8) -> Result<Vec<String>> {
+    /// The fields with data in the table of `set` (counts, referrers): the
+    /// names its keys begin with.
+    fn fields_with_sets(&self, set: IndexSet) -> Result<Vec<String>> {
         let txn = self.txn.borrow();
         let mut out: Vec<String> = Vec::new();
-        for e in set_table(kind).db(&self.t).iter(&txn)? {
+        for e in set.table().db(&self.t).iter(&txn)? {
             let (k, _) = e?;
             let (name, _) = super::derived::unesc(k)?;
             let name = String::from_utf8(name).context("a field name")?;
@@ -460,7 +462,7 @@ impl KvTxn<'_> {
         // Everything is read before anything is written: a `None` leaves the
         // transaction as it was.
         let mut counts: Vec<(String, Vec<Vec<u8>>, u64)> = Vec::new();
-        for field in self.fields_with_sets(super::derived::COUNT)? {
+        for field in self.fields_with_sets(super::derived::IndexSet::ValueCounts)? {
             let mut back = 0u64;
             for bit in 0..COUNT_BITS {
                 let plane = self.read_chunked(Bitmaps::ValueCounts, &count_prefix(&field, bit))?;
@@ -517,7 +519,7 @@ impl KvTxn<'_> {
             }
         }
         for field in positional {
-            let prefix = set_prefix(REFERRERS, Some(&field));
+            let prefix = set_prefix(IndexSet::ParentHolders, Some(&field));
             let mut groups: BTreeMap<u32, RoaringBitmap> = BTreeMap::new();
             {
                 let txn = self.txn.borrow();
@@ -560,7 +562,7 @@ impl KvTxn<'_> {
             }
         }
         for (field, parent) in parents {
-            self.set_member(PARENTS, Some(&field), parent, true)?;
+            self.set_member(IndexSet::Parents, Some(&field), parent, true)?;
         }
         // A deletion still pending stays so: the records it gave back hold its
         // before until it is folded, or a write to one copies it first.
@@ -602,7 +604,7 @@ impl KvTxn<'_> {
     /// left in `left` (the universe after the deletion) are no parents. One
     /// sequential pass over the field's referrers.
     fn parents_after(&self, field: &str, gone: &RoaringBitmap, left: &RoaringBitmap) -> Result<()> {
-        let prefix = set_prefix(REFERRERS, Some(field));
+        let prefix = set_prefix(IndexSet::ParentHolders, Some(field));
         // The stored chunks, the transaction's own in their stead: its earlier
         // writes are in the order they were made.
         let mut chunks: BTreeMap<(u32, u16), RoaringBitmap> = BTreeMap::new();
@@ -639,7 +641,7 @@ impl KvTxn<'_> {
                 continue;
             }
             if (&(&kids - gone) & left).is_empty() {
-                self.set_member(PARENTS, Some(field), parent, false)?;
+                self.set_member(IndexSet::Parents, Some(field), parent, false)?;
             }
         }
         Ok(())

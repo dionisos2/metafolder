@@ -28,7 +28,7 @@ use uuid::Uuid;
 use super::derived::index_writes::{self, IndexWrite};
 use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, read_set, text_key, type_tag,
-    value_key, NAME, VALUE,
+    value_key, IndexSet, NAME, VALUE,
 };
 use super::{mass, name_key, uuid_of, KvStore, Tables};
 use crate::index::keys::{sort_rep, CmpOp, SortRep};
@@ -454,7 +454,7 @@ impl KvSource<'_> {
                     None => return Ok(RoaringBitmap::new()),
                 }
             };
-            let prefix = derived::referrers_prefix(field, target);
+            let prefix = derived::parent_holders_prefix(field, target);
             let mut out = RoaringBitmap::new();
             for entry in self.t.index_parent_holders.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
@@ -567,8 +567,8 @@ impl KvSource<'_> {
         bm
     }
 
-    fn set(&self, kind: u8, field: Option<&str>) -> RoaringBitmap {
-        let bm = self.ok(read_set(&self.t, &self.r, kind, field), RoaringBitmap::new());
+    fn set(&self, set: IndexSet, field: Option<&str>) -> RoaringBitmap {
+        let bm = self.ok(read_set(&self.t, &self.r, set, field), RoaringBitmap::new());
         if !self.counted(1 + bm.max().map_or(0, |m| u64::from(m >> 16))) {
             return RoaringBitmap::new();
         }
@@ -874,7 +874,7 @@ impl KvSource<'_> {
 
     /// The ids holding a row of `field`, `Nothing` or not.
     fn holders(&self, field: &str) -> RoaringBitmap {
-        self.valued(field) | self.set(derived::ABSENT, Some(field))
+        self.valued(field) | self.set(derived::IndexSet::Nothing, Some(field))
     }
 
     /// The ids holding more than `n` rows of `field` — its values, and the
@@ -882,7 +882,7 @@ impl KvSource<'_> {
     /// being.
     fn rows_over(&self, field: &str, n: i64) -> RoaringBitmap {
         let counts = self.counts(field);
-        let unknown = self.set(derived::ABSENT, Some(field));
+        let unknown = self.set(derived::IndexSet::Nothing, Some(field));
         let Ok(n) = u64::try_from(n) else {
             return counts.into_iter().fold(unknown, |a, b| a | b);
         };
@@ -1064,7 +1064,8 @@ impl KvSource<'_> {
             return None;
         }
         let mut candidates = if self.gram_state(field).by_ids {
-            self.gram_ids(field, &grams, restrict) | self.set(derived::GRAM_PENDING, Some(field))
+            self.gram_ids(field, &grams, restrict)
+                | self.set(derived::IndexSet::TrigramPending, Some(field))
         } else {
             let part = self.text_part(field);
             let mut ids = RoaringBitmap::new();
@@ -1073,7 +1074,7 @@ impl KvSource<'_> {
             }
             ids
         };
-        candidates |= self.set(derived::LONG_TEXTS, Some(field));
+        candidates |= self.set(derived::IndexSet::LongTexts, Some(field));
         if let Some(r) = restrict {
             candidates &= r;
         }
@@ -1128,7 +1129,7 @@ impl KvSource<'_> {
                 }
                 ids
             };
-            let long = within(self.set(derived::LONG_TEXTS, Some(field)));
+            let long = within(self.set(derived::IndexSet::LongTexts, Some(field)));
             if !self.gram_state(field).by_ids {
                 let mut out = RoaringBitmap::new();
                 // A key cut and hashed does not hold its whole text: its
@@ -1147,7 +1148,7 @@ impl KvSource<'_> {
                 undecided -= &out;
                 return out | self.having(undecided, field, &text);
             }
-            let pending = within(self.set(derived::GRAM_PENDING, Some(field)));
+            let pending = within(self.set(derived::IndexSet::TrigramPending, Some(field)));
             // Checked one by one, unless the ids awaiting a fold are so many
             // that the scan below is the cheaper way to all of them.
             if plan::probes(pending.len(), self.present(field).len()) {
@@ -1266,7 +1267,7 @@ impl Source for KvSource<'_> {
     }
 
     fn absent(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        Cow::Owned(self.sift(self.set(derived::ABSENT, Some(field))))
+        Cow::Owned(self.sift(self.set(derived::IndexSet::Nothing, Some(field))))
     }
 
     fn value_type(&self, field: &str) -> Option<&str> {
@@ -1581,7 +1582,7 @@ impl Source for KvSource<'_> {
         let mut candidates = self.text_candidates(field, literals, within)?;
         // Most of them ids awaiting a fold, which no trigram narrowed: the
         // names are scanned first, so that only the matching nodes are read.
-        let pending = &candidates & self.set(derived::GRAM_PENDING, Some(field));
+        let pending = &candidates & self.set(derived::IndexSet::TrigramPending, Some(field));
         if !plan::probes(pending.len(), self.present(field).len()) {
             candidates = self.sift(self.scan(field, NAME, &name_of, keep, literals, within));
         }
@@ -1689,7 +1690,7 @@ impl Source for KvSource<'_> {
     }
 
     fn parents(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        Cow::Owned(self.sift(self.set(derived::PARENTS, Some(field))))
+        Cow::Owned(self.sift(self.set(derived::IndexSet::Parents, Some(field))))
     }
 
     fn sort_reps(&self, field: &str, want_max: bool) -> RepReader<'_> {
