@@ -16,7 +16,6 @@ names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 ** Tables and keys renamed, still in the code
 | Old | Now | Where it stays |
 |-----+-----+----------------|
-| =events= (=derived::events=, =Event=, =read_events=, "pending events") | =index_pending_writes= ("pending index write") | =events.rs=, =source.rs= |
 | =kids= | =index_parents= / =index_raw_holder= | =massops.rs=, =derived.rs=, =log_view.rs=, tests |
 | =mass= (=mass.rs=, =massops.rs=, =mass_op=) | =pending_writes= | kvstore, =bench/regression/storage.rs= |
 | =watcher_ops= / =user_ops= | =log_watcher_entries= / =log_user_entries= | =log.rs=, =config.rs=, =daemon_config.rs= |

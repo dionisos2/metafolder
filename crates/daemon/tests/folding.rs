@@ -25,7 +25,7 @@ fn setup() -> (Arc<RepoState>, TempDir) {
 fn pending(repo: &RepoState) -> usize {
     let conn = repo.conn.lock().unwrap();
     let kv = Rows::as_kv(&*conn).unwrap();
-    kv.pending_mass().unwrap() + kv.pending_events("tag").unwrap()
+    kv.pending_mass().unwrap() + kv.pending_index_writes("tag").unwrap()
 }
 
 #[test]

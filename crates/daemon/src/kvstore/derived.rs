@@ -35,8 +35,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-#[path = "events.rs"]
-pub(super) mod events;
+#[path = "index_writes.rs"]
+pub(super) mod index_writes;
 
 use anyhow::{bail, Context, Result};
 use heed::RoTxn;
@@ -54,7 +54,7 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`.
+/// sets; 10: the fields' pending index writes; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`.
 pub(super) const DERIVED_VERSION: i64 = 25;
 
 /// Set kinds: which set a bitmap is, its table ([`set_table`]) and the key it
@@ -1161,7 +1161,7 @@ impl KvTxn<'_> {
         // are what the referrers and the name postings hold.
         if let Some(k) = value_key(value).filter(|_| value.position().is_none()) {
             if eventful {
-                self.single_event(field, value, id, delta > 0)?;
+                self.single_index_write(field, value, id, delta > 0)?;
             } else {
                 // A record is in a value's posting while one of its rows has
                 // its key: a row going leaves it only if no other does.
@@ -1637,7 +1637,7 @@ impl KvTxn<'_> {
         self.universe.borrow_mut().clear();
         self.grams.borrow_mut().clear();
         self.grams_changed.borrow_mut().clear();
-        self.events.borrow_mut().clear();
+        self.index_writes.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
         // The numbering (`ids`, `live_metarecords`) is primary: a reindex
@@ -1910,7 +1910,7 @@ impl KvStore {
     /// Integrates what the writes left pending for a quiet moment: the
     /// trigrams of the fields kept by metarecord (doc "Text search in the
     /// store"). A reindex does as much.
-    /// Folds the biggest list pending — a part's entries, a field's events
+    /// Folds the biggest list pending — a part's entries, a field's index writes
     /// or a field's pending trigrams — in one transaction of its own, so
     /// that what waits for the store waits for one list (doc "Folding in
     /// idle time"). Returns whether there was one.
@@ -1934,19 +1934,19 @@ impl KvStore {
         let mut parts = std::collections::BTreeSet::new();
         for entry in self.t.pending_writes.iter(&r)? {
             let (k, v) = entry?;
-            wear.mass_entries += 1;
-            wear.mass_bytes += (k.len() + v.len()) as u64;
+            wear.pending_writes += 1;
+            wear.pending_write_bytes += (k.len() + v.len()) as u64;
             parts.insert(u32::from_be_bytes(k[..4].try_into().expect("a part")));
         }
-        wear.mass_parts = parts.len();
+        wear.pending_write_parts = parts.len();
         let mut fields = std::collections::BTreeSet::new();
         for entry in self.t.index_pending_writes.iter(&r)? {
             let (k, v) = entry?;
-            wear.events += 1;
-            wear.event_bytes += (k.len() + v.len()) as u64;
+            wear.index_writes += 1;
+            wear.index_write_bytes += (k.len() + v.len()) as u64;
             fields.insert(unesc(k)?.0);
         }
-        wear.event_fields = fields.len();
+        wear.index_write_fields = fields.len();
         for entry in Bitmaps::TrigramPending.db(&self.t).iter(&r)? {
             wear.trigrams_pending += decode_set(entry?.1)?.len();
         }
@@ -1960,7 +1960,7 @@ impl KvStore {
     pub fn fold(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
         txn.fold_all_mass()?;
-        txn.fold_all_events()?;
+        txn.fold_all_index_writes()?;
         txn.fold_grams()?;
         while txn.index_log_step(super::entry::INDEX_BUDGET)? {}
         txn.finish()?;
@@ -2222,16 +2222,16 @@ impl KvStore {
         }
         drop(parent_of);
 
-        // The fields with events pending (doc "Mass writes in the store"):
+        // The fields with index writes pending (doc "Mass writes in the store"):
         // what is stored of their values is behind by them, and is held to
-        // the rows as replayed — each event list as it reads on the value
+        // the rows as replayed — each index write list as it reads on the value
         // partition, and on the referrers.
-        let mut pending: HashMap<String, (Vec<events::Event>, ())> = HashMap::new();
+        let mut pending: HashMap<String, (Vec<index_writes::IndexWrite>, ())> = HashMap::new();
         for entry in t.index_pending_writes.iter(r)? {
             let (name, _) = unesc(entry?.0)?;
             let field = String::from_utf8(name).context("a field name")?;
             if let std::collections::hash_map::Entry::Vacant(slot) = pending.entry(field) {
-                let list = events::read_events(t, r, slot.key())?;
+                let list = index_writes::read_index_writes(t, r, slot.key())?;
                 slot.insert((list, ()));
             }
         }
@@ -2265,7 +2265,9 @@ impl KvStore {
                     }
                     let replayed = pending.get(field).filter(|_| tag == VALUE);
                     for id in decode_set(v)? {
-                        if replayed.is_some_and(|(e, _)| !events::replay_one(e, key, id, true)) {
+                        if replayed
+                            .is_some_and(|(e, _)| !index_writes::replay_one(e, key, id, true))
+                        {
                             continue;
                         }
                         if !sifted(id) {
@@ -2289,10 +2291,10 @@ impl KvStore {
                 }
             }
         }
-        // What the events add and nothing stores yet, under the values they
+        // What the index writes add and nothing stores yet, under the values they
         // name.
         for (field, (list, _)) in &pending {
-            for key in events::named(list) {
+            for key in index_writes::named(list) {
                 let run = posting_prefix(field, &key);
                 let mut stored = RoaringBitmap::new();
                 for entry in Bitmaps::ValueHolders.db(t).prefix_iter(r, &run)? {
@@ -2301,7 +2303,7 @@ impl KvStore {
                         stored |= decode_set(v)?;
                     }
                 }
-                for id in events::replay(list, &key, stored.clone()) - stored {
+                for id in index_writes::replay(list, &key, stored.clone()) - stored {
                     if !sifted(id) {
                         let entry =
                             Entry { space: PART, tag: VALUE, field, key: &key, id, count: 1 };
@@ -2340,7 +2342,7 @@ impl KvStore {
             let (name, bucket) = unesc(key)?;
             Ok(format!("({:?}, {bucket:?})", String::from_utf8_lossy(&name)))
         };
-        // A field with events pending counts the rows a replacement removed
+        // A field with index writes pending counts the rows a replacement removed
         // until its fold: its histogram is not held to the rows.
         let mut behind: BTreeSet<Vec<u8>> = BTreeSet::new();
         for entry in self.t.index_pending_writes.iter(r)? {
@@ -3021,13 +3023,13 @@ mod tests {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Wear {
     /// Entries of the parts' lists, the parts they are in, their bytes.
-    pub mass_entries: usize,
-    pub mass_parts: usize,
-    pub mass_bytes: u64,
-    /// Pending events, the fields they are in, their bytes.
-    pub events: usize,
-    pub event_fields: usize,
-    pub event_bytes: u64,
+    pub pending_writes: usize,
+    pub pending_write_parts: usize,
+    pub pending_write_bytes: u64,
+    /// Pending index writes, the fields they are in, their bytes.
+    pub index_writes: usize,
+    pub index_write_fields: usize,
+    pub index_write_bytes: u64,
     /// Ids whose trigrams a fold has still to build.
     pub trigrams_pending: u64,
     /// Dense ids ever handed out, and those of metarecords that exist.
@@ -3038,7 +3040,7 @@ pub struct Wear {
 impl Wear {
     /// The bytes a fold would write in.
     pub fn pending_bytes(&self) -> u64 {
-        self.mass_bytes + self.event_bytes + self.trigrams_pending
+        self.pending_write_bytes + self.index_write_bytes + self.trigrams_pending
     }
 
     /// Ids no live metarecord holds (deleted ones, reserved ones).

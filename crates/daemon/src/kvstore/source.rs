@@ -25,7 +25,7 @@ use metafolder_core::metarecord::Value;
 use roaring::{MultiOps, RoaringBitmap};
 use uuid::Uuid;
 
-use super::derived::events::{self, Event};
+use super::derived::index_writes::{self, IndexWrite};
 use super::derived::{
     self, dense, hist_bucket, hist_key, id_of, long_prefix, read_set, text_key, type_tag,
     value_key, NAME, VALUE,
@@ -51,9 +51,9 @@ pub struct KvSource<'s> {
     /// The universe's chunks read one at a time, before anything needed it
     /// whole ([`KvSource::is_live`]).
     live_chunks: RefCell<BTreeMap<u16, RoaringBitmap>>,
-    /// Each field's pending events, read once (doc "Mass writes in the
+    /// Each field's pending index writes, read once (doc "Mass writes in the
     /// store"): what is stored of the field's values is behind by them.
-    events: RefCell<BTreeMap<String, std::rc::Rc<Vec<Event>>>>,
+    index_writes: RefCell<BTreeMap<String, std::rc::Rc<Vec<IndexWrite>>>>,
     /// Whether any part has entries pending, which a record is read with
     /// applied ([`mass`]).
     mass: bool,
@@ -70,7 +70,7 @@ impl KvStore {
             store_reads: &self.reads,
             live: std::cell::OnceCell::new(),
             live_chunks: RefCell::new(BTreeMap::new()),
-            events: RefCell::new(BTreeMap::new()),
+            index_writes: RefCell::new(BTreeMap::new()),
             mass: self.mass_pending(),
         })
     }
@@ -176,8 +176,8 @@ impl KvSource<'_> {
     /// not read holder by holder: its holders are handed over as one run, and
     /// the walk resumes past it.
     ///
-    /// With events pending on the field (doc "Mass writes in the store"),
-    /// what is stored is behind by them. The values the events name are
+    /// With index writes pending on the field (doc "Mass writes in the store"),
+    /// what is stored is behind by them. The values the index writes name are
     /// stepped over where they are stored and handed over at their place in
     /// the order, their holders replayed — one that is not stored yet
     /// included; any other value has only lost the records a replacement was
@@ -213,11 +213,11 @@ impl KvSource<'_> {
         // Before the start in the walk's direction: already paged.
         let before_start =
             |rep: &SortRep| start.is_some_and(|s| if want_max { rep > s } else { rep < s });
-        let pending = self.events(field);
-        let replaced = events::replaced(&pending);
-        // The values the events name, in the walk's order, each handed over
+        let pending = self.index_writes(field);
+        let replaced = index_writes::replaced(&pending);
+        // The values the index writes name, in the walk's order, each handed over
         // once: when the walk reaches its place.
-        let named = events::named(&pending);
+        let named = index_writes::named(&pending);
         let mut ahead: Vec<&Vec<u8>> = named.iter().collect();
         if !want_max {
             ahead.reverse();
@@ -283,7 +283,7 @@ impl KvSource<'_> {
                 return false;
             }
             *run_key = None;
-            // A value the events name was handed over just now, replayed.
+            // A value the index writes name was handed over just now, replayed.
             if named.contains(key) {
                 return true;
             }
@@ -327,18 +327,18 @@ impl KvSource<'_> {
         self.reads.get()
     }
 
-    /// `field`'s pending events, oldest first; a read each, once.
-    fn events(&self, field: &str) -> std::rc::Rc<Vec<Event>> {
-        if let Some(known) = self.events.borrow().get(field) {
+    /// `field`'s pending index writes, oldest first; a read each, once.
+    fn index_writes(&self, field: &str) -> std::rc::Rc<Vec<IndexWrite>> {
+        if let Some(known) = self.index_writes.borrow().get(field) {
             return known.clone();
         }
-        let read = || -> Result<Vec<Event>> {
-            let found = events::read_events(&self.t, &self.r, field)?;
+        let read = || -> Result<Vec<IndexWrite>> {
+            let found = index_writes::read_index_writes(&self.t, &self.r, field)?;
             self.read_keys(1 + found.len() as u64)?;
             Ok(found)
         };
         let found = std::rc::Rc::new(self.ok(read(), Vec::new()));
-        self.events.borrow_mut().insert(field.to_string(), found.clone());
+        self.index_writes.borrow_mut().insert(field.to_string(), found.clone());
         found
     }
 
@@ -634,8 +634,8 @@ impl KvSource<'_> {
         self.scan_part(field, part, from, to, keep)
     }
 
-    /// [`Self::part_ids`], with the field's pending events replayed, in the value partition (doc "Mass
-    /// writes in the store"). The values an event names are left out of the
+    /// [`Self::part_ids`], with the field's pending index writes replayed, in the value partition (doc "Mass
+    /// writes in the store"). The values an index write names are left out of the
     /// scan of what is stored and read one by one, replayed; any other value
     /// has only lost the records a replacement was written on.
     fn scan_part(
@@ -646,14 +646,14 @@ impl KvSource<'_> {
         to: Bound<&[u8]>,
         keep: &dyn Fn(&[u8]) -> bool,
     ) -> RoaringBitmap {
-        let pending = if part == VALUE { self.events(field) } else { Default::default() };
+        let pending = if part == VALUE { self.index_writes(field) } else { Default::default() };
         if pending.is_empty() {
             return self.scan_stored(field, part, from, to, keep);
         }
-        let named = events::named(&pending);
+        let named = index_writes::named(&pending);
         let unnamed = |k: &[u8]| !named.contains(k) && keep(k);
         let mut out = self.scan_stored(field, part, from, to, &unnamed);
-        out -= events::replaced(&pending);
+        out -= index_writes::replaced(&pending);
         // A key is in the range when its entries are: a key, then an id.
         let within = |k: &[u8]| {
             let (first, last) = ([k, &[0; 4][..]].concat(), [k, &ID_MAX[..]].concat());
@@ -670,7 +670,7 @@ impl KvSource<'_> {
             above && below
         };
         for key in named.iter().filter(|k| within(k) && keep(k)) {
-            out |= events::replay(&pending, key, self.bucket_stored(field, part, key));
+            out |= index_writes::replay(&pending, key, self.bucket_stored(field, part, key));
         }
         out
     }
@@ -735,14 +735,14 @@ impl KvSource<'_> {
     }
 
     /// The ids holding exactly `key` in a partition: what is stored, with the
-    /// field's pending events replayed.
+    /// field's pending index writes replayed.
     fn bucket(&self, field: &str, part: u8, key: &[u8]) -> RoaringBitmap {
         let stored = self.bucket_stored(field, part, key);
-        let pending = if part == VALUE { self.events(field) } else { Default::default() };
+        let pending = if part == VALUE { self.index_writes(field) } else { Default::default() };
         if pending.is_empty() {
             return stored;
         }
-        events::replay(&pending, key, stored)
+        index_writes::replay(&pending, key, stored)
     }
 
     /// The ids stored under exactly `key` in a partition — its posting.
@@ -1720,10 +1720,10 @@ impl Source for KvSource<'_> {
         if !matches!(self.kind(field), Some(Kind::Categorical | Kind::Numeric | Kind::Datetime)) {
             return false;
         }
-        // A value the pending events name is walked at its key: one whose
+        // A value the pending index writes name is walked at its key: one whose
         // key does not hold it whole has no place there, and the page is
         // fetched, from the rows.
-        if events::named(&self.events(field)).iter().any(|k| key_rep(k).is_none()) {
+        if index_writes::named(&self.index_writes(field)).iter().any(|k| key_rep(k).is_none()) {
             return false;
         }
         let start_key = match start {

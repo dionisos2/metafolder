@@ -1,21 +1,21 @@
-//! The pending events of a field's values (doc "Mass writes in the store").
+//! The pending index writes of a field's values (doc "Mass writes in the store").
 //!
 //! A write to many records at once does not file each record under the value
 //! it gains, nor take each out of the values it loses — which it would have
-//! to read: it appends one *event* to the field's list, naming the operation
+//! to read: it appends one *index write* to the field's list, naming the operation
 //! and the records. A value's holders are then what is stored — its run of
 //! the value partition or its posting, and for a reference its referrers —
-//! with the field's events replayed over it, in order:
+//! with the field's index writes replayed over it, in order:
 //!
-//! | event                    | a value's holders become                    |
+//! | index write                    | a value's holders become                    |
 //! |--------------------------|---------------------------------------------|
 //! | add `v` to `B`           | `∪ B` for `v`                               |
 //! | remove `v` from `B`      | `∖ B` for `v`                               |
 //! | replace by `vals` on `B` | `∖ B`, then `∪ B` for the values of `vals`  |
 //!
-//! A replacement never names the values it removes. While a field has events
-//! pending, a write to one record of it is an event too — of one id — or the
-//! replay would put an older event over it. A *fold* writes the events into
+//! A replacement never names the values it removes. While a field has index writes
+//! pending, a write to one record of it is an index write too — of one id — or the
+//! replay would put an older index write over it. A *fold* writes the index writes into
 //! what is stored and empties the list.
 //!
 //! | table  | key                 | value                               |
@@ -38,9 +38,9 @@ use super::{
 
 pub(crate) use crate::store::MassKind as Kind;
 
-/// One pending event of a field.
+/// One pending index write of a field.
 #[derive(Clone)]
-pub(crate) struct Event {
+pub(crate) struct IndexWrite {
     pub(crate) kind: Kind,
     pub(crate) values: Vec<Value>,
     /// The value keys of `values`, those of a `Nothing` left out.
@@ -48,10 +48,10 @@ pub(crate) struct Event {
     pub(crate) ids: RoaringBitmap,
 }
 
-impl Event {
-    pub(crate) fn new(kind: Kind, values: Vec<Value>, ids: RoaringBitmap) -> Event {
+impl IndexWrite {
+    pub(crate) fn new(kind: Kind, values: Vec<Value>, ids: RoaringBitmap) -> IndexWrite {
         let keys = values.iter().filter_map(value_key).collect();
-        Event { kind, values, keys, ids }
+        IndexWrite { kind, values, keys, ids }
     }
 
     fn encode(&self) -> Vec<u8> {
@@ -73,7 +73,7 @@ impl Event {
         out.0
     }
 
-    fn decode(bytes: &[u8]) -> Result<Event> {
+    fn decode(bytes: &[u8]) -> Result<IndexWrite> {
         let mut r = In(bytes);
         let kind = match r.int()? {
             0 => Kind::Add,
@@ -87,13 +87,13 @@ impl Event {
             values.push(get_value(&mut r)?);
         }
         let ids = decode_set(r.bytes()?)?;
-        Ok(Event::new(kind, values, ids))
+        Ok(IndexWrite::new(kind, values, ids))
     }
 }
 
 /// The key of a pending index write of `field`, in `chunk`, of write number
 /// `seq`.
-fn event_key(field: &str, chunk: u16, seq: i64) -> Vec<u8> {
+fn index_write_key(field: &str, chunk: u16, seq: i64) -> Vec<u8> {
     [&name_key(field)[..], &chunk.to_be_bytes(), &seq.to_be_bytes()].concat()
 }
 
@@ -113,19 +113,23 @@ pub(crate) fn by_chunk(ids: &RoaringBitmap) -> Vec<(u16, RoaringBitmap)> {
     out
 }
 
-/// `field`'s pending events, chunk by chunk, oldest first in each: for any
+/// `field`'s pending index writes, chunk by chunk, oldest first in each: for any
 /// one id, the order they were written in.
-pub(crate) fn read_events(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<Event>> {
+pub(crate) fn read_index_writes(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<IndexWrite>> {
     let mut out = Vec::new();
     for entry in t.index_pending_writes.prefix_iter(r, &name_key(field))? {
-        out.push(Event::decode(entry?.1)?);
+        out.push(IndexWrite::decode(entry?.1)?);
     }
     Ok(out)
 }
 
-/// The holders of the value of key `key`, `stored` with `events` replayed.
-pub(crate) fn replay(events: &[Event], key: &[u8], mut holders: RoaringBitmap) -> RoaringBitmap {
-    for e in events {
+/// The holders of the value of key `key`, `stored` with `index_writes` replayed.
+pub(crate) fn replay(
+    index_writes: &[IndexWrite],
+    key: &[u8],
+    mut holders: RoaringBitmap,
+) -> RoaringBitmap {
+    for e in index_writes {
         let named = e.keys.iter().any(|k| k == key);
         match e.kind {
             Kind::Add if named => holders |= &e.ids,
@@ -143,9 +147,9 @@ pub(crate) fn replay(events: &[Event], key: &[u8], mut holders: RoaringBitmap) -
 }
 
 /// Whether `id`, which held (`held`) or not the value of key `key`, holds it
-/// once `events` are replayed.
-pub(crate) fn replay_one(events: &[Event], key: &[u8], id: u32, mut held: bool) -> bool {
-    for e in events.iter().filter(|e| e.ids.contains(id)) {
+/// once `index_writes` are replayed.
+pub(crate) fn replay_one(index_writes: &[IndexWrite], key: &[u8], id: u32, mut held: bool) -> bool {
+    for e in index_writes.iter().filter(|e| e.ids.contains(id)) {
         let named = e.keys.iter().any(|k| k == key);
         match e.kind {
             Kind::Add if named => held = true,
@@ -157,45 +161,45 @@ pub(crate) fn replay_one(events: &[Event], key: &[u8], id: u32, mut held: bool) 
     held
 }
 
-/// The keys `events` name: the only values whose holders an event may add to.
+/// The keys `index_writes` name: the only values whose holders an index write may add to.
 /// Any other value only loses the records a replacement was written on
 /// ([`replaced`]).
-pub(crate) fn named(events: &[Event]) -> BTreeSet<Vec<u8>> {
-    events.iter().flat_map(|e| e.keys.iter().cloned()).collect()
+pub(crate) fn named(index_writes: &[IndexWrite]) -> BTreeSet<Vec<u8>> {
+    index_writes.iter().flat_map(|e| e.keys.iter().cloned()).collect()
 }
 
-/// The records `events` replaced the field of: what a value no event names
+/// The records `index_writes` replaced the field of: what a value no index write names
 /// has lost.
-pub(crate) fn replaced(events: &[Event]) -> RoaringBitmap {
+pub(crate) fn replaced(index_writes: &[IndexWrite]) -> RoaringBitmap {
     let mut out = RoaringBitmap::new();
-    for e in events.iter().filter(|e| e.kind == Kind::Replace) {
+    for e in index_writes.iter().filter(|e| e.kind == Kind::Replace) {
         out |= &e.ids;
     }
     out
 }
 
 impl KvStore {
-    /// How many events `field` has pending.
-    pub fn pending_events(&self, field: &str) -> Result<usize> {
+    /// How many index writes `field` has pending.
+    pub fn pending_index_writes(&self, field: &str) -> Result<usize> {
         let r = self.env.read_txn()?;
-        Ok(read_events(&self.t, &r, field)?.len())
+        Ok(read_index_writes(&self.t, &r, field)?.len())
     }
 }
 
 impl KvTxn<'_> {
-    /// How many events `field` has pending, as the transaction sees it.
+    /// How many index writes `field` has pending, as the transaction sees it.
     pub(in super::super) fn eventful(&self, field: &str) -> Result<usize> {
-        if let Some(n) = self.events.borrow().get(field) {
+        if let Some(n) = self.index_writes.borrow().get(field) {
             return Ok(*n);
         }
         let prefix = name_key(field);
         let n = self.t.index_pending_writes.prefix_iter(&self.txn.borrow(), &prefix)?.count();
-        self.events.borrow_mut().insert(field.to_string(), n);
+        self.index_writes.borrow_mut().insert(field.to_string(), n);
         Ok(n)
     }
 
     /// Whether a write of `values` to many records of `field` can be one
-    /// event: not on a forest, whose positions are written one by one (doc
+    /// index write: not on a forest, whose positions are written one by one (doc
     /// "One position per forest"); nor the removal of a text too long for
     /// trigrams, the long-text set needing to know whether another such text
     /// stays on the record. A `Nothing` is the field's `absent` set, and a
@@ -221,7 +225,7 @@ impl KvTxn<'_> {
     }
 
     /// The rows of a write to many records of `field`, `ids`, are written:
-    /// what they derive, as one event on `ids` and a few set operations.
+    /// what they derive, as one index write on `ids` and a few set operations.
     pub(in super::super) fn mass_end_ids(
         &self,
         field: &str,
@@ -234,26 +238,26 @@ impl KvTxn<'_> {
             return Ok(());
         }
         // A target no metarecord has gets its id now, as a write to one
-        // record gives it: the event names it by that id until the fold.
+        // record gives it: the index write names it by that id until the fold.
         for value in &values {
             if let Value::Ref(target) = value {
                 self.target_id(target.as_bytes())?;
             }
         }
-        let event = Event::new(kind, values, ids);
+        let index_write = IndexWrite::new(kind, values, ids);
         // A `Nothing` added or removed is the field's `absent` set, at once:
-        // no value is counted, and no event is needed to replay it.
-        if kind != Kind::Replace && event.keys.is_empty() {
+        // no value is counted, and no index write is needed to replay it.
+        if kind != Kind::Replace && index_write.keys.is_empty() {
             let absent = set_prefix(ABSENT, Some(field));
-            self.chunk_apply(set_table(ABSENT), &absent, &event.ids, kind == Kind::Add)?;
-            return self.append_entries(kind, field, &listed, &event.ids);
+            self.chunk_apply(set_table(ABSENT), &absent, &index_write.ids, kind == Kind::Add)?;
+            return self.append_entries(kind, field, &listed, &index_write.ids);
         }
         match kind {
             Kind::Add | Kind::Remove => {
-                let (value, key) = (&event.values[0], &event.keys[0]);
+                let (value, key) = (&index_write.values[0], &index_write.keys[0]);
                 let have = self.effective(field, value, key)?;
                 if kind == Kind::Add {
-                    let gain = &event.ids - &have;
+                    let gain = &index_write.ids - &have;
                     self.count_step(field, &gain, true)?;
                     self.hist_bump(field, key, gain.len() as i64)?;
                     self.mass_grams(field, value, &gain)?;
@@ -266,39 +270,50 @@ impl KvTxn<'_> {
                         )?;
                     }
                 } else {
-                    let lose = &event.ids & &have;
+                    let lose = &index_write.ids & &have;
                     self.count_step(field, &lose, false)?;
                     self.hist_bump(field, key, -(lose.len() as i64))?;
                 }
             }
             Kind::Replace => {
-                let n = event.keys.len() as u64;
+                let n = index_write.keys.len() as u64;
                 for bit in 0..COUNT_BITS {
                     let prefix = count_prefix(field, bit);
-                    self.chunk_apply(Bitmaps::ValueCounts, &prefix, &event.ids, n >> bit & 1 == 1)?;
+                    self.chunk_apply(
+                        Bitmaps::ValueCounts,
+                        &prefix,
+                        &index_write.ids,
+                        n >> bit & 1 == 1,
+                    )?;
                 }
-                let unknown = event.values.iter().any(|v| matches!(v, Value::Nothing));
+                let unknown = index_write.values.iter().any(|v| matches!(v, Value::Nothing));
                 self.chunk_apply(
                     set_table(ABSENT),
                     &set_prefix(ABSENT, Some(field)),
-                    &event.ids,
+                    &index_write.ids,
                     unknown,
                 )?;
-                let long =
-                    event.values.iter().filter_map(search_text).any(|t| t.len() > TRIGRAM_MAX);
+                let long = index_write
+                    .values
+                    .iter()
+                    .filter_map(search_text)
+                    .any(|t| t.len() > TRIGRAM_MAX);
                 self.chunk_apply(
                     set_table(LONG_TEXTS),
                     &set_prefix(LONG_TEXTS, Some(field)),
-                    &event.ids,
+                    &index_write.ids,
                     long,
                 )?;
-                for (value, key) in
-                    event.values.iter().filter(|v| value_key(v).is_some()).zip(&event.keys)
+                for (value, key) in index_write
+                    .values
+                    .iter()
+                    .filter(|v| value_key(v).is_some())
+                    .zip(&index_write.keys)
                 {
                     // The rows the replacement removed leave their buckets
                     // at the fold, which is what knows them.
-                    self.hist_bump(field, key, event.ids.len() as i64)?;
-                    self.mass_grams(field, value, &event.ids)?;
+                    self.hist_bump(field, key, index_write.ids.len() as i64)?;
+                    self.mass_grams(field, value, &index_write.ids)?;
                 }
             }
         }
@@ -309,24 +324,27 @@ impl KvTxn<'_> {
             // chunk, it waits too, or the replay of the older one would
             // undo it.
             Kind::Add | Kind::Remove => {
-                let (direct, waiting) = self.split_pending(field, &event.ids)?;
+                let (direct, waiting) = self.split_pending(field, &index_write.ids)?;
                 if !direct.is_empty() {
-                    let (value, key) = (&event.values[0], &event.keys[0]);
+                    let (value, key) = (&index_write.values[0], &index_write.keys[0]);
                     let have = self.stored_holders(field, key)?;
                     let add = kind == Kind::Add;
                     let ids = if add { &direct - &have } else { &direct & &have };
                     self.store_holders(field, Some(value), key, &ids, add)?;
                 }
                 if !waiting.is_empty() {
-                    self.append_event(field, &Event { ids: waiting, ..event.clone() })?;
+                    self.append_index_write(
+                        field,
+                        &IndexWrite { ids: waiting, ..index_write.clone() },
+                    )?;
                 }
             }
             // A set or an unset does not know the values it removes: it
             // waits for the fold, which finds them.
-            Kind::Replace => self.append_event(field, &event)?,
+            Kind::Replace => self.append_index_write(field, &index_write)?,
         }
         // The rows the write did not put into the records.
-        self.append_entries(kind, field, &listed, &event.ids)
+        self.append_entries(kind, field, &listed, &index_write.ids)
     }
 
     /// The chunks in which `field` has pending index writes, as the
@@ -375,9 +393,9 @@ impl KvTxn<'_> {
         Ok((ids - &waiting, waiting))
     }
 
-    /// A row of one record came or went in a field that has events pending:
-    /// an event of one id, in its place after them.
-    pub(in super::super) fn single_event(
+    /// A row of one record came or went in a field that has index writes pending:
+    /// an index write of one id, in its place after them.
+    pub(in super::super) fn single_index_write(
         &self,
         field: &str,
         value: &Value,
@@ -385,27 +403,28 @@ impl KvTxn<'_> {
         add: bool,
     ) -> Result<()> {
         let kind = if add { Kind::Add } else { Kind::Remove };
-        let event = Event::new(kind, vec![value.clone()], RoaringBitmap::from_iter([id]));
-        self.append_event(field, &event)
+        let index_write =
+            IndexWrite::new(kind, vec![value.clone()], RoaringBitmap::from_iter([id]));
+        self.append_index_write(field, &index_write)
     }
 
-    /// Files `event` under one write number, one key per chunk of 65 536 ids
+    /// Files `index_write` under one write number, one key per chunk of 65 536 ids
     /// it names — `field · chunk · number`, as the postings are chunked — so
     /// that a chunk's pending index writes are its own (doc "Mass writes in
     /// the store"). Chunks name disjoint ids: replaying a field's keys in the
     /// order of the table, chunk by chunk, is replaying them in the order of
     /// the numbers for each id.
-    fn append_event(&self, field: &str, event: &Event) -> Result<()> {
+    fn append_index_write(&self, field: &str, index_write: &IndexWrite) -> Result<()> {
         let pending = self.eventful(field)?;
         let seq = self.next(super::super::State::NextWriteNumber)?;
         let mut filed = 0;
-        for (chunk, ids) in by_chunk(&event.ids) {
-            let key = event_key(field, chunk, seq);
-            let part = Event { ids, ..event.clone() };
+        for (chunk, ids) in by_chunk(&index_write.ids) {
+            let key = index_write_key(field, chunk, seq);
+            let part = IndexWrite { ids, ..index_write.clone() };
             self.t.index_pending_writes.put(&mut self.txn.borrow_mut(), &key, &part.encode())?;
             filed += 1;
         }
-        self.events.borrow_mut().insert(field.to_string(), pending + filed);
+        self.index_writes.borrow_mut().insert(field.to_string(), pending + filed);
         Ok(())
     }
 
@@ -476,7 +495,7 @@ impl KvTxn<'_> {
     }
 
     /// The holders of a value as the transaction sees them: stored, the
-    /// field's events replayed.
+    /// field's index writes replayed.
     pub(in super::super) fn effective(
         &self,
         field: &str,
@@ -487,8 +506,8 @@ impl KvTxn<'_> {
         if self.eventful(field)? == 0 {
             return Ok(stored);
         }
-        let events = read_events(&self.t, &self.txn.borrow(), field)?;
-        Ok(replay(&events, key, stored))
+        let index_writes = read_index_writes(&self.t, &self.txn.borrow(), field)?;
+        Ok(replay(&index_writes, key, stored))
     }
 
     /// Files `ids` under a value, or takes them out — in the value
@@ -507,10 +526,10 @@ impl KvTxn<'_> {
     }
 
     /// Writes `field`'s pending index writes into what is stored, chunk by
-    /// chunk ([`Self::fold_events_chunk`]), and empties its list.
-    pub(in super::super) fn fold_events(&self, field: &str) -> Result<()> {
+    /// chunk ([`Self::fold_index_writes_chunk`]), and empties its list.
+    pub(in super::super) fn fold_index_writes(&self, field: &str) -> Result<()> {
         for chunk in self.pending_chunks(field)? {
-            self.fold_events_chunk(field, chunk)?;
+            self.fold_index_writes_chunk(field, chunk)?;
         }
         Ok(())
     }
@@ -523,25 +542,25 @@ impl KvTxn<'_> {
     /// the chunk — it does not name the values it removes — and its histogram
     /// buckets lose those rows here, the values it adds having been counted
     /// when it was written (doc "Mass writes in the store").
-    pub(in super::super) fn fold_events_chunk(&self, field: &str, chunk: u16) -> Result<()> {
+    pub(in super::super) fn fold_index_writes_chunk(&self, field: &str, chunk: u16) -> Result<()> {
         let t = self.t;
         let prefix = [&name_key(field)[..], &chunk.to_be_bytes()].concat();
-        let (keys, events) = {
+        let (keys, index_writes) = {
             let txn = self.txn.borrow();
             let mut keys = Vec::new();
-            let mut events = Vec::new();
+            let mut index_writes = Vec::new();
             for entry in t.index_pending_writes.prefix_iter(&txn, &prefix)? {
                 let (k, v) = entry?;
                 keys.push(k.to_vec());
-                events.push(Event::decode(v)?);
+                index_writes.push(IndexWrite::decode(v)?);
             }
-            (keys, events)
+            (keys, index_writes)
         };
-        if events.is_empty() {
+        if index_writes.is_empty() {
             return Ok(());
         }
         let mut values = self.values_in_chunk(field, chunk)?;
-        for e in &events {
+        for e in &index_writes {
             let valued = e.values.iter().filter(|v| value_key(v).is_some());
             match e.kind {
                 Kind::Add | Kind::Remove => {
@@ -596,7 +615,7 @@ impl KvTxn<'_> {
         }
         drop(w);
         let left = self.eventful(field)?.saturating_sub(keys.len());
-        self.events.borrow_mut().insert(field.to_string(), left);
+        self.index_writes.borrow_mut().insert(field.to_string(), left);
         Ok(())
     }
 
@@ -668,7 +687,7 @@ impl KvTxn<'_> {
     /// records holding it; a `Nothing` row too. What a replacement of the
     /// field on `ids` is about to take off, for the log to say.
     ///
-    /// It reads the field's values, not its records: the postings, the events
+    /// It reads the field's values, not its records: the postings, the index writes
     /// pending — and one record for each
     /// distinct value found, to give back the value itself (a key is not
     /// always its value: an int and a float of one number share it).
@@ -677,9 +696,9 @@ impl KvTxn<'_> {
         field: &str,
         ids: &RoaringBitmap,
     ) -> Result<Vec<(Value, RoaringBitmap)>> {
-        let events = read_events(&self.t, &self.txn.borrow(), field)?;
+        let index_writes = read_index_writes(&self.t, &self.txn.borrow(), field)?;
         let mut stored: std::collections::BTreeMap<Vec<u8>, RoaringBitmap> = Default::default();
-        for key in named(&events) {
+        for key in named(&index_writes) {
             stored.entry(key).or_default();
         }
         for (key, holders) in self.postings_of(field)? {
@@ -690,7 +709,7 @@ impl KvTxn<'_> {
         };
         let mut out = Vec::new();
         for (key, held) in stored {
-            let holders = &replay(&events, &key, held) & ids;
+            let holders = &replay(&index_writes, &key, held) & ids;
             let Some(first) = holders.min() else { continue };
             let rows = self.record_rows(first)?;
             let value = rows
@@ -708,21 +727,21 @@ impl KvTxn<'_> {
         Ok(out)
     }
 
-    /// [`Self::fold_events`] for every field with events pending.
-    pub(in super::super) fn fold_all_events(&self) -> Result<()> {
+    /// [`Self::fold_index_writes`] for every field with index writes pending.
+    pub(in super::super) fn fold_all_index_writes(&self) -> Result<()> {
         let mut fields = BTreeSet::new();
         for entry in self.t.index_pending_writes.iter(&self.txn.borrow())? {
             let (name, _) = unesc(entry?.0)?;
             fields.insert(String::from_utf8(name).context("a field name")?);
         }
         for field in fields {
-            self.fold_events(&field)?;
+            self.fold_index_writes(&field)?;
         }
         Ok(())
     }
 
     /// Folds the biggest list pending (see `KvStore::fold_step`): size is the
-    /// bytes of a part's entries or of a field's events, the ids pending of a
+    /// bytes of a part's entries or of a field's index writes, the ids pending of a
     /// field's trigrams. Returns whether any list was.
     pub(in super::super) fn fold_biggest(&self) -> Result<bool> {
         // A deletion first, whatever the size of the others: its records are
@@ -732,7 +751,7 @@ impl KvTxn<'_> {
         }
         enum List {
             Part(u32),
-            Events(String, u16),
+            IndexWrites(String, u16),
             Grams(String),
         }
         let mut best: Option<(u64, List)> = None;
@@ -761,7 +780,7 @@ impl KvTxn<'_> {
             *chunks.entry((name, chunk)).or_default() += (k.len() + v.len()) as u64;
         }
         for ((field, chunk), size) in chunks {
-            consider(size, List::Events(field, chunk));
+            consider(size, List::IndexWrites(field, chunk));
         }
         for field in self.gram_fields()? {
             consider(self.gram_fold_size(&field)?, List::Grams(field));
@@ -771,8 +790,8 @@ impl KvTxn<'_> {
             // fold (doc "Log storage").
             None => self.index_log_step(super::super::entry::INDEX_BUDGET),
             Some((_, List::Part(part))) => self.fold_part(part).map(|()| true),
-            Some((_, List::Events(field, chunk))) => {
-                self.fold_events_chunk(&field, chunk).map(|()| true)
+            Some((_, List::IndexWrites(field, chunk))) => {
+                self.fold_index_writes_chunk(&field, chunk).map(|()| true)
             }
             Some((_, List::Grams(field))) => self.fold_gram_field(&field).map(|()| true),
         }
@@ -842,7 +861,7 @@ mod tests {
         let (mut store, _dir, _) = two_chunks();
         assert_eq!(chunks_pending(&mut store, "tag"), BTreeSet::from([0, 1]));
         let txn = KvTxn::new(&mut store).unwrap();
-        txn.fold_events_chunk("tag", 0).unwrap();
+        txn.fold_index_writes_chunk("tag", 0).unwrap();
         // The postings of the field the fold loaded: of its chunk only.
         let posted = [&[Bitmaps::ValueHolders as u8][..], &name_key("tag")].concat();
         let loaded: BTreeSet<u16> = txn
@@ -871,12 +890,12 @@ mod tests {
             vec![ids(&[0, 1, 10, 11]), ids(&[2, 3]), ids(&[0, 1, 2, 3, 4, 5, 6, 7])]
         );
         let txn = KvTxn::new(&mut store).unwrap();
-        txn.fold_events_chunk("tag", 1).unwrap();
+        txn.fold_index_writes_chunk("tag", 1).unwrap();
         txn.finish().unwrap();
         assert_eq!(holders(&mut store), before, "half folded");
         check(&store);
         let txn = KvTxn::new(&mut store).unwrap();
-        txn.fold_events_chunk("tag", 0).unwrap();
+        txn.fold_index_writes_chunk("tag", 0).unwrap();
         txn.finish().unwrap();
         assert_eq!(holders(&mut store), before, "folded");
         assert!(chunks_pending(&mut store, "tag").is_empty());
@@ -930,7 +949,7 @@ mod tests {
         let mut w = Writer::begin(&mut store, None).unwrap();
         w.mass_set("tag", vec![Value::Nothing], &uuids[0..2]).unwrap();
         w.commit().unwrap();
-        assert!(store.pending_events("tag").unwrap() > 0, "the set waits for the fold");
+        assert!(store.pending_index_writes("tag").unwrap() > 0, "the set waits for the fold");
         assert_eq!(nothing(&store), of(&[0, 1, 4, 5]), "after the set to nothing");
         // An unset: those records hold nothing at all.
         let mut w = Writer::begin(&mut store, None).unwrap();
@@ -940,7 +959,7 @@ mod tests {
         check(&store);
 
         store.fold().unwrap();
-        assert_eq!(store.pending_events("tag").unwrap(), 0);
+        assert_eq!(store.pending_index_writes("tag").unwrap(), 0);
         assert_eq!(nothing(&store), of(&[0, 4, 5]), "after the fold");
         assert_eq!(store.rows(uuids[0]).unwrap().len(), 1);
         assert!(store.rows(uuids[1]).unwrap().is_empty(), "unset");

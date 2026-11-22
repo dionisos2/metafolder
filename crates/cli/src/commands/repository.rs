@@ -322,9 +322,9 @@ pub fn repo_wear(ctx: &Ctx, json: bool) -> Result<i32, CliError> {
     println!("pending a fold: {}", size("pending_bytes"));
     println!(
         "  mass writes:   {} entries in {} parts, {}",
-        n("mass_entries"),
-        n("mass_parts"),
-        size("mass_bytes")
+        n("pending_writes"),
+        n("pending_write_parts"),
+        size("pending_write_bytes")
     );
     println!(
         "  field events:  {} in {} fields, {}",

@@ -153,9 +153,9 @@ fn a_fold_deletes_the_records_and_the_log_keeps_their_rows() {
             .collect()
     };
     let pending = rows_of(&store);
-    assert_eq!(store.wear().unwrap().mass_entries, 1, "the deletion is pending");
+    assert_eq!(store.wear().unwrap().pending_writes, 1, "the deletion is pending");
     while store.fold_step().unwrap() {}
-    assert_eq!(store.wear().unwrap().mass_entries, 0);
+    assert_eq!(store.wear().unwrap().pending_writes, 0);
     assert_eq!(rows_of(&store), pending, "what the log says is what it said");
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 40);
     for u in &uuids[..60] {
@@ -749,7 +749,7 @@ fn a_reindex_folds_a_pending_deletion_and_keeps_what_the_log_says() {
     assert_eq!(before.len(), 40);
     store.reindex().unwrap();
     assert_eq!(says(&store), before);
-    assert_eq!(store.wear().unwrap().mass_entries, 0);
+    assert_eq!(store.wear().unwrap().pending_writes, 0);
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 20);
     sound(&store);
 }
@@ -1097,7 +1097,7 @@ fn undoing_a_folded_deletion_keeps_a_later_write_over_a_pending_mass_write() {
     // part (doc "Mass writes in the store"), so none older is left to win
     // over the record once given back.
     assert!(store.fold_step().unwrap());
-    assert_eq!(store.wear().unwrap().mass_entries, 0, "the part folded whole");
+    assert_eq!(store.wear().unwrap().pending_writes, 0, "the part folded whole");
 
     let ops = revert::log_context_ops(&store, log_context).unwrap();
     let mut w = Writer::begin(&mut store, None).unwrap();
@@ -1330,14 +1330,14 @@ fn a_deletion_is_a_pending_write_that_its_undo_leaves() {
     w.mass_delete_ids(&ids).unwrap();
     w.commit().unwrap();
     assert_eq!(store.last_write_keys().get("pending_writes"), Some(&1), "one part");
-    assert_eq!(store.wear().unwrap().mass_entries, 1);
+    assert_eq!(store.wear().unwrap().pending_writes, 1);
     let ops = revert::log_context_ops(&store, log_context).unwrap();
 
     let mut w = Writer::begin(&mut store, None).unwrap();
     revert::apply(&mut w, &ops).unwrap();
     w.commit().unwrap();
     assert_eq!(store.last_write_keys().get("pending_writes"), None, "the undo leaves it");
-    assert_eq!(store.wear().unwrap().mass_entries, 1);
+    assert_eq!(store.wear().unwrap().pending_writes, 1);
 
     write(&mut store, |w| w.set_field(uuids[7], "tag", s("purple")).unwrap());
     assert_eq!(store.last_write_keys().get("pending_writes"), Some(&1), "the record taken off");
@@ -1345,7 +1345,7 @@ fn a_deletion_is_a_pending_write_that_its_undo_leaves() {
         assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
     }
     store.fold().unwrap();
-    assert_eq!(store.wear().unwrap().mass_entries, 0);
+    assert_eq!(store.wear().unwrap().pending_writes, 0);
     for op in &ops {
         assert_eq!(store.snapshots(op.id).unwrap().len(), 2, "{op:?}");
     }

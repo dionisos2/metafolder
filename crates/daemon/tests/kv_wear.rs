@@ -26,7 +26,7 @@ fn the_wear_counts_what_is_pending_and_the_ids_nobody_holds() {
     let dir = TempDir::new("kv-wear");
     let mut store = KvStore::open_unsynced(dir.path()).unwrap();
     let clean = store.wear().unwrap();
-    assert_eq!((clean.mass_entries, clean.events, clean.trigrams_pending), (0, 0, 0));
+    assert_eq!((clean.pending_writes, clean.index_writes, clean.trigrams_pending), (0, 0, 0));
     assert_eq!(clean.pending_bytes(), 0);
     assert_eq!(clean.dead_ids(), 0);
 
@@ -42,8 +42,8 @@ fn the_wear_counts_what_is_pending_and_the_ids_nobody_holds() {
         w.mass_set("tag", vec![s("c")], &uuids).unwrap();
     });
     let worn = store.wear().unwrap();
-    assert_eq!((worn.mass_entries, worn.mass_parts), (2, 1));
-    assert_eq!((worn.events, worn.event_fields), (2, 1));
+    assert_eq!((worn.pending_writes, worn.pending_write_parts), (2, 1));
+    assert_eq!((worn.index_writes, worn.index_write_fields), (2, 1));
     assert!(worn.pending_bytes() > 0);
     assert_eq!(worn.ids_allocated, 50);
 
@@ -53,6 +53,6 @@ fn the_wear_counts_what_is_pending_and_the_ids_nobody_holds() {
 
     while store.fold_step().unwrap() {}
     let folded = store.wear().unwrap();
-    assert_eq!((folded.mass_entries, folded.events, folded.pending_bytes()), (0, 0, 0));
+    assert_eq!((folded.pending_writes, folded.index_writes, folded.pending_bytes()), (0, 0, 0));
     assert_eq!(folded.dead_ids(), 1, "a fold does not renumber: a reindex does");
 }

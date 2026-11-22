@@ -14,6 +14,11 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **`GET /repos/:repo/wear` names what it counts by the store's tables** (API 33):
+  `pending_writes`, `pending_write_parts`, `pending_write_bytes` for the writes to many
+  records not yet folded (`mass_*` before), `index_writes`, `index_write_fields`,
+  `index_write_bytes` for the pending index writes (`events`, `event_*` before).
+
 - **Each repository is reindexed once when it is first opened** by this version: an
   index key no longer begins with a byte naming its former kind, a byte less per key
   (doc "Store tables").

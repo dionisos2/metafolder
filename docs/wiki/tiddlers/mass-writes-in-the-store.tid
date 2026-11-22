@@ -95,7 +95,7 @@ replayed.
 
 `KvStore::fold` — and a reindex, and the idle fold ([[Folding in idle time]]) — writes
 the pending index writes into what is stored, one chunk of a field at a time
-(`fold_events_chunk`): the field's postings of that chunk are read, every pending
+(`fold_index_writes_chunk`): the field's postings of that chunk are read, every pending
 index write of the chunk is replayed over them in memory, oldest first, they are
 written back and the chunk's pending index writes deleted. A set or an unset is where
 its removed values are found: it names ids, not values, so every value the field has
@@ -196,5 +196,5 @@ which records hold such a text, and whether another stays on a record cannot be 
 without reading it ([[Text search in the store]]); its addition, and a set, set it
 exactly.
 
-`tests/kv_events.rs` holds every reader to the oracle with writes pending, after a
+`tests/kv_index_writes.rs` holds every reader to the oracle with writes pending, after a
 fold and after a reindex.

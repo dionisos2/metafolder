@@ -59,8 +59,8 @@ async fn the_wear_of_a_new_repository_is_nothing_pending() {
 
     let (status, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
     assert_eq!(status, StatusCode::OK, "{wear}");
-    assert_eq!(wear["mass_entries"], json!(0));
-    assert_eq!(wear["events"], json!(0));
+    assert_eq!(wear["pending_writes"], json!(0));
+    assert_eq!(wear["index_writes"], json!(0));
     assert_eq!(wear["pending_bytes"], json!(0));
     assert!(wear["dead_ids"].is_u64() && wear["dead_fraction"].is_f64(), "{wear}");
 
@@ -107,7 +107,7 @@ async fn a_trashing_is_a_deletion_of_many_records() {
     assert_eq!(body["deleted"], json!(4));
 
     let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
-    assert_eq!(wear["mass_entries"], json!(1), "one deletion waiting for its fold: {wear}");
+    assert_eq!(wear["pending_writes"], json!(1), "one deletion waiting for its fold: {wear}");
 
     let (status, _) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{}", uuids[0]), None).await;
@@ -157,13 +157,13 @@ async fn a_check_folds_what_is_pending_and_holds_the_histograms() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
-    assert_eq!(wear["mass_entries"], json!(1), "{wear}");
+    assert_eq!(wear["pending_writes"], json!(1), "{wear}");
 
     let (status, checked) = request(&app, "POST", &format!("/repos/{repo}/check"), None).await;
     assert_eq!(status, StatusCode::OK, "{checked}");
     assert_eq!(checked["problems"], json!([]), "{checked}");
     let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
-    assert_eq!(wear["mass_entries"], json!(0), "the check folded it: {wear}");
+    assert_eq!(wear["pending_writes"], json!(0), "the check folded it: {wear}");
 }
 
 /// `POST /repos/:repo/fold` folds every list pending now, one list at a time.
@@ -198,7 +198,7 @@ async fn an_explicit_fold_writes_the_pending_lists_in() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
-    assert_eq!(wear["mass_entries"], json!(1), "{wear}");
+    assert_eq!(wear["pending_writes"], json!(1), "{wear}");
 
     let (status, folded) = request(&app, "POST", &format!("/repos/{repo}/fold"), None).await;
     assert_eq!(status, StatusCode::OK, "{folded}");
@@ -206,7 +206,7 @@ async fn an_explicit_fold_writes_the_pending_lists_in() {
     // storage").
     assert_eq!(folded["folded"], json!(2), "one list and the log: {folded}");
     let (_, wear) = request(&app, "GET", &format!("/repos/{repo}/wear"), None).await;
-    assert_eq!(wear["mass_entries"], json!(0), "{wear}");
+    assert_eq!(wear["pending_writes"], json!(0), "{wear}");
     // Nothing left: nothing folded.
     let (_, folded) = request(&app, "POST", &format!("/repos/{repo}/fold"), None).await;
     assert_eq!(folded["folded"], json!(0), "{folded}");

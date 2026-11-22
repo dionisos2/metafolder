@@ -1,8 +1,8 @@
-//! A write to many records at once files, for the values, one *event* per
+//! A write to many records at once files, for the values, one *index write* per
 //! operation — "add this value to these records" — where it filed an entry
 //! per record (doc "Mass writes in the store"). Every read of a value's
-//! holders replays the field's pending events over what is stored; a fold
-//! brings the stored index up to date. Held here to the oracle, with events
+//! holders replays the field's pending index writes over what is stored; a fold
+//! brings the stored index up to date. Held here to the oracle, with index writes
 //! pending and after a fold, and to a rebuild.
 
 use metafolder_core::metarecord::{Field, Value};
@@ -111,7 +111,7 @@ fn every_answer(store: &KvStore, target: Uuid) -> Vec<Vec<Uuid>> {
 
 /// Every record holding a `rank`, sorted on `field` page after page by a
 /// walk of the field's values — the strategy that reads the stored order,
-/// which the pending events are not in.
+/// which the pending index writes are not in.
 fn walked(store: &KvStore, field: &str, ascending: bool) -> Vec<Uuid> {
     let q = Query::IsPresent { field: "rank".into(), aspect: Aspect::Raw };
     let sort = [SortBy { field: field.into(), ascending }];
@@ -142,7 +142,7 @@ fn walks_agree(store: &KvStore) {
     }
 }
 
-/// The answers with events pending, then folded, then rebuilt: the same.
+/// The answers with index writes pending, then folded, then rebuilt: the same.
 fn settled(store: &mut KvStore, target: Uuid) {
     check(store);
     let pending = every_answer(store, target);
@@ -167,9 +167,9 @@ fn a_value_added_to_many_records_goes_into_its_posting() {
     assert_eq!(changed.len(), 200);
     let written = store.last_write_keys();
     assert_eq!(written.get("index_pending_writes"), None, "{written:?}");
-    assert_eq!(store.pending_events("tag").unwrap(), 0);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 0);
     write(&mut store, |w| w.mass_remove("tag", &s("blue"), &all[..150]).unwrap());
-    assert_eq!(store.pending_events("tag").unwrap(), 0, "nor a value removed");
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 0, "nor a value removed");
 
     // Those that hold it already are left alone, and not reported.
     let again = write(&mut store, |w| w.mass_add("tag", s("fresh"), &all[100..260]).unwrap());
@@ -186,13 +186,13 @@ fn behind_a_pending_set_an_add_is_a_pending_index_write() {
     let (mut store, _dir) = open();
     let all = records(&mut store, 300);
     write(&mut store, |w| w.mass_set("tag", vec![s("only")], &all[..100]).unwrap());
-    assert_eq!(store.pending_events("tag").unwrap(), 1);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 1);
     write(&mut store, |w| w.mass_add("tag", s("fresh"), &all[50..200]).unwrap());
     write(&mut store, |w| w.mass_remove("tag", &s("only"), &all[..20]).unwrap());
-    assert_eq!(store.pending_events("tag").unwrap(), 3);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 3);
     // Another field has nothing pending: its add is written in.
     write(&mut store, |w| w.mass_add("mood", s("calm"), &all[..200]).unwrap());
-    assert_eq!(store.pending_events("mood").unwrap(), 0);
+    assert_eq!(store.pending_index_writes("mood").unwrap(), 0);
     let q = Query::Eq { field: "tag".into(), value: s("fresh"), aspect: Aspect::Raw };
     assert_eq!(common::engines::both(&store, &q, &[]).len(), 150);
     settled(&mut store, all[0]);
@@ -213,7 +213,7 @@ fn every_mass_operation_reads_as_the_rows_it_wrote() {
     check(&store);
     let first = every_answer(&store, target);
 
-    // More, over the events already pending — and writes to one record at a
+    // More, over the index writes already pending — and writes to one record at a
     // time, which must come after them.
     write(&mut store, |w| {
         w.mass_unset("tag", &all[100..110]).unwrap();
@@ -235,7 +235,7 @@ fn every_mass_operation_reads_as_the_rows_it_wrote() {
 }
 
 #[test]
-fn a_field_with_many_pending_events_is_left_to_the_idle_fold() {
+fn a_field_with_many_pending_index_writes_is_left_to_the_idle_fold() {
     let (mut store, _dir) = open();
     let all = records(&mut store, 100);
     // A set first: the adds behind it wait too.
@@ -244,7 +244,7 @@ fn a_field_with_many_pending_events_is_left_to_the_idle_fold() {
         write(&mut store, |w| w.mass_add("tag", s(&format!("v{i}")), &all[i % 50..]).unwrap());
     }
     // No limit: only the idle fold (doc "Folding in idle time") writes them in.
-    assert_eq!(store.pending_events("tag").unwrap(), 101);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 101);
     settled(&mut store, all[0]);
 }
 
@@ -263,15 +263,15 @@ fn a_position_is_written_record_by_record() {
     let name = Value::TreeRef { parent: Some(root), name: "b".into() };
     let done = write(&mut store, |w| w.mass_add("loc", name, &all[..1]).unwrap());
     assert_eq!(done.len(), 1);
-    assert_eq!(store.pending_events("loc").unwrap(), 0);
+    assert_eq!(store.pending_index_writes("loc").unwrap(), 0);
     check(&store);
 }
 
-/// A page sorted on a field with events pending is still read by walking the
-/// field's values, the values the events name merged in at their place: it
+/// A page sorted on a field with index writes pending is still read by walking the
+/// field's values, the values the index writes name merged in at their place: it
 /// costs the page, not a read of every match.
 #[test]
-fn a_sorted_page_on_a_field_with_pending_events_reads_the_page() {
+fn a_sorted_page_on_a_field_with_pending_index_writes_reads_the_page() {
     let (mut store, _dir) = open();
     let all = records(&mut store, 3_000);
     write(&mut store, |w| {
@@ -280,7 +280,7 @@ fn a_sorted_page_on_a_field_with_pending_events_reads_the_page() {
         w.mass_add("tag", s("amber"), &all[..1_500]).unwrap();
         w.mass_remove("tag", &s("blue"), &all[..600]).unwrap();
     });
-    assert_eq!(store.pending_events("tag").unwrap(), 3);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 3);
     let q = Query::IsPresent { field: "rank".into(), aspect: Aspect::Raw };
     let cost = |store: &KvStore, ascending: bool| {
         let sort = [SortBy { field: "tag".into(), ascending }];
@@ -301,7 +301,7 @@ fn a_sorted_page_on_a_field_with_pending_events_reads_the_page() {
 /// same fold: the records leave the referrers of the target the add gave them,
 /// though that target had none stored before the fold.
 #[test]
-fn a_folded_replacement_of_a_reference_leaves_the_targets_an_earlier_event_filed() {
+fn a_folded_replacement_of_a_reference_leaves_the_targets_an_earlier_index_write_filed() {
     let (mut store, _dir) = open();
     let uuids = records(&mut store, 30);
     let (first, second) = (uuids[0], uuids[1]);
@@ -351,7 +351,7 @@ fn a_reference_to_a_record_a_reindex_dropped_has_a_reserved_id() {
 }
 
 /// A write to no more records than the threshold goes one record at a time,
-/// and leaves nothing pending; past it, one entry and one event (doc "Mass
+/// and leaves nothing pending; past it, one entry and one index write (doc "Mass
 /// writes in the store"). Counted on the records it would change, not on the
 /// matches: a value most already hold is a write to the few that lack it.
 #[test]
@@ -367,7 +367,7 @@ fn a_write_to_few_records_is_written_into_them() {
     });
     assert_eq!(changed.len(), 20);
     assert_eq!(store.pending_mass().unwrap(), 0, "twenty records are no mass write");
-    assert_eq!(store.pending_events("tag").unwrap(), 0);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 0);
     // Twenty-one matches, of which twenty already hold the value: one write.
     let more = ids(&store, 21);
     let changed = write(&mut store, |w| {
@@ -457,12 +457,12 @@ fn a_pending_index_write_is_filed_by_chunk() {
     });
     // Over both chunks: two keys; over the first alone: one more.
     write(&mut store, |w| w.mass_set("tag", vec![s("x")], &all).unwrap());
-    assert_eq!(store.pending_events("tag").unwrap(), 2);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 2);
     write(&mut store, |w| w.mass_set("tag", vec![s("y")], &all[..10]).unwrap());
-    assert_eq!(store.pending_events("tag").unwrap(), 3);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 3);
     // Replayed, chunk by chunk, as a rebuild has it; then folded in.
     check(&store);
     store.fold().unwrap();
-    assert_eq!(store.pending_events("tag").unwrap(), 0);
+    assert_eq!(store.pending_index_writes("tag").unwrap(), 0);
     check(&store);
 }

@@ -936,11 +936,11 @@ impl Read<'_> {
             derived::Bitmaps::ValueHolders,
             &derived::posting_prefix(name, &key),
         )?;
-        let pending = derived::events::read_events(self.t, self.r, name)?;
+        let pending = derived::index_writes::read_index_writes(self.t, self.r, name)?;
         Ok(if pending.is_empty() {
             stored
         } else {
-            derived::events::replay(&pending, &key, stored)
+            derived::index_writes::replay(&pending, &key, stored)
         })
     }
 
@@ -1782,8 +1782,8 @@ pub struct KvTxn<'e> {
     /// the fields whose state it changed, written at commit.
     grams: RefCell<HashMap<String, derived::GramState>>,
     grams_changed: RefCell<std::collections::HashSet<String>>,
-    /// How many events each field has pending, as read or changed.
-    events: RefCell<HashMap<String, usize>>,
+    /// How many index writes each field has pending, as read or changed.
+    index_writes: RefCell<HashMap<String, usize>>,
     /// The store's flag that some part has entries pending: a write to many
     /// records raises it.
     mass_lists: TxnFlag<'e>,
@@ -2440,7 +2440,7 @@ impl<'e> KvTxn<'e> {
             universe: RefCell::new(HashMap::new()),
             grams: RefCell::new(HashMap::new()),
             grams_changed: RefCell::new(Default::default()),
-            events: RefCell::new(HashMap::new()),
+            index_writes: RefCell::new(HashMap::new()),
             last_targets: RefCell::new(None),
             log_chunk: RefCell::new(None),
             last_targets_kept: &store.last_targets,
