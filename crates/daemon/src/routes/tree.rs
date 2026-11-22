@@ -227,8 +227,8 @@ pub(super) async fn list_fields(
             .as_ref()
             .map(|s| s.declared_types())
             .unwrap_or_default();
-        // The data-derived catalog is the store's own (the index's `present`/
-        // `types` key spaces): every distinct field name and value type, no
+        // The data-derived catalog is the store's own (the index's value counts
+        // and `field_types`): every distinct field name and value type, no
         // scan. Like every read it waits for the connection, so behind a long
         // write (until reads stop taking it, doc "Storage safety").
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());

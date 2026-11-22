@@ -5,18 +5,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
-* Vocabulary after the store's table review
-The wiki and the code's comments, then its names, still speak the store of before
-the review (November 2026). Done group by group, one commit each: first fix the
-replacement of each term, then the wiki and the comments, then the identifiers.
-Inventory from a diff of =dddf9437= (before the review) against =main=; the old
-names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
-(=kvstore/mod.rs=) stay: they are the conversion's.
-
-** Concepts gone or changed
-- "absent", "present", "multi", "partition": to check note by note —
-  =partition= is also a tag flag, which stays.
-
 * Storage: what is left after the dense id work
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:

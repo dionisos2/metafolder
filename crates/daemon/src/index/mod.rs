@@ -1300,8 +1300,8 @@ impl Eval<'_> {
     }
 
     /// `field:parent IS ABSENT` / `IS PRESENT` (doc "Field aspects"):
-    /// answered from the reverse index's parent partition, where the roots are
-    /// the sentinel's own bucket — one hash lookup for the question the oracle
+    /// answered from the parent holders of the field, where the roots are
+    /// filed under "no parent" — one bitmap for the question the oracle
     /// answers by scanning every row of the field.
     ///
     /// The `400` the aspect deserves on a non-`tree_ref` field is raised
@@ -1496,7 +1496,7 @@ impl Eval<'_> {
         }
         // A blank query (the search box emptied) matches every metarecord with a
         // path in this forest — the oracle scans for `value_type='tree_ref'`,
-        // which on a tree_ref field is exactly the `present` set.
+        // which on a tree_ref field is exactly the ids holding a value of it.
         if terms.is_empty() {
             return Ok(self.present_of(field));
         }

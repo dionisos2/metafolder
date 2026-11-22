@@ -53,7 +53,7 @@ pub fn tracked_files_with_size(conn: &(impl Rows + ?Sized)) -> Result<Vec<(Uuid,
 }
 
 /// The orphans (`mfr_path` = `Nothing`) that carry a size and both hashes:
-/// the `absent` set of `mfr_path`, each of its records read.
+/// the holders of `nothing` in `mfr_path`, each of its records read.
 pub fn hashed_orphans(conn: &(impl Rows + ?Sized)) -> Result<Vec<OrphanCandidate>> {
     let mut out = Vec::new();
     for uuid in holding(conn, "mfr_path", &Value::Nothing)? {

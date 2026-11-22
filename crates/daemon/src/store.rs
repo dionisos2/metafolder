@@ -280,11 +280,11 @@ pub trait Rows {
     /// The metarecords holding at least one row of a field name.
     fn holders(&self, name: &str) -> Result<Vec<Uuid>>;
     /// The dense ids holding a row of a field name, a `Nothing` included —
-    /// the field's counters and `absent` set, no record read.
+    /// the field's counters and its holders of `nothing`, no record read.
     fn holder_ids(&self, name: &str) -> Result<roaring::RoaringBitmap>;
     /// The dense ids holding `value` in `name` — the value's posting, the
     /// writes to many records still pending replayed over it; for `Nothing`,
-    /// the field's `absent` set (doc "Store tables"). No record read. A
+    /// the field's holders of `nothing` (doc "Store tables"). No record read. A
     /// superset only for a text so long its key is hashed, on a collision.
     fn value_holder_ids(&self, name: &str, value: &Value) -> Result<roaring::RoaringBitmap>;
     /// The uuids of the live metarecords among dense ids, in id order.
