@@ -15,7 +15,6 @@ names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 
 ** Concepts gone or changed
 - "stub" (about 580 in the code): to sort, the log's sense from the others.
-- "op type": now an effect and a file action, the origin a byte.
 - "version delta" (1 note, 3 places in the code) and "command key" (2 notes):
   gone.
 - "tombs", "row numbers", "cleared fields": gone (a few comments).
