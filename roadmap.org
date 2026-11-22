@@ -16,9 +16,6 @@ names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 ** Tables and keys renamed, still in the code
 | Old | Now | Where it stays |
 |-----+-----+----------------|
-| =sets= (=t.sets()=, =SetTables=, =SETS=) | =index_value_holders=, =index_parent_holders=, =index_descendants=… | =derived.rs=, =source.rs=, =massops.rs= |
-| =grams= (=t.grams()=, =GramTables=, =gram_*=) | =index_trigram_{texts,holders,state,pending}= | =derived.rs=, =source.rs=, =kv_text.rs= |
-| =hist= (=t.hist()=, =HistTables=) | =index_histogram_{rows,keys}= | =derived.rs=, =source.rs= |
 | =events= (=derived::events=, =Event=, =read_events=, "pending events") | =index_pending_writes= ("pending index write") | =events.rs=, =source.rs= |
 | =kids= | =index_parents= / =index_raw_holder= | =massops.rs=, =derived.rs=, =log_view.rs=, tests |
 | =mass= (=mass.rs=, =massops.rs=, =mass_op=) | =pending_writes= | kvstore, =bench/regression/storage.rs= |
@@ -26,17 +23,13 @@ names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 | =meta='s =next_op=, =next_id=, =next_label=, =head=, =layout=, =derived= | =next_log_op=, =next_metarecord_id=, =next_log_context=, =log_head=, =primary_version=, =derived_version= | comments |
 | =cells=, =field_cells=, =row_owner=, =by_field= | gone (a record keeps its fields) | comments in =log.rs=, =storage.rs=, =kv_layout.rs= |
 
-** The byte of a former kind at the head of the index keys
-When =sets= and =grams= were split into a table per kind, each key kept the byte
-that told the kinds apart (=UNIVERSE=, =ABSENT=, =PARENTS=, =REFERRERS=,
-=POSTINGS=, =SETS=, =GRAMS=, =GRAM_VALUES=…), and =index_histogram_keys= its =FF=
-(commit =6d3c00d1=, doc "Store tables"): the code reached a kind's table by that
-byte, so the split did not rewrite it. Nothing needs the byte any more, a byte per
-key: it is to be removed (user decision, 21 November 2026), and doc "Store
-tables" no longer to present it as a design. The vocabulary that goes with it (the
-"part" =VALUE= / =NAME= of =source.rs=, "absent", "referrers", "postings"…) is to
-be gone through case by case. Dropping the byte changes the keys: a derived
-format, =DERIVED_VERSION= to bump (a reindex, no conversion).
+** The vocabulary of the former kinds
+The byte of a former kind at the head of the index keys is gone (derived 25, November
+2026): the code names a table by =derived::Bitmaps=. What stays of the kinds is a
+vocabulary: the constants =PARENTS=, =ABSENT=, =REFERRERS=, =POSTINGS=, =COUNT=… as
+names of logical sets (=set_table=, the check's tags), the "part" =VALUE= / =NAME= of
+=source.rs=, "absent", "referrers", "postings", =gram_*= — to be gone through case by
+case.
 
 ** Concepts gone or changed
 - "snapshot" / =snaps= for the log: now a target and its before (=log_targets=).

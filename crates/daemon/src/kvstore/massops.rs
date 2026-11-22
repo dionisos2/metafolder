@@ -16,8 +16,8 @@ use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 use super::derived::{
-    count_prefix, decode_set, dense, referrers_prefix, set_prefix, COUNT_BITS, NO_TARGET, PARENTS,
-    REFERRERS, SETS,
+    count_prefix, decode_set, dense, referrers_prefix, set_prefix, set_table, Bitmaps, COUNT_BITS,
+    NO_TARGET, PARENTS, REFERRERS,
 };
 use super::entry::{self, Effect, Entry, FileAction, Header, Params};
 use super::mass::{entry_key, Written};
@@ -93,7 +93,7 @@ impl KvTxn<'_> {
         // Nothing may name a deleted record: what it left in the indexes
         // would come back to life with it (doc "Deleting a metarecord in the
         // store").
-        let universe = self.read_chunked(super::derived::LIVE, &[])?;
+        let universe = self.read_chunked(Bitmaps::LiveMetarecords, &[])?;
         let ids = &(ids & &universe);
         let mut before = Vec::new();
         let changed = match kind {
@@ -102,9 +102,10 @@ impl KvTxn<'_> {
                 // A `Nothing` is held where the field's `absent` set says.
                 let have = match super::derived::value_key(value) {
                     Some(key) => self.effective(field, value, &key)?,
-                    None => {
-                        self.read_chunked(SETS, &set_prefix(super::derived::ABSENT, Some(field)))?
-                    }
+                    None => self.read_chunked(
+                        set_table(super::derived::ABSENT),
+                        &set_prefix(super::derived::ABSENT, Some(field)),
+                    )?,
                 };
                 let changed = if kind == Kind::Add { ids - &have } else { ids & &have };
                 // A revert names the operation each of its own reverts, in the
@@ -195,7 +196,7 @@ impl KvTxn<'_> {
     fn count_rows_gone(&self, field: &str, changed: &RoaringBitmap) -> Result<()> {
         let mut gone = 0u64;
         for bit in 0..COUNT_BITS {
-            let plane = self.read_chunked(SETS, &count_prefix(field, bit))?;
+            let plane = self.read_chunked(Bitmaps::ValueCounts, &count_prefix(field, bit))?;
             gone += (&plane & changed).len() << bit;
         }
         if gone > 0 {
@@ -252,7 +253,7 @@ impl KvTxn<'_> {
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
-        let universe = self.read_chunked(super::derived::LIVE, &[])?;
+        let universe = self.read_chunked(Bitmaps::LiveMetarecords, &[])?;
         let changed = ids & &universe;
         if changed.is_empty() {
             return Ok(Some(MassApplied { changed, last_op: 0, touches_watch: false }));
@@ -272,9 +273,11 @@ impl KvTxn<'_> {
         // children are unpicked one by one.
         let left = &universe - &changed;
         for field in &positional {
-            let parents = self.read_chunked(SETS, &set_prefix(PARENTS, Some(field)))?;
+            let parents =
+                self.read_chunked(set_table(PARENTS), &set_prefix(PARENTS, Some(field)))?;
             for parent in &parents & &changed {
-                let kids = self.read_chunked(SETS, &referrers_prefix(field, parent))?;
+                let kids =
+                    self.read_chunked(Bitmaps::ParentHolders, &referrers_prefix(field, parent))?;
                 if !(&kids & &left).is_empty() {
                     return Ok(None);
                 }
@@ -290,7 +293,7 @@ impl KvTxn<'_> {
         for field in ["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED] {
             touches_watch |= !(&self.holder_ids_now(field)? & &changed).is_empty();
         }
-        self.chunk_apply(super::derived::LIVE, &[], &changed, false)?;
+        self.chunk_apply(Bitmaps::LiveMetarecords, &[], &changed, false)?;
         let h = Header {
             context: log_context,
             timestamp,
@@ -320,9 +323,9 @@ impl KvTxn<'_> {
     fn fields_with_sets(&self, kind: u8) -> Result<Vec<String>> {
         let txn = self.txn.borrow();
         let mut out: Vec<String> = Vec::new();
-        for e in self.t.sets().prefix_iter(&txn, &[kind])? {
+        for e in set_table(kind).db(&self.t).iter(&txn)? {
             let (k, _) = e?;
-            let (name, _) = super::derived::unesc(&k[1..])?;
+            let (name, _) = super::derived::unesc(k)?;
             let name = String::from_utf8(name).context("a field name")?;
             if out.last() != Some(&name) {
                 out.push(name);
@@ -357,7 +360,7 @@ impl KvTxn<'_> {
         };
         // A record deleted since is out of the universe: the revert by ids
         // would miss it, and say it did it.
-        let universe = self.read_chunked(super::derived::LIVE, &[])?;
+        let universe = self.read_chunked(Bitmaps::LiveMetarecords, &[])?;
         if !ids.is_subset(&universe) {
             return Ok(None);
         }
@@ -443,7 +446,7 @@ impl KvTxn<'_> {
         }
         let n = (last_op - first_op + 1) as usize;
         let Some(ids) = self.ids_in_order(&targets) else { return Ok(None) };
-        let universe = self.read_chunked(super::derived::LIVE, &[])?;
+        let universe = self.read_chunked(Bitmaps::LiveMetarecords, &[])?;
         if ids.len() != n as u64 || !(&ids & &universe).is_empty() {
             return Ok(None);
         }
@@ -460,7 +463,7 @@ impl KvTxn<'_> {
         for field in self.fields_with_sets(super::derived::COUNT)? {
             let mut back = 0u64;
             for bit in 0..COUNT_BITS {
-                let plane = self.read_chunked(SETS, &count_prefix(&field, bit))?;
+                let plane = self.read_chunked(Bitmaps::ValueCounts, &count_prefix(&field, bit))?;
                 back += (&plane & &ids).len() << bit;
             }
             if back == 0 {
@@ -518,7 +521,7 @@ impl KvTxn<'_> {
             let mut groups: BTreeMap<u32, RoaringBitmap> = BTreeMap::new();
             {
                 let txn = self.txn.borrow();
-                for e in self.t.sets().prefix_iter(&txn, &prefix)? {
+                for e in Bitmaps::ParentHolders.db(&self.t).prefix_iter(&txn, &prefix)? {
                     let (k, v) = e?;
                     if k.len() == prefix.len() + 6 {
                         *groups.entry(dense(&k[prefix.len()..])).or_default() |= decode_set(v)?;
@@ -550,7 +553,7 @@ impl KvTxn<'_> {
                 self.file_position(&row.name, &row.value, *id)?;
             }
         }
-        self.chunk_apply(super::derived::LIVE, &[], &ids, true)?;
+        self.chunk_apply(Bitmaps::LiveMetarecords, &[], &ids, true)?;
         for (field, types, back) in counts {
             for ty in types {
                 self.count_type_named(&field, &ty, back as i64)?;
@@ -605,7 +608,7 @@ impl KvTxn<'_> {
         let mut chunks: BTreeMap<(u32, u16), RoaringBitmap> = BTreeMap::new();
         {
             let txn = self.txn.borrow();
-            for e in self.t.sets().prefix_iter(&txn, &prefix)? {
+            for e in Bitmaps::ParentHolders.db(&self.t).prefix_iter(&txn, &prefix)? {
                 let (k, v) = e?;
                 if k.len() == prefix.len() + 6 {
                     let at = (
@@ -616,7 +619,7 @@ impl KvTxn<'_> {
                 }
             }
         }
-        let own = [&[SETS][..], &prefix].concat();
+        let own = [&[Bitmaps::ParentHolders as u8][..], &prefix].concat();
         for (k, bm) in self.sets.borrow().iter() {
             if k.len() == own.len() + 6 && k.starts_with(&own) {
                 let at =

@@ -98,8 +98,9 @@ fn nothing_is_a_key_among_the_holders_of_the_values() {
     let holders = open_raw(&env, "index_value_holders");
     let r = env.read_txn().unwrap();
     let keys: Vec<Vec<u8>> = holders.iter(&r).unwrap().map(|e| e.unwrap().0.to_vec()).collect();
-    // The kind byte, `note` 00 00, the type byte of nothing, the chunk.
-    assert!(keys.iter().any(|k| k[1..].starts_with(b"note\0\0\xFF")), "{keys:?}");
+    // `note` 00 00, the type byte of nothing, the chunk: no byte of a kind
+    // before the field.
+    assert!(keys.iter().any(|k| k.starts_with(b"note\0\0\xFF")), "{keys:?}");
 }
 
 /// The trigrams, the histograms and the pending index writes have tables of

@@ -783,7 +783,7 @@ impl KvTxn<'_> {
     ) -> Result<()> {
         // Nothing may name a deleted record (doc "Mass writes in the store").
         debug_assert!(
-            ids.is_subset(&self.read_chunked(super::derived::LIVE, &[])?)
+            ids.is_subset(&self.read_chunked(super::derived::Bitmaps::LiveMetarecords, &[])?)
                 || kind == Written::Delete,
             "a pending write naming a record that is not live"
         );

@@ -192,7 +192,7 @@ impl KvSource<'_> {
     ) -> Result<()> {
         // A value is its posting: a key per chunk of its holders, the keys of
         // one value side by side.
-        let prefix = [&[derived::POSTINGS][..], &name_key(field)].concat();
+        let prefix = name_key(field);
         // A hashed start may sit anywhere in its run: start at the run.
         let start_key: Option<Vec<u8>> = start_key.map(|k| match hashed_run(k) {
             Some(run) => run.to_vec(),
@@ -251,10 +251,10 @@ impl KvSource<'_> {
             };
         let entries: Entries<'_> = if want_max {
             let range = (Bound::Included(prefix.as_slice()), Bound::Excluded(bound.as_slice()));
-            Box::new(self.t.sets().rev_range(&self.r, &range)?)
+            Box::new(derived::Bitmaps::ValueHolders.db(&self.t).rev_range(&self.r, &range)?)
         } else {
             let range = (Bound::Included(bound.as_slice()), Bound::Unbounded);
-            Box::new(self.t.sets().range(&self.r, &range)?)
+            Box::new(derived::Bitmaps::ValueHolders.db(&self.t).range(&self.r, &range)?)
         };
         // One value at a time: its chunks come one after the other.
         let mut value: Option<(Vec<u8>, RoaringBitmap)> = None;
@@ -347,7 +347,7 @@ impl KvSource<'_> {
         let read = || -> Result<derived::GramState> {
             self.read_keys(1)?;
             derived::GramState::decode(
-                self.t.grams().get(&self.r, &derived::gram_state_key(field))?,
+                self.t.index_trigram_state.get(&self.r, &derived::gram_state_key(field))?,
             )
         };
         self.ok(read(), Default::default())
@@ -373,7 +373,7 @@ impl KvSource<'_> {
         let read = || -> Result<Vec<Vec<u8>>> {
             let mut out = Vec::new();
             if let [only] = &prefixes[..] {
-                for entry in self.t.grams().prefix_iter(&self.r, only)? {
+                for entry in self.t.index_trigram_texts.prefix_iter(&self.r, only)? {
                     self.read_keys(1)?;
                     out.push(entry?.0[only.len()..].to_vec());
                 }
@@ -389,7 +389,8 @@ impl KvSource<'_> {
                 let from = [&prefix[..], &at].concat();
                 let range = (Bound::Included(from.as_slice()), Bound::Unbounded);
                 self.read_keys(1)?;
-                let Some((k, _)) = self.t.grams().range(&self.r, &range)?.next().transpose()?
+                let Some((k, _)) =
+                    self.t.index_trigram_texts.range(&self.r, &range)?.next().transpose()?
                 else {
                     break;
                 };
@@ -420,7 +421,7 @@ impl KvSource<'_> {
         let read = || -> Result<RoaringBitmap> {
             let prefix = derived::gram_prefix(field, gram);
             let mut out = RoaringBitmap::new();
-            for entry in self.t.grams().prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.index_trigram_holders.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
@@ -455,7 +456,7 @@ impl KvSource<'_> {
             };
             let prefix = derived::referrers_prefix(field, target);
             let mut out = RoaringBitmap::new();
-            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.index_parent_holders.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
@@ -475,25 +476,26 @@ impl KvSource<'_> {
     /// reference). The operand is of the field's type: another is refused
     /// before evaluation (doc "Comparisons").
     pub fn range_rows(&self, field: &str, op: CmpOp, value: &Value) -> Option<RangeRows> {
-        self.range_counted(field, op, value, hist_key)
+        self.range_counted(field, op, value, self.t.index_histogram_rows)
     }
 
     /// [`Self::range_rows`] for the keys a walk of the range reads: the
     /// histogram counts the posting keys of each bucket, a key per chunk of
     /// each value.
     fn range_chunks(&self, field: &str, op: CmpOp, value: &Value) -> Option<RangeRows> {
-        self.range_counted(field, op, value, derived::hist_chunks_key)
+        self.range_counted(field, op, value, self.t.index_histogram_keys)
     }
 
-    /// What the buckets on the comparison's side of the operand count, under
-    /// the keys `key_of` gives them.
+    /// What the buckets on the comparison's side of the operand count in the
+    /// histogram table `db`.
     fn range_counted(
         &self,
         field: &str,
         op: CmpOp,
         value: &Value,
-        key_of: fn(&str, &[u8]) -> Vec<u8>,
+        db: super::table::Db,
     ) -> Option<RangeRows> {
+        let key_of = hist_key;
         let operand = hist_bucket(&value_key(value)?)?;
         let tag = operand[0];
         let region = key_of(field, &[tag]);
@@ -507,7 +509,7 @@ impl KvSource<'_> {
         };
         let read = || -> Result<RangeRows> {
             let (mut sure, mut edge, mut keys) = (0, 0, 0);
-            for entry in self.t.hist().range(&self.r, &range)? {
+            for entry in db.range(&self.r, &range)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 keys += 1;
@@ -698,7 +700,7 @@ impl KvSource<'_> {
         let read = || -> Result<RoaringBitmap> {
             let mut out = RoaringBitmap::new();
             let range = (lo.as_ref().map(|k| k.as_slice()), hi.as_ref().map(|k| k.as_slice()));
-            for entry in self.t.sets().range(&self.r, &range)? {
+            for entry in self.t.index_value_holders.range(&self.r, &range)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if !k.starts_with(&prefix) || k.len() < prefix.len() + 2 {
@@ -720,7 +722,7 @@ impl KvSource<'_> {
         let read = || -> Result<Option<RoaringBitmap>> {
             let prefix = derived::part_posting_prefix(field, part, key);
             let mut out = None;
-            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.index_value_holders.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
@@ -1018,9 +1020,9 @@ impl KvSource<'_> {
     /// target's referrers.
     fn any_referrers(&self, field: &str) -> RoaringBitmap {
         let read = || -> Result<RoaringBitmap> {
-            let prefix = [&[derived::REFERRERS][..], &name_key(field)].concat();
+            let prefix = name_key(field);
             let mut out = RoaringBitmap::new();
-            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.index_parent_holders.prefix_iter(&self.r, &prefix)? {
                 let (_, v) = entry?;
                 self.read_keys(1)?;
                 out |= derived::decode_set(v)?;
@@ -1638,9 +1640,9 @@ impl Source for KvSource<'_> {
                     self.t.ids.get(&self.r, u.as_bytes())?.map(|id| id.to_vec())
                 }
             };
-            let prefix = [&[derived::REFERRERS][..], &name_key(field)].concat();
+            let prefix = name_key(field);
             let mut out = RoaringBitmap::new();
-            for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
+            for entry in self.t.index_parent_holders.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 6 && except.as_deref() != Some(&k[prefix.len()..][..4])
@@ -1670,7 +1672,7 @@ impl Source for KvSource<'_> {
             let mut out = RoaringBitmap::new();
             for id in of {
                 let prefix = derived::descendants_prefix(field, id);
-                for entry in self.t.sets().prefix_iter(&self.r, &prefix)? {
+                for entry in self.t.index_descendants.prefix_iter(&self.r, &prefix)? {
                     let (k, v) = entry?;
                     self.read_keys(1)?;
                     if k.len() == prefix.len() + 2 {

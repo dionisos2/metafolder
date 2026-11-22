@@ -54,11 +54,11 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved).
-pub(super) const DERIVED_VERSION: i64 = 24;
+/// sets; 10: the fields' pending events; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`.
+pub(super) const DERIVED_VERSION: i64 = 25;
 
-/// Set kinds.
-pub(super) const UNIVERSE: u8 = 0;
+/// Set kinds: which set a bitmap is, its table ([`set_table`]) and the key it
+/// has there (doc "Store tables"). No key holds them.
 pub(super) const ABSENT: u8 = 2;
 pub(super) const PARENTS: u8 = 3;
 
@@ -82,11 +82,6 @@ pub(super) const DESCENDANTS: u8 = 6;
 /// The value partition is gone: a posting is a value's run, in the order of
 /// the keys, and goes with its last holder.
 pub(super) const POSTINGS: u8 = 7;
-
-/// The kind of set a partition's postings are.
-pub(super) fn postings_kind(_part: u8) -> u8 {
-    POSTINGS
-}
 
 /// The type tag a position's name is filed under among the holders of the
 /// values of its field: a text's — a position's `:value` is its name (doc
@@ -112,7 +107,7 @@ pub(super) const COUNT_BITS: u8 = 32;
 
 /// The key of one bit of `field`'s counts, without its chunk.
 pub(super) fn count_prefix(field: &str, bit: u8) -> Vec<u8> {
-    [&[COUNT][..], &name_key(field), &[bit]].concat()
+    [&name_key(field)[..], &[bit]].concat()
 }
 
 /// `field`'s counts, a set per bit, the lowest first — as many as the
@@ -120,7 +115,7 @@ pub(super) fn count_prefix(field: &str, bit: u8) -> Vec<u8> {
 pub(super) fn read_counts(t: &Tables, r: &RoTxn<'_>, field: &str) -> Result<Vec<RoaringBitmap>> {
     let prefix = set_prefix(COUNT, Some(field));
     let mut out: Vec<RoaringBitmap> = Vec::new();
-    for entry in t.sets().prefix_iter(r, &prefix)? {
+    for entry in Bitmaps::ValueCounts.db(t).prefix_iter(r, &prefix)? {
         let (k, v) = entry?;
         // The bit, then the chunk.
         if k.len() == prefix.len() + 3 {
@@ -170,11 +165,6 @@ pub(super) fn counted_over(counts: &[RoaringBitmap], n: u64) -> RoaringBitmap {
 /// them (doc "Text search in the store").
 pub(super) const GRAM_PENDING: u8 = 9;
 
-/// The dense ids given to a uuid something points at and no metarecord has
-/// had: a reference to a metarecord not created yet, a child written before
-/// its parent. The metarecord takes that id when it comes.
-pub(super) const RESERVED: u8 = 10;
-
 /// The dense id standing for "no parent": what a forest's roots are filed
 /// under. No metarecord gets it — ids start at 1.
 pub(super) const NO_TARGET: u32 = 0;
@@ -221,19 +211,19 @@ pub(super) fn posting_prefix(field: &str, key: &[u8]) -> Vec<u8> {
 /// The key of the posting of `key` in a partition of `field`, without its chunk.
 pub(super) fn part_posting_prefix(field: &str, part: u8, key: &[u8]) -> Vec<u8> {
     if part == NAME {
-        return [&[POSTINGS][..], &name_key(field), &[NAME_TAG], key].concat();
+        return [&name_key(field)[..], &[NAME_TAG], key].concat();
     }
-    [&[postings_kind(part)][..], &name_key(field), key].concat()
+    [&name_key(field)[..], key].concat()
 }
 
 /// The key of the descendants of `node` in `field`, without its chunk.
 pub(super) fn descendants_prefix(field: &str, node: u32) -> Vec<u8> {
-    [&[DESCENDANTS][..], &name_key(field), &node.to_be_bytes()].concat()
+    [&name_key(field)[..], &node.to_be_bytes()].concat()
 }
 
 /// The key of the referrers of `target` in `field`, without its chunk.
 pub(super) fn referrers_prefix(field: &str, target: u32) -> Vec<u8> {
-    [&[REFERRERS][..], &name_key(field), &target.to_be_bytes()].concat()
+    [&name_key(field)[..], &target.to_be_bytes()].concat()
 }
 
 /// The histogram bucket of a value key: the prefix of it that rows are
@@ -262,255 +252,80 @@ pub(super) fn hist_key(field: &str, bucket: &[u8]) -> Vec<u8> {
     [&name_key(field)[..], bucket].concat()
 }
 
-/// The key of the count of posting keys in a bucket of `field`'s histogram:
-/// how many keys a walk of the bucket reads, a key per chunk of each value.
-/// Past every bucket's tag, so a range of buckets never meets it.
+/// The key of the count of posting keys in a bucket of `field`'s histogram,
+/// in `index_histogram_keys`: how many keys a walk of the bucket reads, a key
+/// per chunk of each value.
 pub(super) fn hist_chunks_key(field: &str, bucket: &[u8]) -> Vec<u8> {
-    [&name_key(field)[..], &[0xFF], bucket].concat()
+    hist_key(field, bucket)
 }
 
-/// The two tables of chunked bitmaps, as the transaction's chunk cache
-/// tells them apart.
-pub(super) const SETS: u8 = 0;
-const GRAMS: u8 = 1;
-/// `live_metarecords`, primary: its key is the chunk alone.
-pub(super) const LIVE: u8 = 2;
-
-/// The table of chunked bitmaps a selector names; for [`SETS`], the table of
-/// the kind `key` begins with.
-pub(super) fn chunk_db(t: &Tables, table: u8, key: &[u8]) -> super::table::Db {
-    match table {
-        SETS => t.sets().db(key[0]),
-        GRAMS => t.grams().db(key[0]),
-        LIVE => t.live_metarecords,
-        other => unreachable!("no chunked table {other}"),
-    }
+/// The tables of chunked bitmaps (doc "Store tables"): a key there is the
+/// bitmap's key and a 2-byte chunk. The transaction's chunk cache files a
+/// chunk under its table's byte and that key.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(super) enum Bitmaps {
+    Parents,
+    LongTexts,
+    ParentHolders,
+    Descendants,
+    ValueHolders,
+    TrigramPending,
+    ValueCounts,
+    TrigramHolders,
+    /// `live_metarecords`, primary: its key is the chunk alone.
+    LiveMetarecords,
 }
 
-/// The index tables of the bitmaps, one per kind (doc "Store tables"),
-/// reached by a key that begins with its kind, as the one table `sets` was.
-/// Each table keeps the kind byte at the head of its keys.
-#[derive(Clone, Copy)]
-pub(super) struct SetTables<'a>(&'a Tables);
+impl Bitmaps {
+    /// The derived ones, which a reindex clears.
+    pub(super) const DERIVED: [Bitmaps; 8] = [
+        Bitmaps::Parents,
+        Bitmaps::LongTexts,
+        Bitmaps::ParentHolders,
+        Bitmaps::Descendants,
+        Bitmaps::ValueHolders,
+        Bitmaps::TrigramPending,
+        Bitmaps::ValueCounts,
+        Bitmaps::TrigramHolders,
+    ];
 
-impl Tables {
-    pub(super) fn sets(&self) -> SetTables<'_> {
-        SetTables(self)
-    }
-}
-
-/// The trigram tables, reached by a key that begins with its kind (texts,
-/// holders, state), as the one table `grams` was — the byte kept at the
-/// head of the keys (doc "Store tables").
-#[derive(Clone, Copy)]
-pub(super) struct GramTables<'a>(&'a Tables);
-
-/// The histogram tables: the rows of a bucket, and its posting keys — a key
-/// whose field is followed by `FF` (doc "Query planner").
-#[derive(Clone, Copy)]
-pub(super) struct HistTables<'a>(&'a Tables);
-
-impl Tables {
-    pub(super) fn grams(&self) -> GramTables<'_> {
-        GramTables(self)
-    }
-
-    pub(super) fn hist(&self) -> HistTables<'_> {
-        HistTables(self)
-    }
-}
-
-impl<'a> GramTables<'a> {
-    pub(super) fn db(self, kind: u8) -> super::table::Db {
-        match kind {
-            GRAM_VALUES => self.0.index_trigram_texts,
-            GRAM_IDS => self.0.index_trigram_holders,
-            GRAM_STATE => self.0.index_trigram_state,
-            other => unreachable!("no trigram kind {other}"),
+    pub(super) fn db(self, t: &Tables) -> super::table::Db {
+        match self {
+            Bitmaps::Parents => t.index_parents,
+            Bitmaps::LongTexts => t.index_long_texts,
+            Bitmaps::ParentHolders => t.index_parent_holders,
+            Bitmaps::Descendants => t.index_descendants,
+            Bitmaps::ValueHolders => t.index_value_holders,
+            Bitmaps::TrigramPending => t.index_trigram_pending,
+            Bitmaps::ValueCounts => t.index_value_counts,
+            Bitmaps::TrigramHolders => t.index_trigram_holders,
+            Bitmaps::LiveMetarecords => t.live_metarecords,
         }
     }
 
-    pub(super) fn get<'t>(self, r: &'t RoTxn<'_>, k: &[u8]) -> heed::Result<Option<&'t [u8]>> {
-        self.db(k[0]).get(r, k)
-    }
-
-    pub(super) fn put(
-        self,
-        w: &mut super::table::Wtxn<'_>,
-        k: &[u8],
-        v: &[u8],
-    ) -> heed::Result<()> {
-        self.db(k[0]).put(w, k, v)
-    }
-
-    pub(super) fn delete(self, w: &mut super::table::Wtxn<'_>, k: &[u8]) -> heed::Result<bool> {
-        self.db(k[0]).delete(w, k)
-    }
-
-    pub(super) fn prefix_iter<'t>(
-        self,
-        r: &'t RoTxn<'_>,
-        prefix: &[u8],
-    ) -> heed::Result<heed::RoPrefix<'t, heed::types::Bytes, heed::types::Bytes>> {
-        self.db(prefix[0]).prefix_iter(r, prefix)
-    }
-
-    pub(super) fn range<'t, R: std::ops::RangeBounds<[u8]>>(
-        self,
-        r: &'t RoTxn<'_>,
-        range: &R,
-    ) -> heed::Result<heed::RoRange<'t, heed::types::Bytes, heed::types::Bytes>> {
-        self.db(SetTables::kind_of(range)).range(r, range)
+    /// The table a cache key's first byte names.
+    fn of_byte(byte: u8) -> Bitmaps {
+        Self::DERIVED
+            .into_iter()
+            .chain([Bitmaps::LiveMetarecords])
+            .find(|b| *b as u8 == byte)
+            .expect("a chunk cache key names its table")
     }
 }
 
-impl<'a> HistTables<'a> {
-    /// The table of a key: the posting keys' when its field is followed by
-    /// `FF`.
-    pub(super) fn db(self, k: &[u8]) -> super::table::Db {
-        let end = (0..k.len().saturating_sub(1)).find(|&i| k[i] == 0 && k[i + 1] == 0);
-        match end.and_then(|e| k.get(e + 2)) {
-            Some(0xFF) => self.0.index_histogram_keys,
-            _ => self.0.index_histogram_rows,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn get<'t>(self, r: &'t RoTxn<'_>, k: &[u8]) -> heed::Result<Option<&'t [u8]>> {
-        self.db(k).get(r, k)
-    }
-
-    #[cfg(test)]
-    pub(super) fn put(
-        self,
-        w: &mut super::table::Wtxn<'_>,
-        k: &[u8],
-        v: &[u8],
-    ) -> heed::Result<()> {
-        self.db(k).put(w, k, v)
-    }
-
-    #[cfg(test)]
-    pub(super) fn delete(self, w: &mut super::table::Wtxn<'_>, k: &[u8]) -> heed::Result<bool> {
-        self.db(k).delete(w, k)
-    }
-
-    pub(super) fn range<'t, R: std::ops::RangeBounds<[u8]>>(
-        self,
-        r: &'t RoTxn<'_>,
-        range: &R,
-    ) -> heed::Result<heed::RoRange<'t, heed::types::Bytes, heed::types::Bytes>> {
-        use std::ops::Bound;
-        let k = match range.start_bound() {
-            Bound::Included(k) | Bound::Excluded(k) => k,
-            Bound::Unbounded => match range.end_bound() {
-                Bound::Included(k) | Bound::Excluded(k) => k,
-                Bound::Unbounded => unreachable!("a range of the histograms with no bound"),
-            },
-        };
-        self.db(k).range(r, range)
-    }
-
-    /// Every entry of both tables, in the order of their keys.
-    pub(super) fn entries(self, r: &RoTxn<'_>) -> heed::Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        let mut out = Vec::new();
-        for db in [self.0.index_histogram_rows, self.0.index_histogram_keys] {
-            for e in db.iter(r)? {
-                let (k, v) = e?;
-                out.push((k.to_vec(), v.to_vec()));
-            }
-        }
-        out.sort();
-        Ok(out)
-    }
-}
-
-/// Every kind, in key order.
-const KINDS: [u8; 7] = [PARENTS, LONG_TEXTS, REFERRERS, DESCENDANTS, POSTINGS, GRAM_PENDING, COUNT];
-
-impl<'a> SetTables<'a> {
-    pub(super) fn db(self, kind: u8) -> super::table::Db {
-        let t = self.0;
-        match kind {
-            PARENTS => t.index_parents,
-            LONG_TEXTS => t.index_long_texts,
-            REFERRERS => t.index_parent_holders,
-            DESCENDANTS => t.index_descendants,
-            POSTINGS => t.index_value_holders,
-            GRAM_PENDING => t.index_trigram_pending,
-            COUNT => t.index_value_counts,
-            other => unreachable!("no set kind {other}"),
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn get<'t>(self, r: &'t RoTxn<'_>, k: &[u8]) -> heed::Result<Option<&'t [u8]>> {
-        self.db(k[0]).get(r, k)
-    }
-
-    #[cfg(test)]
-    pub(super) fn put(
-        self,
-        w: &mut super::table::Wtxn<'_>,
-        k: &[u8],
-        v: &[u8],
-    ) -> heed::Result<()> {
-        self.db(k[0]).put(w, k, v)
-    }
-
-    #[cfg(test)]
-    pub(super) fn delete(self, w: &mut super::table::Wtxn<'_>, k: &[u8]) -> heed::Result<bool> {
-        self.db(k[0]).delete(w, k)
-    }
-
-    pub(super) fn prefix_iter<'t>(
-        self,
-        r: &'t RoTxn<'_>,
-        prefix: &[u8],
-    ) -> heed::Result<heed::RoPrefix<'t, heed::types::Bytes, heed::types::Bytes>> {
-        self.db(prefix[0]).prefix_iter(r, prefix)
-    }
-
-    /// The kind a range is in: that of its bounds' keys.
-    fn kind_of<R: std::ops::RangeBounds<[u8]>>(range: &R) -> u8 {
-        use std::ops::Bound;
-        match (range.start_bound(), range.end_bound()) {
-            (Bound::Included(k) | Bound::Excluded(k), _) if !k.is_empty() => k[0],
-            (_, Bound::Included(k) | Bound::Excluded(k)) if !k.is_empty() => k[0],
-            _ => unreachable!("a range of the sets with no bound"),
-        }
-    }
-
-    pub(super) fn range<'t, R: std::ops::RangeBounds<[u8]>>(
-        self,
-        r: &'t RoTxn<'_>,
-        range: &R,
-    ) -> heed::Result<heed::RoRange<'t, heed::types::Bytes, heed::types::Bytes>> {
-        self.db(Self::kind_of(range)).range(r, range)
-    }
-
-    pub(super) fn rev_range<'t, R: std::ops::RangeBounds<[u8]>>(
-        self,
-        r: &'t RoTxn<'_>,
-        range: &R,
-    ) -> heed::Result<heed::RoRevRange<'t, heed::types::Bytes, heed::types::Bytes>> {
-        self.db(Self::kind_of(range)).rev_range(r, range)
-    }
-
-    /// Every entry of every kind, in key order.
-    pub(super) fn iter<'t>(self, r: &'t RoTxn<'_>) -> heed::Result<super::table::Entries<'t>> {
-        let mut all: super::table::Entries<'t> = Box::new(std::iter::empty());
-        for kind in KINDS {
-            all = Box::new(all.chain(self.db(kind).iter(r)?));
-        }
-        Ok(all)
-    }
-
-    pub(super) fn clear(self, w: &mut super::table::Wtxn<'_>) -> heed::Result<()> {
-        for kind in KINDS {
-            self.db(kind).clear(w)?;
-        }
-        Ok(())
+/// The table a set kind is kept in: `nothing`'s holders among those of the
+/// field's values.
+pub(super) fn set_table(kind: u8) -> Bitmaps {
+    match kind {
+        PARENTS => Bitmaps::Parents,
+        LONG_TEXTS => Bitmaps::LongTexts,
+        REFERRERS => Bitmaps::ParentHolders,
+        DESCENDANTS => Bitmaps::Descendants,
+        POSTINGS | ABSENT => Bitmaps::ValueHolders,
+        GRAM_PENDING => Bitmaps::TrigramPending,
+        COUNT => Bitmaps::ValueCounts,
+        other => unreachable!("no set kind {other}"),
     }
 }
 
@@ -552,13 +367,6 @@ pub(crate) fn search_text(value: &Value) -> Option<String> {
     }
 }
 
-/// The three key spaces of `grams` (doc "Text search in the store"): the
-/// distinct texts holding a trigram, the ids holding it, and each field's
-/// state.
-const GRAM_VALUES: u8 = 0;
-const GRAM_IDS: u8 = 1;
-const GRAM_STATE: u8 = 2;
-
 /// How many distinct texts a field's trigram names on average before the
 /// field turns by metarecord: under it a new text writes its trigrams (some
 /// twenty keys, once per distinct text) and a search reads no metarecord;
@@ -568,18 +376,18 @@ pub(crate) const GRAM_VALUES_MAX: u64 = 16;
 
 /// The key of a trigram's bitmap of ids, without its chunk.
 pub(super) fn gram_prefix(field: &str, gram: &[u8; 3]) -> Vec<u8> {
-    [&[GRAM_IDS][..], &name_key(field), gram].concat()
+    [&name_key(field)[..], gram].concat()
 }
 
 /// The prefix of the texts holding a trigram: each key ends with the text's
 /// key in the partition the field's texts are read from ([`text_part_key`]).
 pub(super) fn gram_values_prefix(field: &str, gram: &[u8; 3]) -> Vec<u8> {
-    [&[GRAM_VALUES][..], &name_key(field), gram].concat()
+    [&name_key(field)[..], gram].concat()
 }
 
 /// The key of a field's trigram state.
 pub(super) fn gram_state_key(field: &str) -> Vec<u8> {
-    [&[GRAM_STATE][..], &name_key(field)].concat()
+    name_key(field)
 }
 
 /// How a field's trigrams are kept.
@@ -771,14 +579,15 @@ pub(crate) fn target_of(value: &Value) -> Option<[u8; 16]> {
     }
 }
 
+/// The key of a chunk of a set, in its table ([`set_table`]).
 pub(super) fn set_key(kind: u8, field: Option<&str>, chunk: u16) -> Vec<u8> {
     // `nothing` is a value with a key of its own among the holders of the
     // field's values: its type byte alone (doc "Store tables").
     if kind == ABSENT {
         let field = field.expect("the holders of nothing are a field's");
-        return [&[POSTINGS][..], &name_key(field), &[NOTHING_TAG], &chunk.to_be_bytes()].concat();
+        return [&name_key(field)[..], &[NOTHING_TAG], &chunk.to_be_bytes()].concat();
     }
-    let mut k = vec![kind];
+    let mut k = Vec::new();
     if let Some(field) = field {
         k.extend_from_slice(&name_key(field));
     }
@@ -812,7 +621,7 @@ pub(super) fn read_set(
 ) -> Result<RoaringBitmap> {
     let prefix = set_prefix(kind, field);
     let mut out = RoaringBitmap::new();
-    for entry in t.sets().prefix_iter(r, &prefix)? {
+    for entry in set_table(kind).db(t).prefix_iter(r, &prefix)? {
         let (k, v) = entry?;
         // The field name's terminator keeps a longer name out of the prefix;
         // only the 2-byte chunk follows it.
@@ -825,9 +634,14 @@ pub(super) fn read_set(
 
 /// The bitmap filed under `prefix` (a set's key without its chunk), as
 /// committed: its chunks unioned.
-pub(super) fn read_prefix_set(t: &Tables, r: &RoTxn<'_>, prefix: &[u8]) -> Result<RoaringBitmap> {
+pub(super) fn read_prefix_set(
+    t: &Tables,
+    r: &RoTxn<'_>,
+    table: Bitmaps,
+    prefix: &[u8],
+) -> Result<RoaringBitmap> {
     let mut out = RoaringBitmap::new();
-    for entry in t.sets().prefix_iter(r, prefix)? {
+    for entry in table.db(t).prefix_iter(r, prefix)? {
         let (k, v) = entry?;
         if k.len() == prefix.len() + 2 {
             out |= decode_set(v)?;
@@ -862,7 +676,7 @@ impl KvTxn<'_> {
         f: impl FnOnce(&RoaringBitmap) -> T,
     ) -> Result<T> {
         let k = chunk.to_be_bytes();
-        let cached = [&[LIVE][..], &k].concat();
+        let cached = [&[Bitmaps::LiveMetarecords as u8][..], &k].concat();
         if let Some(bm) = self.sets.borrow().get(&cached) {
             return Ok(f(bm));
         }
@@ -902,7 +716,8 @@ impl KvTxn<'_> {
     /// under `parent` in `field` — read off the parent's referrers, among
     /// which the children deleted since the last reindex still are.
     fn has_live_kids(&self, parent: u32, field: &str, except: Option<u32>) -> Result<bool> {
-        let mut kids = self.read_chunked(SETS, &referrers_prefix(field, parent))?;
+        let mut kids =
+            self.read_chunked(Bitmaps::ParentHolders, &referrers_prefix(field, parent))?;
         if let Some(id) = except {
             kids.remove(id);
         }
@@ -919,12 +734,12 @@ impl KvTxn<'_> {
         id: u32,
         member: bool,
     ) -> Result<()> {
-        self.chunk_member(SETS, &set_prefix(kind, field), id, member)
+        self.chunk_member(set_table(kind), &set_prefix(kind, field), id, member)
     }
 
-    /// [`Self::set_member`] for a chunked bitmap of either table: `table`
-    /// ([`SETS`] or [`GRAMS`]), the key without its chunk.
-    fn chunk_member(&self, table: u8, prefix: &[u8], id: u32, member: bool) -> Result<()> {
+    /// [`Self::set_member`] for a chunked bitmap of `table`, the key without
+    /// its chunk.
+    fn chunk_member(&self, table: Bitmaps, prefix: &[u8], id: u32, member: bool) -> Result<()> {
         self.with_chunk(table, prefix, (id >> 16) as u16, &mut |bm| {
             if member {
                 bm.insert(id);
@@ -937,18 +752,18 @@ impl KvTxn<'_> {
     /// Changes one chunk of a bitmap, in the transaction's cache.
     fn with_chunk(
         &self,
-        table: u8,
+        table: Bitmaps,
         prefix: &[u8],
         chunk: u16,
         change: &mut dyn FnMut(&mut RoaringBitmap),
     ) -> Result<()> {
-        let db = chunk_db(&self.t, table, prefix);
-        let k = [&[table][..], prefix, &chunk.to_be_bytes()].concat();
+        let db = table.db(&self.t);
+        let k = [&[table as u8][..], prefix, &chunk.to_be_bytes()].concat();
         let mut cache = self.sets.borrow_mut();
         if !cache.contains_key(&k) {
             let loaded = match db.get(&self.txn.borrow(), &k[1..])? {
                 Some(bytes) => {
-                    if table == SETS && k[1] == POSTINGS {
+                    if table == Bitmaps::ValueHolders {
                         self.chunks_existing.borrow_mut().insert(k.clone());
                     }
                     decode_set(bytes)?
@@ -956,7 +771,7 @@ impl KvTxn<'_> {
                 None => RoaringBitmap::new(),
             };
             cache.insert(k.clone(), loaded);
-            let whole = [&[table][..], prefix].concat();
+            let whole = [&[table as u8][..], prefix].concat();
             self.cached_chunks.borrow_mut().entry(whole).or_default().insert(chunk);
         }
         change(cache.get_mut(&k).expect("just loaded"));
@@ -965,9 +780,9 @@ impl KvTxn<'_> {
 
     /// A whole bitmap as the transaction sees it: its stored chunks, the
     /// cached ones in their stead.
-    pub(super) fn read_chunked(&self, table: u8, prefix: &[u8]) -> Result<RoaringBitmap> {
-        let db = chunk_db(&self.t, table, prefix);
-        let whole = [&[table][..], prefix].concat();
+    pub(super) fn read_chunked(&self, table: Bitmaps, prefix: &[u8]) -> Result<RoaringBitmap> {
+        let db = table.db(&self.t);
+        let whole = [&[table as u8][..], prefix].concat();
         let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
         let cache = self.sets.borrow();
         let mut out = RoaringBitmap::new();
@@ -992,7 +807,7 @@ impl KvTxn<'_> {
     /// Adds `ids` to a bitmap, or removes them — a chunk at a time.
     pub(super) fn chunk_apply(
         &self,
-        table: u8,
+        table: Bitmaps,
         prefix: &[u8],
         ids: &RoaringBitmap,
         add: bool,
@@ -1021,22 +836,23 @@ impl KvTxn<'_> {
         let mut w = self.txn.borrow_mut();
         for field in self.grams_changed.borrow_mut().drain() {
             let state = self.grams.borrow()[&field];
-            self.t.grams().put(&mut w, &gram_state_key(&field), &state.encode())?;
+            self.t.index_trigram_state.put(&mut w, &gram_state_key(&field), &state.encode())?;
         }
         // The posting chunks that came or went, by bucket of their value.
         let mut chunks: BTreeMap<Vec<u8>, i64> = BTreeMap::new();
         for (k, mut bm) in self.sets.borrow_mut().drain() {
-            if k[0] == SETS && k[1] == POSTINGS {
+            let table = Bitmaps::of_byte(k[0]);
+            if table == Bitmaps::ValueHolders {
                 let existed = self.chunks_existing.borrow_mut().remove(&k);
                 let delta = i64::from(!bm.is_empty()) - i64::from(existed);
-                if let (true, Ok((name, rest))) = (delta != 0, unesc(&k[2..])) {
+                if let (true, Ok((name, rest))) = (delta != 0, unesc(&k[1..])) {
                     let bucket = hist_bucket(&rest[..rest.len() - 2]);
                     if let (Some(bucket), Ok(field)) = (bucket, String::from_utf8(name)) {
                         *chunks.entry(hist_chunks_key(&field, &bucket)).or_default() += delta;
                     }
                 }
             }
-            let db = chunk_db(&self.t, k[0], &k[1..]);
+            let db = table.db(&self.t);
             if bm.is_empty() {
                 db.delete(&mut w, &k[1..])?;
             } else {
@@ -1051,16 +867,16 @@ impl KvTxn<'_> {
         }
         drop(w);
         for (key, delta) in chunks {
-            self.bump_hist(&key, delta)?;
+            self.bump(self.t.index_histogram_keys, &key, delta)?;
         }
         Ok(())
     }
 
     /// Whether a chunked bitmap has any member, as the transaction sees it —
     /// without decoding the stored chunks.
-    fn chunked_exists(&self, table: u8, prefix: &[u8]) -> Result<bool> {
-        let db = chunk_db(&self.t, table, prefix);
-        let whole = [&[table][..], prefix].concat();
+    fn chunked_exists(&self, table: Bitmaps, prefix: &[u8]) -> Result<bool> {
+        let db = table.db(&self.t);
+        let whole = [&[table as u8][..], prefix].concat();
         let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
         {
             let cache = self.sets.borrow();
@@ -1081,9 +897,9 @@ impl KvTxn<'_> {
         Ok(false)
     }
 
-    /// [`Self::bump`] on the histogram table of `k`.
+    /// [`Self::bump`] on the rows of a bucket ([`hist_key`]).
     pub(super) fn bump_hist(&self, k: &[u8], delta: i64) -> Result<()> {
-        self.bump(self.t.hist().db(k), k, delta)
+        self.bump(self.t.index_histogram_rows, k, delta)
     }
 
     /// Adds `delta` to a row count, deleting the key at zero.
@@ -1168,7 +984,7 @@ impl KvTxn<'_> {
             Some(_) => bail!("metarecord {uuid} was deleted: it is given back, not created"),
             None => self.new_id(uuid.as_bytes())?,
         };
-        self.chunk_member(LIVE, &[], id, true)?;
+        self.chunk_member(Bitmaps::LiveMetarecords, &[], id, true)?;
         // Every metarecord has a record, an empty one included.
         if !self.has_record(id)? {
             self.put_stored(id, super::mass::Record::plain(Vec::new()))?;
@@ -1189,7 +1005,7 @@ impl KvTxn<'_> {
     /// again under the same uuid (a revert) gets a new id.
     pub(super) fn derive_removed(&self, uuid: Uuid) -> Result<()> {
         let Some(id) = self.id(uuid.as_bytes())? else { return Ok(()) };
-        self.chunk_member(LIVE, &[], id, false)
+        self.chunk_member(Bitmaps::LiveMetarecords, &[], id, false)
     }
 
     /// A deleted metarecord comes back under the id it had (doc "Deleting a
@@ -1248,7 +1064,7 @@ impl KvTxn<'_> {
                 }
             }
         }
-        self.chunk_member(LIVE, &[], id, true)?;
+        self.chunk_member(Bitmaps::LiveMetarecords, &[], id, true)?;
         for field in self.parent_fields(id)? {
             if self.has_live_kids(id, &field, None)? {
                 self.set_member(PARENTS, Some(&field), id, true)?;
@@ -1351,7 +1167,7 @@ impl KvTxn<'_> {
                 // its key: a row going leaves it only if no other does.
                 let held = delta > 0
                     || rows.iter().any(|r| value_key(&r.value).as_deref() == Some(&k[..]));
-                self.chunk_member(SETS, &posting_prefix(field, &k), id, held)?;
+                self.chunk_member(Bitmaps::ValueHolders, &posting_prefix(field, &k), id, held)?;
             }
             if let Some(bucket) = hist_bucket(&k) {
                 self.bump_hist(&hist_key(field, &bucket), delta)?;
@@ -1360,7 +1176,12 @@ impl KvTxn<'_> {
         if let Some(k) = name_part_key(value) {
             let held = delta > 0
                 || rows.iter().any(|r| name_part_key(&r.value).as_deref() == Some(&k[..]));
-            self.chunk_member(SETS, &part_posting_prefix(field, NAME, &k), id, held)?;
+            self.chunk_member(
+                Bitmaps::ValueHolders,
+                &part_posting_prefix(field, NAME, &k),
+                id,
+                held,
+            )?;
         }
         // What the row points at, by the dense id it is filed under.
         // A position is filed under its parent (a reserved id for a parent
@@ -1395,7 +1216,7 @@ impl KvTxn<'_> {
         }
         if let (Some((target, tid)), false) = (target, eventful) {
             let held = rows.iter().any(|r| target_of(&r.value) == Some(target));
-            self.chunk_member(SETS, &referrers_prefix(field, tid), id, held)?;
+            self.chunk_member(Bitmaps::ParentHolders, &referrers_prefix(field, tid), id, held)?;
         }
         match value {
             Value::TreeRef { parent: Some(parent), .. } => {
@@ -1427,7 +1248,12 @@ impl KvTxn<'_> {
         let bits = 64 - (valued | before).leading_zeros() as u8;
         anyhow::ensure!(bits <= COUNT_BITS, "{valued} values of '{field}' on one metarecord");
         for bit in 0..bits {
-            self.chunk_member(SETS, &count_prefix(field, bit), id, valued >> bit & 1 == 1)?;
+            self.chunk_member(
+                Bitmaps::ValueCounts,
+                &count_prefix(field, bit),
+                id,
+                valued >> bit & 1 == 1,
+            )?;
         }
         Ok(())
     }
@@ -1437,7 +1263,7 @@ impl KvTxn<'_> {
     fn holders_now(&self, field: &str) -> Result<RoaringBitmap> {
         let mut out = RoaringBitmap::new();
         for bit in 0..COUNT_BITS {
-            out |= self.read_chunked(SETS, &count_prefix(field, bit))?;
+            out |= self.read_chunked(Bitmaps::ValueCounts, &count_prefix(field, bit))?;
         }
         Ok(out)
     }
@@ -1446,7 +1272,7 @@ impl KvTxn<'_> {
     /// sees them.
     pub(super) fn holder_ids_now(&self, field: &str) -> Result<RoaringBitmap> {
         let mut out = self.holders_now(field)?;
-        out |= self.read_chunked(SETS, &set_prefix(ABSENT, Some(field)))?;
+        out |= self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field)))?;
         Ok(out)
     }
 
@@ -1455,7 +1281,7 @@ impl KvTxn<'_> {
     pub(super) fn value_holders_now(&self, field: &str, value: &Value) -> Result<RoaringBitmap> {
         match value_key(value) {
             Some(key) => self.effective(field, value, &key),
-            None => self.read_chunked(SETS, &set_prefix(ABSENT, Some(field))),
+            None => self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field))),
         }
     }
 
@@ -1465,9 +1291,9 @@ impl KvTxn<'_> {
     pub(super) fn rows_over_now(&self, field: &str, n: u64) -> Result<RoaringBitmap> {
         let mut counts = Vec::with_capacity(COUNT_BITS as usize);
         for bit in 0..COUNT_BITS {
-            counts.push(self.read_chunked(SETS, &count_prefix(field, bit))?);
+            counts.push(self.read_chunked(Bitmaps::ValueCounts, &count_prefix(field, bit))?);
         }
-        let unknown = self.read_chunked(SETS, &set_prefix(ABSENT, Some(field)))?;
+        let unknown = self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field)))?;
         // With a `Nothing` row, one value less makes as many rows.
         let mut over = counted_over(&counts, n);
         over |= match n.checked_sub(1) {
@@ -1482,8 +1308,9 @@ impl KvTxn<'_> {
         if let Some(state) = self.grams.borrow().get(field) {
             return Ok(*state);
         }
-        let state =
-            GramState::decode(self.t.grams().get(&self.txn.borrow(), &gram_state_key(field))?)?;
+        let state = GramState::decode(
+            self.t.index_trigram_state.get(&self.txn.borrow(), &gram_state_key(field))?,
+        )?;
         self.grams.borrow_mut().insert(field.to_string(), state);
         Ok(state)
     }
@@ -1500,7 +1327,8 @@ impl KvTxn<'_> {
         let Some((part, key)) = text_part_key(value) else { return Ok(None) };
         let text = if part == VALUE { &key[1..] } else { &key[..] };
         if long_prefix(text).is_none()
-            && self.chunked_exists(SETS, &part_posting_prefix(field, part, &key))?
+            && self
+                .chunked_exists(Bitmaps::ValueHolders, &part_posting_prefix(field, part, &key))?
         {
             return Ok(None);
         }
@@ -1530,13 +1358,20 @@ impl KvTxn<'_> {
             for gram in trigrams(text) {
                 let prefix = gram_values_prefix(field, &gram);
                 let k = [&prefix[..], key].concat();
-                if self.t.grams().get(&w, &k)?.is_some() {
+                if self.t.index_trigram_texts.get(&w, &k)?.is_some() {
                     continue;
                 }
-                if self.t.grams().prefix_iter(&w, &prefix)?.next().transpose()?.is_none() {
+                if self
+                    .t
+                    .index_trigram_texts
+                    .prefix_iter(&w, &prefix)?
+                    .next()
+                    .transpose()?
+                    .is_none()
+                {
                     state.grams += 1;
                 }
-                self.t.grams().put(&mut w, &k, &[])?;
+                self.t.index_trigram_texts.put(&mut w, &k, &[])?;
                 state.entries += 1;
             }
         }
@@ -1545,7 +1380,12 @@ impl KvTxn<'_> {
             state.leftovers = true;
             // No trigram is kept by metarecord yet: every holder is pending.
             let holders = self.holders_now(field)?;
-            self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(field)), &holders, true)?;
+            self.chunk_apply(
+                set_table(GRAM_PENDING),
+                &set_prefix(GRAM_PENDING, Some(field)),
+                &holders,
+                true,
+            )?;
         }
         if state != before {
             self.grams.borrow_mut().insert(field.to_string(), state);
@@ -1569,8 +1409,8 @@ impl KvTxn<'_> {
     /// The fields that have trigram state.
     pub(super) fn gram_fields(&self) -> Result<Vec<String>> {
         let mut fields: Vec<String> = Vec::new();
-        for entry in self.t.grams().prefix_iter(&self.txn.borrow(), &[GRAM_STATE])? {
-            let (name, _) = unesc(&entry?.0[1..])?;
+        for entry in self.t.index_trigram_state.iter(&self.txn.borrow())? {
+            let (name, _) = unesc(entry?.0)?;
             fields.push(String::from_utf8(name).context("a field name")?);
         }
         fields.extend(self.grams_changed.borrow().iter().cloned());
@@ -1586,7 +1426,8 @@ impl KvTxn<'_> {
         if !state.by_ids {
             return Ok(0);
         }
-        let pending = self.read_chunked(SETS, &set_prefix(GRAM_PENDING, Some(field)))?;
+        let pending =
+            self.read_chunked(set_table(GRAM_PENDING), &set_prefix(GRAM_PENDING, Some(field)))?;
         Ok(pending.len() + u64::from(state.leftovers))
     }
 
@@ -1599,7 +1440,8 @@ impl KvTxn<'_> {
             if !state.by_ids {
                 return Ok(());
             }
-            let pending = self.read_chunked(SETS, &set_prefix(GRAM_PENDING, Some(&field)))?;
+            let pending = self
+                .read_chunked(set_table(GRAM_PENDING), &set_prefix(GRAM_PENDING, Some(&field)))?;
             for id in &pending {
                 let uuid = match t.uuids.get(&self.txn.borrow(), &id.to_be_bytes())? {
                     Some(uuid) => uuid_of(uuid),
@@ -1611,20 +1453,30 @@ impl KvTxn<'_> {
                         continue;
                     };
                     for gram in trigrams(&text) {
-                        self.chunk_member(GRAMS, &gram_prefix(&field, &gram), id, true)?;
+                        self.chunk_member(
+                            Bitmaps::TrigramHolders,
+                            &gram_prefix(&field, &gram),
+                            id,
+                            true,
+                        )?;
                     }
                 }
             }
-            self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(&field)), &pending, false)?;
+            self.chunk_apply(
+                set_table(GRAM_PENDING),
+                &set_prefix(GRAM_PENDING, Some(&field)),
+                &pending,
+                false,
+            )?;
             if state.leftovers {
-                let prefix = [&[GRAM_VALUES][..], &name_key(&field)].concat();
+                let prefix = name_key(&field);
                 let mut w = self.txn.borrow_mut();
                 let mut gone = Vec::new();
-                for entry in t.grams().prefix_iter(&w, &prefix)? {
+                for entry in t.index_trigram_texts.prefix_iter(&w, &prefix)? {
                     gone.push(entry?.0.to_vec());
                 }
                 for k in gone {
-                    t.grams().delete(&mut w, &k)?;
+                    t.index_trigram_texts.delete(&mut w, &k)?;
                 }
                 state.leftovers = false;
                 state.entries = 0;
@@ -1655,11 +1507,12 @@ impl KvTxn<'_> {
         let ancestors = self.hierarchy_ancestors(field, parent)?;
         if add {
             let _ = uuid;
-            let mut moving = self.read_chunked(SETS, &descendants_prefix(field, id))?;
+            let mut moving =
+                self.read_chunked(Bitmaps::Descendants, &descendants_prefix(field, id))?;
             moving.insert(id);
             for ancestor in &ancestors {
                 let prefix = descendants_prefix(field, self.target_id(ancestor.as_bytes())?);
-                self.chunk_apply(SETS, &prefix, &moving, true)?;
+                self.chunk_apply(Bitmaps::Descendants, &prefix, &moving, true)?;
             }
             return Ok(());
         }
@@ -1669,9 +1522,9 @@ impl KvTxn<'_> {
         }
         for (ancestor, now) in ancestors.iter().zip(recomputed) {
             let prefix = descendants_prefix(field, self.target_id(ancestor.as_bytes())?);
-            let before = self.read_chunked(SETS, &prefix)?;
-            self.chunk_apply(SETS, &prefix, &(&before - &now), false)?;
-            self.chunk_apply(SETS, &prefix, &(&now - &before), true)?;
+            let before = self.read_chunked(Bitmaps::Descendants, &prefix)?;
+            self.chunk_apply(Bitmaps::Descendants, &prefix, &(&before - &now), false)?;
+            self.chunk_apply(Bitmaps::Descendants, &prefix, &(&now - &before), true)?;
         }
         Ok(())
     }
@@ -1714,7 +1567,8 @@ impl KvTxn<'_> {
                 if walked.contains(&child) {
                     todo.push(child);
                 } else {
-                    out |= self.read_chunked(SETS, &descendants_prefix(field, child_id))?;
+                    out |= self
+                        .read_chunked(Bitmaps::Descendants, &descendants_prefix(field, child_id))?;
                 }
             }
         }
@@ -1755,13 +1609,18 @@ impl KvTxn<'_> {
         add: bool,
     ) -> Result<()> {
         let _ = uuid;
-        let mut moving = self.read_chunked(SETS, &descendants_prefix(field, id))?;
+        let mut moving = self.read_chunked(Bitmaps::Descendants, &descendants_prefix(field, id))?;
         moving.insert(id);
         let mut up = Some(parent);
         for _ in 0..crate::log::MAX_TREE_DEPTH {
             let Some(ancestor) = up else { return Ok(()) };
             let above = self.target_id(ancestor.as_bytes())?;
-            self.chunk_apply(SETS, &descendants_prefix(field, above), &moving, add)?;
+            self.chunk_apply(
+                Bitmaps::Descendants,
+                &descendants_prefix(field, above),
+                &moving,
+                add,
+            )?;
             up = Rows::rows_named(self, ancestor, field)?.into_iter().find_map(|r| match r.value {
                 Value::TreeRef { parent, .. } => parent,
                 _ => None,
@@ -1798,7 +1657,9 @@ impl KvTxn<'_> {
         ] {
             db.clear(&mut w)?;
         }
-        t.sets().clear(&mut w)?;
+        for table in Bitmaps::DERIVED {
+            table.db(&t).clear(&mut w)?;
+        }
         Ok(())
     }
 }
@@ -2086,7 +1947,7 @@ impl KvStore {
             fields.insert(unesc(k)?.0);
         }
         wear.event_fields = fields.len();
-        for entry in self.t.sets().prefix_iter(&r, &[GRAM_PENDING])? {
+        for entry in Bitmaps::TrigramPending.db(&self.t).iter(&r)? {
             wear.trigrams_pending += decode_set(entry?.1)?.len();
         }
         // The counter holds the next id to hand out; the first is 1.
@@ -2376,54 +2237,55 @@ impl KvStore {
         }
 
         // Got: the derived tables, as they are.
-        for entry in t.sets().iter(r)? {
-            let (k, v) = entry?;
-            let kind = k[0];
-            if kind == POSTINGS {
-                // A posting is an entry per holder of its value or name.
-                let (name, rest) = unesc(&k[1..])?;
+        let tables = [
+            (Bitmaps::Parents, PARENTS),
+            (Bitmaps::LongTexts, LONG_TEXTS),
+            (Bitmaps::ParentHolders, REFERRERS),
+            (Bitmaps::Descendants, DESCENDANTS),
+            (Bitmaps::ValueHolders, POSTINGS),
+            (Bitmaps::ValueCounts, COUNT),
+        ];
+        for (table, kind) in tables {
+            for entry in table.db(t).iter(r)? {
+                let (k, v) = entry?;
+                let (name, rest) = unesc(k)?;
                 let field = std::str::from_utf8(&name).context("a field name")?;
-                let key = &rest[..rest.len() - 2];
-                let tag = VALUE;
-                if key == [NOTHING_TAG] {
-                    // `nothing`'s holders: what the rows say as absence.
+                if kind == POSTINGS {
+                    // A posting is an entry per holder of its value or name.
+                    let key = &rest[..rest.len() - 2];
+                    let tag = VALUE;
+                    if key == [NOTHING_TAG] {
+                        // `nothing`'s holders: what the rows say as absence.
+                        for id in decode_set(v)? {
+                            if !sifted(id) {
+                                sink(Side::Got, Entry::set(ABSENT, field, id))?;
+                            }
+                        }
+                        continue;
+                    }
+                    let replayed = pending.get(field).filter(|_| tag == VALUE);
                     for id in decode_set(v)? {
+                        if replayed.is_some_and(|(e, _)| !events::replay_one(e, key, id, true)) {
+                            continue;
+                        }
                         if !sifted(id) {
-                            sink(Side::Got, Entry::set(ABSENT, field, id))?;
+                            let entry = Entry { space: PART, tag, field, key, id, count: 1 };
+                            sink(Side::Got, entry)?;
                         }
                     }
                     continue;
                 }
-                let replayed = pending.get(field).filter(|_| tag == VALUE);
+                let (space, tag, key) = match kind {
+                    REFERRERS => (REFERRER, 0, &rest[..4]),
+                    DESCENDANTS => (DESCENDANT, 0, &rest[..4]),
+                    // One bit of the counts: a set of its own.
+                    COUNT => (SET, COUNT_TAG + rest[0], &rest[..0]),
+                    _ => (SET, kind, &rest[..0]),
+                };
                 for id in decode_set(v)? {
-                    if replayed.is_some_and(|(e, _)| !events::replay_one(e, key, id, true)) {
-                        continue;
-                    }
                     if !sifted(id) {
-                        let entry = Entry { space: PART, tag, field, key, id, count: 1 };
-                        sink(Side::Got, entry)?;
+                        sink(Side::Got, Entry { space, tag, field, key, id, count: 1 })?;
                     }
-                }
-                continue;
-            }
-            if kind == GRAM_PENDING || kind == RESERVED {
-                // Not an equality: see `GramCheck`; a reserved id is no
-                // metarecord's.
-                continue;
-            }
-            let (name, rest) =
-                if kind == UNIVERSE { (Vec::new(), &k[1..]) } else { unesc(&k[1..])? };
-            let field = std::str::from_utf8(&name).context("a field name")?;
-            let (space, tag, key) = match kind {
-                REFERRERS => (REFERRER, 0, &rest[..4]),
-                DESCENDANTS => (DESCENDANT, 0, &rest[..4]),
-                // One bit of the counts: a set of its own.
-                COUNT => (SET, COUNT_TAG + rest[0], &rest[..0]),
-                _ => (SET, kind, &rest[..0]),
-            };
-            for id in decode_set(v)? {
-                if !sifted(id) {
-                    sink(Side::Got, Entry { space, tag, field, key, id, count: 1 })?;
                 }
             }
         }
@@ -2433,7 +2295,7 @@ impl KvStore {
             for key in events::named(list) {
                 let run = posting_prefix(field, &key);
                 let mut stored = RoaringBitmap::new();
-                for entry in t.sets().prefix_iter(r, &run)? {
+                for entry in Bitmaps::ValueHolders.db(t).prefix_iter(r, &run)? {
                     let (k, v) = entry?;
                     if k.len() == run.len() + 2 {
                         stored |= decode_set(v)?;
@@ -2487,36 +2349,40 @@ impl KvStore {
         }
         let settled = |key: &[u8]| unesc(key).is_ok_and(|(name, _)| !behind.contains(&name));
         // The posting keys of each bucket, counted from the postings.
-        let mut expected = expected;
-        for entry in self.t.sets().prefix_iter(r, &[POSTINGS])? {
+        let mut keys = Histograms::new();
+        for entry in Bitmaps::ValueHolders.db(&self.t).iter(r)? {
             let (k, _) = entry?;
-            let (name, rest) = unesc(&k[1..])?;
+            let (name, rest) = unesc(k)?;
             if let (Some(bucket), Ok(field)) =
                 (hist_bucket(&rest[..rest.len() - 2]), String::from_utf8(name))
             {
-                *expected.entry(hist_chunks_key(&field, &bucket)).or_default() += 1;
+                *keys.entry(hist_chunks_key(&field, &bucket)).or_default() += 1;
             }
         }
-        let mut expected = expected.into_iter().filter(|(k, _)| settled(k)).peekable();
-        for (k, v) in self.t.hist().entries(r)? {
-            let (k, v) = (&k[..], &v[..]);
-            if !settled(k) {
-                continue;
-            }
-            let got = from_be(v);
-            while let Some((want_k, want)) = expected.next_if(|(want_k, _)| want_k[..] < *k) {
-                diff.push(format!("histogram missing: {}: {want}", show(&want_k)?));
-            }
-            match expected.next_if(|(want_k, _)| want_k[..] == *k) {
-                Some((_, want)) if want == got => {}
-                Some((_, want)) => {
-                    diff.push(format!("histogram of {}: {got} rows, expected {want}", show(k)?))
+        for (db, expected, what) in [
+            (self.t.index_histogram_rows, expected, "rows"),
+            (self.t.index_histogram_keys, keys, "posting keys"),
+        ] {
+            let mut expected = expected.into_iter().filter(|(k, _)| settled(k)).peekable();
+            for entry in db.iter(r)? {
+                let (k, v) = entry?;
+                if !settled(k) {
+                    continue;
                 }
-                None => diff.push(format!("histogram unexpected: {}: {got}", show(k)?)),
+                let got = from_be(v);
+                while let Some((want_k, want)) = expected.next_if(|(want_k, _)| want_k[..] < *k) {
+                    diff.push(format!("histogram missing: {}: {want} {what}", show(&want_k)?));
+                }
+                match expected.next_if(|(want_k, _)| want_k[..] == *k) {
+                    Some((_, want)) if want == got => {}
+                    Some((_, want)) => diff
+                        .push(format!("histogram of {}: {got} {what}, expected {want}", show(k)?)),
+                    None => diff.push(format!("histogram unexpected: {}: {got} {what}", show(k)?)),
+                }
             }
-        }
-        for (want_k, want) in expected {
-            diff.push(format!("histogram missing: {}: {want}", show(&want_k)?));
+            for (want_k, want) in expected {
+                diff.push(format!("histogram missing: {}: {want} {what}", show(&want_k)?));
+            }
         }
         Ok(())
     }
@@ -2707,9 +2573,10 @@ impl GramCheck {
         }
         let field = group.field.as_str();
         if !self.fields.contains_key(field) {
-            let state = GramState::decode(t.grams().get(r, &gram_state_key(field))?)?;
+            let state = GramState::decode(t.index_trigram_state.get(r, &gram_state_key(field))?)?;
             let mut pending = RoaringBitmap::new();
-            for entry in t.sets().prefix_iter(r, &set_prefix(GRAM_PENDING, Some(field)))? {
+            let pending_db = Bitmaps::TrigramPending.db(t);
+            for entry in pending_db.prefix_iter(r, &set_prefix(GRAM_PENDING, Some(field)))? {
                 pending |= decode_set(entry?.1)?;
             }
             self.fields.insert(field.to_string(), (state, pending));
@@ -2718,7 +2585,7 @@ impl GramCheck {
         if !state.by_ids {
             for (gram, key) in &group.grams {
                 let k = [&gram_values_prefix(field, gram)[..], key].concat();
-                if t.grams().get(r, &k)?.is_none() {
+                if t.index_trigram_texts.get(r, &k)?.is_none() {
                     let gram = String::from_utf8_lossy(gram);
                     diff.push(format!("gram missing: ({field:?}, {gram:?}, text key {key:?})"));
                 }
@@ -2738,7 +2605,7 @@ impl GramCheck {
                 if self.chunks.len() >= 1024 {
                     self.chunks.clear();
                 }
-                let chunk = match t.grams().get(r, &k)? {
+                let chunk = match t.index_trigram_holders.get(r, &k)? {
                     Some(bytes) => decode_set(bytes)?,
                     None => RoaringBitmap::new(),
                 };
@@ -2875,8 +2742,8 @@ mod tests {
         prefix: &[u8],
     ) -> Vec<u8> {
         let r = store.env.read_txn().unwrap();
-        let (k, _) = db(&store.t).prefix_iter(&r, prefix).unwrap().next().unwrap().unwrap();
-        k.to_vec()
+        let mut keys = db(&store.t).iter(&r).unwrap().map(|e| e.unwrap().0.to_vec());
+        keys.find(|k| k.starts_with(prefix)).expect("a key under the prefix")
     }
 
     /// The first lines of a diff, for a failure message.
@@ -2909,6 +2776,45 @@ mod tests {
         assert_eq!(type_tag("nothing"), None);
     }
 
+    /// A key of an index begins with its field: no byte of a former kind
+    /// before it (doc "Store tables"), and a bucket's count of posting keys
+    /// has no `FF` between its field and its bucket.
+    #[test]
+    fn test_an_index_key_begins_with_its_field() {
+        let (store, _dir) = populated();
+        let fields = ["loc", "kind", "title", "link", "size"];
+        let r = store.env.read_txn().unwrap();
+        let t = &store.t;
+        let tables = [
+            ("index_value_holders", t.index_value_holders, true),
+            ("index_value_counts", t.index_value_counts, true),
+            ("index_parent_holders", t.index_parent_holders, true),
+            ("index_descendants", t.index_descendants, true),
+            ("index_parents", t.index_parents, true),
+            ("index_trigram_texts", t.index_trigram_texts, true),
+            ("index_trigram_state", t.index_trigram_state, true),
+            ("index_histogram_rows", t.index_histogram_rows, true),
+            ("index_histogram_keys", t.index_histogram_keys, true),
+            ("index_trigram_holders", t.index_trigram_holders, false),
+            ("index_trigram_pending", t.index_trigram_pending, false),
+            ("index_long_texts", t.index_long_texts, false),
+        ];
+        for (name, db, filled) in tables {
+            let mut n = 0;
+            for entry in db.iter(&r).unwrap() {
+                let (k, _) = entry.unwrap();
+                n += 1;
+                let (field, rest) = unesc(k).unwrap();
+                let field = String::from_utf8_lossy(&field).to_string();
+                assert!(fields.contains(&field.as_str()), "{name}: a key of field {field:?}");
+                if name == "index_histogram_keys" {
+                    assert_ne!(rest.first(), Some(&0xFF), "{name}: no FF before the bucket");
+                }
+            }
+            assert!(!filled || n > 0, "{name} holds keys");
+        }
+    }
+
     #[test]
     fn test_a_healthy_store_checks_clean() {
         let (store, _dir) = populated();
@@ -2921,7 +2827,7 @@ mod tests {
         let key =
             first_key(&store, |t| t.index_trigram_texts, &gram_values_prefix("title", b"num"));
         tamper(&store, |t, w| {
-            t.grams().delete(w, &key).unwrap();
+            t.index_trigram_texts.delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "gram missing: "), "{}", some(&diff));
@@ -2950,16 +2856,16 @@ mod tests {
 
     #[test]
     fn test_a_lost_set_chunk_is_named_by_its_key_space() {
-        let cases: [(&str, Vec<u8>); 3] = [
-            ("set missing: ", count_prefix("kind", 0)),
-            ("descendant missing: ", vec![DESCENDANTS]),
-            ("referrer missing: ", vec![REFERRERS]),
+        let cases: [(&str, Bitmaps, Vec<u8>); 3] = [
+            ("set missing: ", Bitmaps::ValueCounts, count_prefix("kind", 0)),
+            ("descendant missing: ", Bitmaps::Descendants, vec![]),
+            ("referrer missing: ", Bitmaps::ParentHolders, vec![]),
         ];
-        for (expected, prefix) in cases {
+        for (expected, table, prefix) in cases {
             let (store, _dir) = populated();
-            let key = first_key(&store, |t| t.sets().db(prefix[0]), &prefix);
+            let key = first_key(&store, |t| table.db(t), &prefix);
             tamper(&store, |t, w| {
-                t.sets().delete(w, &key).unwrap();
+                table.db(t).delete(w, &key).unwrap();
             });
             let diff = store.check_derived().unwrap();
             assert!(
@@ -2974,19 +2880,20 @@ mod tests {
     fn test_postings_are_held_to_the_rows() {
         let (store, _dir) = populated();
         let posting = posting_prefix("kind", &value_key(&Value::String("text".into())).unwrap());
-        let key = first_key(&store, |t| t.sets().db(posting[0]), &posting);
+        let key = first_key(&store, |t| t.index_value_holders, &posting);
 
         // One holder short: that holder's entry is missing.
         let short = {
             let r = store.env.read_txn().unwrap();
-            let mut set = decode_set(store.t.sets().get(&r, &key).unwrap().unwrap()).unwrap();
+            let mut set =
+                decode_set(store.t.index_value_holders.get(&r, &key).unwrap().unwrap()).unwrap();
             set.remove(set.max().unwrap());
             let mut bytes = Vec::new();
             set.serialize_into(&mut bytes).unwrap();
             bytes
         };
         tamper(&store, |t, w| {
-            t.sets().put(w, &key, &short).unwrap();
+            t.index_value_holders.put(w, &key, &short).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "part missing: "), "{}", some(&diff));
@@ -2994,7 +2901,7 @@ mod tests {
 
         // Gone: every holder's entry is.
         tamper(&store, |t, w| {
-            t.sets().delete(w, &key).unwrap();
+            t.index_value_holders.delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "part missing: "), "{}", some(&diff));
@@ -3004,8 +2911,8 @@ mod tests {
             [&posting_prefix("kind", &value_key(&Value::Bool(true)).unwrap())[..], &[0, 0]]
                 .concat();
         tamper(&store, |t, w| {
-            t.sets().put(w, &key, &short).unwrap();
-            t.sets().put(w, &orphan, &short).unwrap();
+            t.index_value_holders.put(w, &key, &short).unwrap();
+            t.index_value_holders.put(w, &orphan, &short).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "part unexpected: "), "{}", some(&diff));
@@ -3019,17 +2926,17 @@ mod tests {
         // A count off by one.
         let n = {
             let r = store.env.read_txn().unwrap();
-            from_be(store.t.hist().get(&r, &key).unwrap().unwrap())
+            from_be(store.t.index_histogram_rows.get(&r, &key).unwrap().unwrap())
         };
         tamper(&store, |t, w| {
-            t.hist().put(w, &key, &be(n + 1)).unwrap();
+            t.index_histogram_rows.put(w, &key, &be(n + 1)).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram of "), "{}", some(&diff));
 
         // A bucket gone.
         tamper(&store, |t, w| {
-            t.hist().delete(w, &key).unwrap();
+            t.index_histogram_rows.delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram missing: "), "{}", some(&diff));
@@ -3039,8 +2946,8 @@ mod tests {
             [&name_key("size")[..], &hist_bucket(&value_key(&Value::Int(-7)).unwrap()).unwrap()]
                 .concat();
         tamper(&store, |t, w| {
-            t.hist().put(w, &key, &be(n)).unwrap();
-            t.hist().put(w, &bogus, &be(3)).unwrap();
+            t.index_histogram_rows.put(w, &key, &be(n)).unwrap();
+            t.index_histogram_rows.put(w, &bogus, &be(3)).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert_eq!(diff.len(), 1, "{}", some(&diff));
@@ -3055,20 +2962,22 @@ mod tests {
         let key = hist_chunks_key("size", &bucket);
         let n = {
             let r = store.env.read_txn().unwrap();
-            from_be(store.t.hist().get(&r, &key).unwrap().expect("the keys are counted"))
+            from_be(
+                store.t.index_histogram_keys.get(&r, &key).unwrap().expect("the keys are counted"),
+            )
         };
         assert!(n >= 1, "{n}");
 
         // Off by one.
         tamper(&store, |t, w| {
-            t.hist().put(w, &key, &be(n + 1)).unwrap();
+            t.index_histogram_keys.put(w, &key, &be(n + 1)).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram of "), "{}", some(&diff));
 
         // Gone.
         tamper(&store, |t, w| {
-            t.hist().delete(w, &key).unwrap();
+            t.index_histogram_keys.delete(w, &key).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "histogram missing: "), "{}", some(&diff));
@@ -3098,7 +3007,7 @@ mod tests {
         stray.serialize_into(&mut bytes).unwrap();
         tamper(&store, |t, w| {
             let key = [&count_prefix("kind", 0)[..], &61u16.to_be_bytes()].concat();
-            t.sets().put(w, &key, &bytes).unwrap();
+            t.index_value_counts.put(w, &key, &bytes).unwrap();
         });
         let diff = store.check_derived().unwrap();
         assert!(has(&diff, "set unexpected: "), "{}", some(&diff));

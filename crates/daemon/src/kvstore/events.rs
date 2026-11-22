@@ -32,7 +32,8 @@ use roaring::RoaringBitmap;
 use super::super::{get_value, name_key, put_value, In, KvStore, KvTxn, Out, Tables};
 use super::{
     count_prefix, decode_set, hist_bucket, hist_key, posting_prefix, search_text, set_prefix,
-    unesc, value_key, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS, POSTINGS, SETS, TRIGRAM_MAX,
+    set_table, unesc, value_key, Bitmaps, ABSENT, COUNT_BITS, GRAM_PENDING, LONG_TEXTS,
+    TRIGRAM_MAX,
 };
 
 pub(crate) use crate::store::MassKind as Kind;
@@ -244,7 +245,7 @@ impl KvTxn<'_> {
         // no value is counted, and no event is needed to replay it.
         if kind != Kind::Replace && event.keys.is_empty() {
             let absent = set_prefix(ABSENT, Some(field));
-            self.chunk_apply(SETS, &absent, &event.ids, kind == Kind::Add)?;
+            self.chunk_apply(set_table(ABSENT), &absent, &event.ids, kind == Kind::Add)?;
             return self.append_entries(kind, field, &listed, &event.ids);
         }
         match kind {
@@ -257,7 +258,12 @@ impl KvTxn<'_> {
                     self.hist_bump(field, key, gain.len() as i64)?;
                     self.mass_grams(field, value, &gain)?;
                     if search_text(value).is_some_and(|t| t.len() > TRIGRAM_MAX) {
-                        self.chunk_apply(SETS, &set_prefix(LONG_TEXTS, Some(field)), &gain, true)?;
+                        self.chunk_apply(
+                            set_table(LONG_TEXTS),
+                            &set_prefix(LONG_TEXTS, Some(field)),
+                            &gain,
+                            true,
+                        )?;
                     }
                 } else {
                     let lose = &event.ids & &have;
@@ -269,13 +275,23 @@ impl KvTxn<'_> {
                 let n = event.keys.len() as u64;
                 for bit in 0..COUNT_BITS {
                     let prefix = count_prefix(field, bit);
-                    self.chunk_apply(SETS, &prefix, &event.ids, n >> bit & 1 == 1)?;
+                    self.chunk_apply(Bitmaps::ValueCounts, &prefix, &event.ids, n >> bit & 1 == 1)?;
                 }
                 let unknown = event.values.iter().any(|v| matches!(v, Value::Nothing));
-                self.chunk_apply(SETS, &set_prefix(ABSENT, Some(field)), &event.ids, unknown)?;
+                self.chunk_apply(
+                    set_table(ABSENT),
+                    &set_prefix(ABSENT, Some(field)),
+                    &event.ids,
+                    unknown,
+                )?;
                 let long =
                     event.values.iter().filter_map(search_text).any(|t| t.len() > TRIGRAM_MAX);
-                self.chunk_apply(SETS, &set_prefix(LONG_TEXTS, Some(field)), &event.ids, long)?;
+                self.chunk_apply(
+                    set_table(LONG_TEXTS),
+                    &set_prefix(LONG_TEXTS, Some(field)),
+                    &event.ids,
+                    long,
+                )?;
                 for (value, key) in
                     event.values.iter().filter(|v| value_key(v).is_some()).zip(&event.keys)
                 {
@@ -403,13 +419,23 @@ impl KvTxn<'_> {
         };
         let Some(first) = ids.min() else { return Ok(()) };
         if self.gram_state(field)?.by_ids {
-            return self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(field)), ids, true);
+            return self.chunk_apply(
+                set_table(GRAM_PENDING),
+                &set_prefix(GRAM_PENDING, Some(field)),
+                ids,
+                true,
+            );
         }
         let new_text = self.new_text(field, value)?;
         self.derive_grams(field, first, &text, new_text.as_deref())?;
         // The field may have turned by metarecord on that text.
         if self.gram_state(field)?.by_ids {
-            self.chunk_apply(SETS, &set_prefix(GRAM_PENDING, Some(field)), ids, true)?;
+            self.chunk_apply(
+                set_table(GRAM_PENDING),
+                &set_prefix(GRAM_PENDING, Some(field)),
+                ids,
+                true,
+            )?;
         }
         Ok(())
     }
@@ -431,13 +457,13 @@ impl KvTxn<'_> {
                 return Ok(());
             }
             let prefix = count_prefix(field, bit);
-            let set = &self.read_chunked(SETS, &prefix)? & &carry;
+            let set = &self.read_chunked(Bitmaps::ValueCounts, &prefix)? & &carry;
             let clear = &carry - &set;
             // Up: a set bit clears and carries on, a clear one sets and
             // stops. Down: a clear bit sets and borrows on, a set one clears
             // and stops.
-            self.chunk_apply(SETS, &prefix, &set, false)?;
-            self.chunk_apply(SETS, &prefix, &clear, true)?;
+            self.chunk_apply(Bitmaps::ValueCounts, &prefix, &set, false)?;
+            self.chunk_apply(Bitmaps::ValueCounts, &prefix, &clear, true)?;
             carry = if up { set } else { clear };
         }
         ensure!(carry.is_empty(), "a count of values of '{field}' out of its bits");
@@ -446,7 +472,7 @@ impl KvTxn<'_> {
 
     /// The holders of a value as stored: its posting.
     fn stored_holders(&self, field: &str, key: &[u8]) -> Result<RoaringBitmap> {
-        self.read_chunked(SETS, &super::posting_prefix(field, key))
+        self.read_chunked(Bitmaps::ValueHolders, &super::posting_prefix(field, key))
     }
 
     /// The holders of a value as the transaction sees them: stored, the
@@ -476,7 +502,7 @@ impl KvTxn<'_> {
         add: bool,
     ) -> Result<()> {
         let _ = value;
-        self.chunk_apply(SETS, &posting_prefix(field, key), ids, add)?;
+        self.chunk_apply(Bitmaps::ValueHolders, &posting_prefix(field, key), ids, add)?;
         Ok(())
     }
 
@@ -521,13 +547,18 @@ impl KvTxn<'_> {
                 Kind::Add | Kind::Remove => {
                     let add = e.kind == Kind::Add;
                     for key in valued.zip(&e.keys).map(|(_, k)| k) {
-                        self.with_chunk(SETS, &posting_prefix(field, key), chunk, &mut |bm| {
-                            if add {
-                                *bm |= &e.ids;
-                            } else {
-                                *bm -= &e.ids;
-                            }
-                        })?;
+                        self.with_chunk(
+                            Bitmaps::ValueHolders,
+                            &posting_prefix(field, key),
+                            chunk,
+                            &mut |bm| {
+                                if add {
+                                    *bm |= &e.ids;
+                                } else {
+                                    *bm -= &e.ids;
+                                }
+                            },
+                        )?;
                         if add {
                             values.insert(key.clone());
                         }
@@ -536,16 +567,24 @@ impl KvTxn<'_> {
                 Kind::Replace => {
                     for key in &values {
                         let mut gone = 0;
-                        self.with_chunk(SETS, &posting_prefix(field, key), chunk, &mut |bm| {
-                            gone = bm.intersection_len(&e.ids);
-                            *bm -= &e.ids;
-                        })?;
+                        self.with_chunk(
+                            Bitmaps::ValueHolders,
+                            &posting_prefix(field, key),
+                            chunk,
+                            &mut |bm| {
+                                gone = bm.intersection_len(&e.ids);
+                                *bm -= &e.ids;
+                            },
+                        )?;
                         self.hist_bump(field, key, -(gone as i64))?;
                     }
                     for key in valued.zip(&e.keys).map(|(_, k)| k) {
-                        self.with_chunk(SETS, &posting_prefix(field, key), chunk, &mut |bm| {
-                            *bm |= &e.ids
-                        })?;
+                        self.with_chunk(
+                            Bitmaps::ValueHolders,
+                            &posting_prefix(field, key),
+                            chunk,
+                            &mut |bm| *bm |= &e.ids,
+                        )?;
                         values.insert(key.clone());
                     }
                 }
@@ -566,12 +605,12 @@ impl KvTxn<'_> {
     /// itself, never replayed (doc "Mass writes in the store"). A walk of the
     /// keys of the field's postings, not of their bitmaps.
     fn values_in_chunk(&self, field: &str, chunk: u16) -> Result<BTreeSet<Vec<u8>>> {
-        let posted = [&[POSTINGS][..], &name_key(field)].concat();
+        let posted = name_key(field);
         let tail = chunk.to_be_bytes();
         let mut keys = BTreeSet::new();
         {
             let txn = self.txn.borrow();
-            for entry in self.t.sets().prefix_iter(&txn, &posted)? {
+            for entry in Bitmaps::ValueHolders.db(&self.t).prefix_iter(&txn, &posted)? {
                 let k = entry?.0;
                 if k.len() >= posted.len() + 2 && k.ends_with(&tail) {
                     keys.insert(k[posted.len()..k.len() - 2].to_vec());
@@ -579,7 +618,7 @@ impl KvTxn<'_> {
             }
         }
         // The postings this transaction made are not in the table yet.
-        let whole = [&[SETS][..], &posted[..]].concat();
+        let whole = [&[Bitmaps::ValueHolders as u8][..], &posted[..]].concat();
         for k in self.sets.borrow().keys() {
             if k.starts_with(&whole) && k.len() >= whole.len() + 2 && k.ends_with(&tail) {
                 keys.insert(k[whole.len()..k.len() - 2].to_vec());
@@ -595,11 +634,11 @@ impl KvTxn<'_> {
         &self,
         field: &str,
     ) -> Result<Vec<(Vec<u8>, RoaringBitmap)>> {
-        let posted = [&[POSTINGS][..], &name_key(field)].concat();
+        let posted = name_key(field);
         let mut keys = BTreeSet::new();
         {
             let txn = self.txn.borrow();
-            for entry in self.t.sets().prefix_iter(&txn, &posted)? {
+            for entry in Bitmaps::ValueHolders.db(&self.t).prefix_iter(&txn, &posted)? {
                 let k = entry?.0;
                 keys.insert(k[posted.len()..k.len() - 2].to_vec());
             }
@@ -607,7 +646,7 @@ impl KvTxn<'_> {
             keys.remove(&[super::super::derived::NOTHING_TAG][..]);
         }
         // The postings this transaction made are not in the table yet.
-        let whole = [&[SETS][..], &posted[..]].concat();
+        let whole = [&[Bitmaps::ValueHolders as u8][..], &posted[..]].concat();
         for k in self.sets.borrow().keys() {
             if k.starts_with(&whole) && k.len() >= whole.len() + 2 {
                 keys.insert(k[whole.len()..k.len() - 2].to_vec());
@@ -616,7 +655,7 @@ impl KvTxn<'_> {
         keys.remove(&[super::super::derived::NOTHING_TAG][..]);
         let mut out = Vec::new();
         for key in keys {
-            let holders = self.read_chunked(SETS, &posting_prefix(field, &key))?;
+            let holders = self.read_chunked(Bitmaps::ValueHolders, &posting_prefix(field, &key))?;
             if !holders.is_empty() {
                 out.push((key, holders));
             }
@@ -661,7 +700,8 @@ impl KvTxn<'_> {
                 .value;
             out.push((value, places(&holders)));
         }
-        let unknown = &self.read_chunked(SETS, &set_prefix(ABSENT, Some(field)))? & ids;
+        let unknown =
+            &self.read_chunked(set_table(ABSENT), &set_prefix(ABSENT, Some(field)))? & ids;
         if !unknown.is_empty() {
             out.push((Value::Nothing, places(&unknown)));
         }
@@ -804,7 +844,7 @@ mod tests {
         let txn = KvTxn::new(&mut store).unwrap();
         txn.fold_events_chunk("tag", 0).unwrap();
         // The postings of the field the fold loaded: of its chunk only.
-        let posted = [&[SETS, POSTINGS][..], &name_key("tag")].concat();
+        let posted = [&[Bitmaps::ValueHolders as u8][..], &name_key("tag")].concat();
         let loaded: BTreeSet<u16> = txn
             .sets
             .borrow()

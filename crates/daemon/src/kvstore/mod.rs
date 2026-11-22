@@ -930,8 +930,12 @@ impl Read<'_> {
         let Some(key) = derived::value_key(value) else {
             return derived::read_set(self.t, self.r, derived::ABSENT, Some(name));
         };
-        let stored =
-            derived::read_prefix_set(self.t, self.r, &derived::posting_prefix(name, &key))?;
+        let stored = derived::read_prefix_set(
+            self.t,
+            self.r,
+            derived::Bitmaps::ValueHolders,
+            &derived::posting_prefix(name, &key),
+        )?;
         let pending = derived::events::read_events(self.t, self.r, name)?;
         Ok(if pending.is_empty() {
             stored
