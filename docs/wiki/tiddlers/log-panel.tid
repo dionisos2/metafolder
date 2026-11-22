@@ -53,6 +53,6 @@ cursor: one panel, gone into like the rest of the tree, rather than two kept in 
 
 !! Acting
 
-<<key "log:revert" "p z">>, `log:revert op`, <<key "log:revert label" "p Shift+z">>,
+<<key "log:revert" "p z">>, `log:revert op`, <<key "log:revert log-context" "p Shift+z">>,
 `log:prune` — and the global <<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>>,
 also as toolbar buttons: [[Log commands in the GUI]].

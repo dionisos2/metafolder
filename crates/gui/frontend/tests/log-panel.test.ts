@@ -309,7 +309,7 @@ describe('log panel: after a revert', () => {
     await p.run('cursor:first');
     p.api.daemon.call.mockResolvedValueOnce({ operations: [{ id: 12 }] } as never); // the plan
     p.api.log.revert.mockResolvedValueOnce({ log_context: 20, reverted_operations: [12], notes: [] });
-    await p.run('log:revert', 'label');
+    await p.run('log:revert', 'log-context');
     expect(p.api.log.revert).toHaveBeenCalled();
     expect(p.api.workspace.set).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));
     expect(p.api.commands.invoke).not.toHaveBeenCalledWith(['metarecords:dirty']);

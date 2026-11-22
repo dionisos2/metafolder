@@ -212,7 +212,7 @@
 "log:revert" = "B"
 "log:rollback" = "D"
 "log:revert op" = "C"
-"log:revert label" = "C"
+"log:revert log-context" = "C"
 "log:toggle" = "C"
 "log:prune" = "X"
 

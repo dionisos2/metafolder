@@ -788,11 +788,11 @@ export async function mount(root, metafolder) {
 
   // Reverting: what is selected by default, or a named narrowing or widening
   // of it. The scope is an argument rather than sibling command names, so a
-  // keybinding reads as what it does (`log:revert label`).
+  // keybinding reads as what it does (`log:revert log-context`).
   /** @type {Record<string, (mf: MetafolderApi) => unknown>} */
   const REVERTS = {
     op: (mf) => revertOperation(mf),
-    label: (mf) => revertLogContext(mf),
+    'log-context': (mf) => revertLogContext(mf),
   };
 
   void commands.register('log:revert', {

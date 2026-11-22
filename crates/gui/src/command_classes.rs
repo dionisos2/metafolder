@@ -99,7 +99,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(classes.class_of("log:revert"), Some(Class::B));
-        assert_eq!(classes.class_of("log:revert label"), Some(Class::B));
+        assert_eq!(classes.class_of("log:revert log-context"), Some(Class::B));
         assert_eq!(classes.class_of("log:revert  op"), Some(Class::C));
         assert_eq!(classes.class_of("log:revert op 12"), Some(Class::C));
         // Words, not characters: `log:revert opx` is not `log:revert op`.

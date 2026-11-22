@@ -334,7 +334,7 @@ mf_gui_scope_into() { # <outfile> <get args...>
 # METAFOLDER_LOG_CONTEXT so every `mf` started meanwhile writes in it (doc "Labels
 # and contexts"). Empty when it could not be opened: the writes then go where
 # they would have anyway.
-mf_label_begin() { # <name> [description]
+mf_log_context_begin() { # <name> [description]
     mf context new "$@" 2>/dev/null || true
 }
 
@@ -342,7 +342,7 @@ mf_label_begin() { # <name> [description]
 # log contexts nested in it, reverted onto the current state — the watcher's own
 # writes meanwhile are left alone, and an answer that wrote nothing reverts
 # nothing (an idempotent `mf tag` often writes nothing at all).
-mf_label_back() { # <context>
+mf_log_context_back() { # <context>
     [ -n "${1:-}" ] || return 0
     mf log revert "${1##*:}" --force --silent >/dev/null 2>&1 \
         || mf_gui_report "could not undo the last answer"

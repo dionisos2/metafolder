@@ -476,13 +476,13 @@ scenario_log_panel() {
 
     # Reverting a log context whole: the row is marked undone, a new row says what it undid.
     assert "log panel: a row is selected" until_ok 5 click '#rows tr' 'note:string=two' '.name'
-    answering yes log:revert label
+    answering yes log:revert log-context
     status_is "log panel: the revert is reported, not an error" info "Reverted log context #7 in log context #8 *"
     assert "log panel: the new row says what it undid" until_ok 10 \
-        webview text '#rows tr' '#8 log:revert label' '.badge.revert' 'undo of #7'
+        webview text '#rows tr' '#8 log:revert log-context' '.badge.revert' 'undo of #7'
     assert "log panel: the reverted row says what undid it" until_ok 5 \
         webview text '#rows tr' 'note:string=two' '.badge.undone' 'undone by #8'
-    assert "log panel: HEAD moved to the revert" until_ok 5 webview text '#rows tr' '#8 log:revert label' '.head-marker' HEAD
+    assert "log panel: HEAD moved to the revert" until_ok 5 webview text '#rows tr' '#8 log:revert log-context' '.head-marker' HEAD
 
     # Past the first hundred units the older ones are fetched on demand.
     for i in $(seq 1 105); do df_mf metarecord add note:string=bulk$i >/dev/null; done
@@ -532,7 +532,7 @@ fold_now() {
 }
 
 # A deletion of many metarecords (doc "Mass operations in the log", doc "Deleting
-# a metarecord in the store") is one label: undone and redone from the GUI, before
+# a metarecord in the store") is one log context: undone and redone from the GUI, before
 # the fold writes it in and after.
 scenario_mass_delete() {
     new_repo mass-delete
@@ -545,17 +545,17 @@ scenario_mass_delete() {
     assert_eq "mass delete: all gone" 0 "$(live_count)"
     run log:undo
     command_ok "mass delete: log:undo runs"
-    status_is "mass delete: the undo takes the whole label back" info "Undid label * (30 operations)*"
+    status_is "mass delete: the undo takes the whole log context back" info "Undid log context * (30 operations)*"
     assert_eq "mass delete: the records are back" 30 "$(live_count)"
     assert "mass delete: with their fields" field_is "$keep" n v7
     run log:redo
-    status_is "mass delete: the redo deletes them again" info "Redid label * (30 operations)*"
+    status_is "mass delete: the redo deletes them again" info "Redid log context * (30 operations)*"
     assert_eq "mass delete: gone again" 0 "$(live_count)"
 
-    # After the fold: the same label, undone once the store has written it in.
+    # After the fold: the same log context, undone once the store has written it in.
     fold_now
     run log:undo
-    status_is "mass delete: undone after the fold" info "Undid label * (30 operations)*"
+    status_is "mass delete: undone after the fold" info "Undid log context * (30 operations)*"
     assert_eq "mass delete: back after the fold" 30 "$(live_count)"
     assert "mass delete: fields intact after the fold" field_is "$keep" n v7
     run log:redo

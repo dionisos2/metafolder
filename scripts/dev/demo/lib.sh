@@ -8,25 +8,25 @@
 #       (--metafolder: the home is read only, and stays untouched), the files
 #       watched and reconciled, then scripts/dev/demo/metadata.sh applied.
 #
-# The steps write under labels of their own: the log the demonstration shows
+# The steps write under log contexts of their own: the log the demonstration shows
 # names "Track the home folder", never the throwaway daemon's command line.
 
 DEMO_NAME=camille
 _DEMO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # demo_mf <args…> — the fixture's mf, the port and the repository given by the
-# environment rather than on the command line, which a label would record.
+# environment rather than on the command line, which a log context would record.
 demo_mf() {
     METAFOLDER_DAEMON_PORT=$DF_PORT METAFOLDER_REPO_NAME=$DEMO_NAME "$_DF_MF" "$@"
 }
 
 demo_build_repo() {
-    local source=$1 db=$2 label
+    local source=$1 db=$2 log_context
     demo_mf repo init --name "$DEMO_NAME" --metafolder "$db" "$source" >/dev/null || return 1
-    label=$(demo_mf context new "Track the home folder") || return 1
-    METAFOLDER_LOG_CONTEXT=$label demo_mf metarecord -q 'mfr_path = ""' field set mf_watch:bool=true \
+    log_context=$(demo_mf context new "Track the home folder") || return 1
+    METAFOLDER_LOG_CONTEXT=$log_context demo_mf metarecord -q 'mfr_path = ""' field set mf_watch:bool=true \
         >/dev/null || return 1
-    METAFOLDER_LOG_CONTEXT=$label demo_mf reconcile >/dev/null || return 1
+    METAFOLDER_LOG_CONTEXT=$log_context demo_mf reconcile >/dev/null || return 1
     MF=$_DF_MF METAFOLDER_DAEMON_PORT=$DF_PORT METAFOLDER_REPO_NAME=$DEMO_NAME \
         bash "$_DEMO_DIR/metadata.sh"
 }

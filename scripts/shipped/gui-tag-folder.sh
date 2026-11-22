@@ -430,15 +430,15 @@ BACK_STACK=()
 
 # The run is one log context, each answer one inside it (doc "Log contexts"):
 # the log shows the run whole, and an answer is what going back reverts.
-RUN_LABEL=$(mf_label_begin "gui-tag-folder $TAG" "${SCOPE:-every metarecord}")
-[ -z "$RUN_LABEL" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LABEL"
+RUN_LOG_CONTEXT=$(mf_log_context_begin "gui-tag-folder $TAG" "${SCOPE:-every metarecord}")
+[ -z "$RUN_LOG_CONTEXT" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LOG_CONTEXT"
 
 mf_gui_read_root # each preview is the root + the path tree_path resolved
 
 while :; do
     [ -z "$STOP" ] || break
     # Back in the run's context: an answer's log context holds that answer only.
-    [ -z "$RUN_LABEL" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LABEL"
+    [ -z "$RUN_LOG_CONTEXT" ] || export METAFOLDER_LOG_CONTEXT="$RUN_LOG_CONTEXT"
 
     kind="dir"
     uuid=$(first_child dir)
@@ -515,10 +515,10 @@ while :; do
             mf_gui_report "nothing to go back to"
             continue
         fi
-        IFS=$'\t' read -r b_label b_current b_closed b_excluded b_markers b_skipped \
+        IFS=$'\t' read -r b_log_context b_current b_closed b_excluded b_markers b_skipped \
             <<<"${BACK_STACK[-1]}"
         unset "BACK_STACK[-1]"
-        mf_label_back "${b_label#.}"
+        mf_log_context_back "${b_log_context#.}"
         CURRENT=${b_current#.}
         while [ "${#CLOSED_DIRS[@]}" -gt "$b_closed" ]; do unset "CLOSED_DIRS[-1]"; done
         while [ "${#EXCLUDED[@]}" -gt "$b_excluded" ]; do unset "EXCLUDED[-1]"; done
@@ -527,12 +527,12 @@ while :; do
         continue
     fi
 
-    answer_label=$(mf_label_begin "$disp: $answer")
-    [ -z "$answer_label" ] || export METAFOLDER_LOG_CONTEXT="$answer_label"
+    answer_log_context=$(mf_log_context_begin "$disp: $answer")
+    [ -z "$answer_log_context" ] || export METAFOLDER_LOG_CONTEXT="$answer_log_context"
     # The label and the folder are prefixed so no field is ever empty: a tab is
     # IFS *whitespace*, so `read` collapses two consecutive ones, and the walk
     # root's path — the empty string — would shift every field after it.
-    BACK_STACK+=(".$answer_label	.$CURRENT	${#CLOSED_DIRS[@]}	${#EXCLUDED[@]}	$MARKERS	$SKIPPED")
+    BACK_STACK+=(".$answer_log_context	.$CURRENT	${#CLOSED_DIRS[@]}	${#EXCLUDED[@]}	$MARKERS	$SKIPPED")
 
     case $answer in
         "a "*) apply_rest "$uuid" "${answer#a }" "$rest" ;;

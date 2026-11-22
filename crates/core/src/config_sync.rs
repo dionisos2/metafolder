@@ -21,8 +21,8 @@ pub struct SyncOutcome {
     /// When set, the merge conflicted and `main` was restored untouched; the
     /// listed paths are the conflicting files.
     pub conflict: Option<Vec<PathBuf>>,
-    /// `gui/keybindings.toml` held a form that no longer exists, and was
-    /// rewritten (doc "Persisted format changes").
+    /// `gui/keybindings.toml` or `gui/command-classes.toml` held a form that
+    /// no longer exists, and was rewritten (doc "Persisted format changes").
     pub keybindings_converted: bool,
 }
 
@@ -81,21 +81,61 @@ pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String
         init(config_dir, &files)?
     };
     if outcome.conflict.is_none() {
-        outcome.keybindings_converted = convert_keybindings_file(config_dir)?;
+        let keybindings = convert_file(config_dir, "gui/keybindings.toml", convert_keybindings)?;
+        let classes =
+            convert_file(config_dir, "gui/command-classes.toml", convert_command_classes)?;
+        outcome.keybindings_converted = keybindings || classes;
     }
     Ok(outcome)
 }
 
-/// Rewrites `gui/keybindings.toml` when `convert_keybindings` has something to
-/// do. The file stays uncommitted, like any edit of the user's: the next sync
-/// that merges commits it. Returns whether it was rewritten.
-fn convert_keybindings_file(config_dir: &Path) -> Result<bool, String> {
-    let path = config_dir.join("gui/keybindings.toml");
+/// Rewrites the file `rel` of the configuration when `convert` has something
+/// to do. The file stays uncommitted, like any edit of the user's: the next
+/// sync that merges commits it. Returns whether it was rewritten.
+fn convert_file(
+    config_dir: &Path,
+    rel: &str,
+    convert: fn(&str) -> Option<String>,
+) -> Result<bool, String> {
+    let path = config_dir.join(rel);
     let Ok(source) = std::fs::read_to_string(&path) else { return Ok(false) };
-    let Some(converted) = convert_keybindings(&source) else { return Ok(false) };
+    let Some(converted) = convert(&source) else { return Ok(false) };
     std::fs::write(&path, converted)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(true)
+}
+
+/// Invocations renamed since 0.3, old and new (doc "Persisted format
+/// changes"): `log:revert label` became `log:revert log-context` with the
+/// log's labels (November 2026).
+const RENAMED_INVOCATIONS: &[(&str, &str)] = &[("log:revert label", "log:revert log-context")];
+
+/// `command` with a renamed invocation it starts with — whole words — written
+/// under its new name; `None` when it has none.
+fn renamed_invocation(command: &str) -> Option<String> {
+    RENAMED_INVOCATIONS.iter().find_map(|(old, new)| {
+        let rest = command.strip_prefix(old)?;
+        (rest.is_empty() || rest.starts_with(' ')).then(|| format!("{new}{rest}"))
+    })
+}
+
+/// `source`, a `command-classes.toml`, with each renamed invocation's key
+/// under its new name, or `None` when it has none (or does not parse). A
+/// class the user gave the old name wins over the new line a merge brought.
+fn convert_command_classes(source: &str) -> Option<String> {
+    let mut doc = source.parse::<toml_edit::DocumentMut>().ok()?;
+    let old_keys: Vec<(String, String)> = doc
+        .iter()
+        .filter_map(|(key, _)| Some((key.to_string(), renamed_invocation(key)?)))
+        .collect();
+    if old_keys.is_empty() {
+        return None;
+    }
+    for (old, new) in old_keys {
+        let Some(item) = doc.remove(&old) else { continue };
+        doc.insert(&new, item);
+    }
+    Some(doc.to_string())
 }
 
 /// Replaces, in the `vars` table of `doc`, each `{name}` of a variable by that
@@ -134,7 +174,8 @@ fn write_out_variables(doc: &mut toml_edit::DocumentMut) -> bool {
 
 /// `source` with the forms `keybindings.toml` no longer has written out (doc
 /// "Persisted format changes"), or `None` when it has none — or does not parse,
-/// which the GUI reports. A variable naming another holds the keys written out.
+/// which the GUI reports. A renamed invocation is written under its new name
+/// ([`RENAMED_INVOCATIONS`]). A variable naming another holds the keys written out.
 /// A `{target}` template becomes its four lines: its own
 /// key aimed at its default `target`, and the key under each target prefix. A
 /// line already there for one of them wins, as a literal key did over the
@@ -164,6 +205,7 @@ fn convert_keybindings(source: &str) -> Option<String> {
     let keys: Vec<String> =
         doc.iter().map(|(key, _)| key.to_string()).filter(|key| key != "vars").collect();
     let mut added: Vec<(String, InlineTable)> = Vec::new();
+    let mut renamed_any = false;
     for key in keys {
         let Some(value) = doc.get_mut(&key).and_then(toml_edit::Item::as_value_mut) else {
             continue;
@@ -175,6 +217,18 @@ fn convert_keybindings(source: &str) -> Option<String> {
             }
             _ => continue,
         };
+        for binding in bindings.iter_mut() {
+            let command = binding.get("command").and_then(Value::as_str);
+            if let Some(renamed) = command.and_then(renamed_invocation) {
+                let decor = binding.get("command").map(|v| v.decor().clone());
+                let mut value = Value::from(renamed);
+                if let Some(decor) = decor {
+                    *value.decor_mut() = decor;
+                }
+                binding.insert("command", value);
+                renamed_any = true;
+            }
+        }
         for binding in bindings.iter_mut().filter(|binding| is_template(binding)) {
             let default =
                 binding.get("target").and_then(Value::as_str).unwrap_or("here").to_string();
@@ -184,7 +238,7 @@ fn convert_keybindings(source: &str) -> Option<String> {
             **binding = aimed(binding, &default);
         }
     }
-    if added.is_empty() && !built_on_another {
+    if added.is_empty() && !built_on_another && !renamed_any {
         return None;
     }
     for (key, binding) in added {
@@ -638,6 +692,55 @@ vars.target-new = "n"
         assert_eq!(convert_keybindings(&converted), None);
         // A cycle has no writing out: the GUI refuses it.
         assert_eq!(convert_keybindings("vars.a = \"{b}\"\nvars.b = \"{a}\"\n"), None);
+    }
+
+    #[test]
+    fn a_renamed_invocation_is_rewritten_in_the_keybindings() {
+        let source = "# mine\n\"p\" = { command = \"log:revert label\", when = \"log\" }\n\
+                      \"q\" = [{ command = \"log:revert label\", when = \"log\" }, \
+                      { command = \"log:revert labels\" }]\n\
+                      \"r\" = { command = \"log:revert\" }\n";
+        let converted = convert_keybindings(source).unwrap();
+        let table: toml::Table = toml::from_str(&converted).unwrap();
+        assert!(converted.starts_with("# mine"), "{converted}");
+        assert_eq!(table["p"]["command"].as_str(), Some("log:revert log-context"));
+        assert_eq!(table["q"][0]["command"].as_str(), Some("log:revert log-context"));
+        assert_eq!(
+            table["q"][1]["command"].as_str(),
+            Some("log:revert labels"),
+            "a word, not a prefix"
+        );
+        assert_eq!(table["r"]["command"].as_str(), Some("log:revert"));
+        assert_eq!(convert_keybindings(&converted), None, "converted once");
+    }
+
+    #[test]
+    fn a_renamed_invocation_is_renamed_in_the_command_classes() {
+        let source = "# mine\n\"log:revert\" = \"B\"\n\"log:revert label\" = \"A\"\n";
+        let converted = convert_command_classes(source).unwrap();
+        let table: toml::Table = toml::from_str(&converted).unwrap();
+        assert!(converted.starts_with("# mine"), "{converted}");
+        assert_eq!(table.get("log:revert label"), None);
+        assert_eq!(table["log:revert log-context"].as_str(), Some("A"), "the user's class kept");
+        assert_eq!(convert_command_classes(&converted), None, "converted once");
+        // The merge brought the new line in: the user's class of the old one wins.
+        let both = "\"log:revert log-context\" = \"C\"\n\"log:revert label\" = \"A\"\n";
+        let table: toml::Table = toml::from_str(&convert_command_classes(both).unwrap()).unwrap();
+        assert_eq!(table.len(), 1);
+        assert_eq!(table["log:revert log-context"].as_str(), Some("A"));
+    }
+
+    #[test]
+    fn sync_converts_the_command_classes() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/command-classes.toml", "\"log:revert\" = \"B\"\n")]);
+        sync(&source, &config).unwrap();
+        fs::write(config.join("gui/command-classes.toml"), "\"log:revert label\" = \"C\"\n")
+            .unwrap();
+        assert!(sync(&source, &config).unwrap().keybindings_converted);
+        let classes = read(&config, "gui/command-classes.toml").unwrap();
+        assert_eq!(classes, "\"log:revert log-context\" = \"C\"\n");
     }
 
     #[test]

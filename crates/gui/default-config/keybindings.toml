@@ -535,7 +535,7 @@ vars.index = "i"
   { command = "file:record self", when = "file-manager" },
 ]
 "{panel} {revert}" = { command = "log:revert", when = "log" }
-"{panel} shift+{revert}" = { command = "log:revert label", when = "log" }
+"{panel} shift+{revert}" = { command = "log:revert log-context", when = "log" }
 "{panel} {keep}" = { command = "duplicates:keep", when = "duplicates" }
 "{panel} shift+{keep}" = { command = "duplicates:keep walk", when = "duplicates" }
 "{panel} {list}" = { command = "path-ref:list-refs other", when = "path-ref" }

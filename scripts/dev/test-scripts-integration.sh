@@ -140,8 +140,8 @@ run_script "$FOLDER" backtag
 assert "back: the answer taken back left nothing behind" has_no_tag "$INNER" backtag
 assert "back: the answer given instead stands" has_neg "$INNER" backtag
 assert "back: the walk went on" has_tag "$TOP" backtag
-assert "back: the last write sits in the run's label" \
-    [ "$(df_mf log show HEAD 2>/dev/null | grep -c 'in label .* gui-tag-folder backtag')" -eq 1 ]
+assert "back: the last write sits in the run's log context" \
+    [ "$(df_mf log show HEAD 2>/dev/null | grep -c 'in log context .* gui-tag-folder backtag')" -eq 1 ]
 
 # ── gui-tag-folder MIXED on the root: descend into the direct children ───────
 # Exercises the full breadth-first descent against the real daemon: the child

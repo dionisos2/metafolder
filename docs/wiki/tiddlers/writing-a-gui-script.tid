@@ -106,17 +106,17 @@ repository to where it was before the answer, and ask again. Each answer writes 
 log context of its own ([[Log contexts]]), and going back reverts it:
 
 ```
-RUN_LABEL=$(mf_label_begin "my-script $TAG")      # once: the run is one log context
-export METAFOLDER_LOG_CONTEXT=$RUN_LABEL
+RUN_LOG_CONTEXT=$(mf_log_context_begin "my-script $TAG")  # once: the run is one log context
+export METAFOLDER_LOG_CONTEXT=$RUN_LOG_CONTEXT
 ...
-answer=$(mf_label_begin "$path: y")               # inside the run's
+answer=$(mf_log_context_begin "$path: y")                 # inside the run's
 METAFOLDER_LOG_CONTEXT=$answer mf tag -i "$uuid" add "$TAG"
 ...
-mf_label_back "$answer"                           # on u
+mf_log_context_back "$answer"                             # on u
 ```
 
-`mf_label_begin` is [[mf context new]] (empty when it could not open one), and
-`mf_label_back` an [[mf log revert]] of the answer's log context — what each write of the
+`mf_log_context_begin` is [[mf context new]] (empty when it could not open one), and
+`mf_log_context_back` an [[mf log revert]] of the answer's log context — what each write of the
 answer replaced coming back, which no hand-written ''untag'' would do; the watcher's
 writes meanwhile are left alone, and an answer that wrote nothing reverts nothing. Go
 back to the run's context before the next answer, or the next one nests in this one.
