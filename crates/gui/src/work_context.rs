@@ -25,11 +25,14 @@ use uuid::Uuid;
 use crate::daemon_proxy::DaemonProxy;
 use metafolder_core::sync::MutexExt;
 
-/// A work context: the label its writes go in, and the name it was given.
-/// The file's content, as JSON.
+/// A work context: the log context its writes go in, and the name it was
+/// given. The file's content, as JSON.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorkContext {
-    pub label: i64,
+    /// Written `label` before November 2026 (the log's "label" renamed "log
+    /// context"): read under either name.
+    #[serde(alias = "label")]
+    pub log_context: i64,
     pub name: String,
     /// What the work is, when the user said (the label's description).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,7 +106,7 @@ pub fn context_of(repo: &str) -> Option<metafolder_core::context::Context> {
     let key = Uuid::parse_str(repo).ok()?;
     with_active(|map| {
         map.get(&key)
-            .map(|a| metafolder_core::context::Context { repo: key, label: a.context.label })
+            .map(|a| metafolder_core::context::Context { repo: key, label: a.context.log_context })
     })
 }
 
@@ -111,7 +114,7 @@ pub fn context_of(repo: &str) -> Option<metafolder_core::context::Context> {
 /// repository.
 pub(crate) fn label_for(path: &str) -> Option<i64> {
     let key = repo_of_path(path)?;
-    with_active(|map| map.get(&key).map(|a| a.context.label))
+    with_active(|map| map.get(&key).map(|a| a.context.log_context))
 }
 
 /// After a request to `path` answered `status` with `body`: when the daemon
@@ -126,7 +129,7 @@ pub(crate) fn forget_if_gone(path: &str, status: u16, body: &Value) -> bool {
     let Some(key) = repo_of_path(path) else { return false };
     let removed = change(|map| {
         let gone = map.get(&key).is_some_and(|a| {
-            body["error"].as_str() == Some(&format!("no label {}", a.context.label))
+            body["error"].as_str() == Some(&format!("no label {}", a.context.log_context))
         });
         if gone {
             map.remove(&key)
@@ -138,7 +141,7 @@ pub(crate) fn forget_if_gone(path: &str, status: u16, body: &Value) -> bool {
         Some(active) => {
             eprintln!(
                 "work context \"{}\" (label {}) no longer exists: closed",
-                active.context.name, active.context.label
+                active.context.name, active.context.log_context
             );
             let _ = remove_file(&active.metafolder);
             true
@@ -185,7 +188,7 @@ pub async fn set(
         }
         let label = response.body["id"].as_i64().ok_or("the daemon answered no label id")?;
         let context = WorkContext {
-            label,
+            log_context: label,
             name: name.to_string(),
             description: description.map(str::to_string),
         };
@@ -233,7 +236,7 @@ pub async fn pending(daemon: &DaemonProxy, repo: &str) -> Result<Pending, String
     }
     let metafolder = crate::history::metafolder_dir_of(daemon, repo).await?;
     let Some(context) = read_file(&metafolder)? else { return Ok(Pending::None) };
-    let path = format!("/repos/{repo}/contexts/{}", context.label);
+    let path = format!("/repos/{repo}/contexts/{}", context.log_context);
     let response = daemon.request("GET", &path, None).await?;
     match response.status {
         200..=299 => Ok(Pending::Open(context)),
@@ -242,7 +245,7 @@ pub async fn pending(daemon: &DaemonProxy, repo: &str) -> Result<Pending, String
             Ok(Pending::Gone(context))
         }
         status => Err(crate::daemon_proxy::error_message(&response.body, || {
-            format!("reading label {} failed with status {status}", context.label)
+            format!("reading label {} failed with status {status}", context.log_context)
         })),
     }
 }
@@ -329,7 +332,7 @@ pub fn context_active(
 }
 
 /// What the workspace's repository, just opened, has to offer back:
-/// `{"state": "none"}`, or `{"state": "open" | "gone", "label", "name"}`.
+/// `{"state": "none"}`, or `{"state": "open" | "gone", "log_context", "name"}`.
 #[tauri::command]
 pub async fn context_pending(
     app: tauri::State<'_, std::sync::Arc<crate::commands::App>>,
@@ -338,9 +341,9 @@ pub async fn context_pending(
     let repo = app.gui.active_repo(&ws_id)?;
     Ok(match pending(&app.daemon, &repo).await? {
         Pending::None => json!({"state": "none"}),
-        Pending::Open(c) => json!({"state": "open", "label": c.label, "name": c.name,
+        Pending::Open(c) => json!({"state": "open", "log_context": c.log_context, "name": c.name,
             "description": c.description}),
-        Pending::Gone(c) => json!({"state": "gone", "label": c.label, "name": c.name}),
+        Pending::Gone(c) => json!({"state": "gone", "log_context": c.log_context, "name": c.name}),
     })
 }
 

@@ -75,7 +75,7 @@ export async function offerWorkContexts(
 async function offerWorkContext(ws: string, repoName: string): Promise<void> {
   type Pending = {
     state: "none" | "open" | "gone";
-    label?: number;
+    log_context?: number;
     name?: string;
     description?: string | null;
   };
@@ -94,7 +94,7 @@ async function offerWorkContext(ws: string, repoName: string): Promise<void> {
   }
   if (pending.state === "gone") {
     await status(
-      `work context "${pending.name}" of ${repoName} no longer exists (label ${pending.label} pruned): closed`,
+      `work context "${pending.name}" of ${repoName} no longer exists (log context ${pending.log_context} pruned): closed`,
       "info",
     );
     return;

@@ -379,7 +379,7 @@ async function setWorkContext(
     description: description || null,
   });
   await status(
-    `in work context "${opened.name}" (label ${opened.label})`,
+    `in work context "${opened.name}" (log context ${opened.log_context})`,
     "info",
   );
 }

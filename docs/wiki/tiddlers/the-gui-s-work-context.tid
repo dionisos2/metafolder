@@ -43,7 +43,8 @@ Undo, inside a context, has two candidates — the command and the context — a
 !! Surviving a restart
 
 The context in force is remembered in the repository's `.metafolder/gui/context` (JSON:
-`{"label", "name", "description"}`, the description left out when there is none), beside the input histories ([[Repository layout on disk]]) — trackable
+`{"log_context", "name", "description"}`, the description left out when there is none;
+`log_context` was `label` before November 2026, still read under that name), beside the input histories ([[Repository layout on disk]]) — trackable
 content like them, so it follows the repository, not the machine. When a workspace opens
 a repository that has one and the GUI has not put it in force yet, the command input asks
 — naming it, with its description — whether to ''stay'' in it or to ''end'' it — once per repository and session, in the

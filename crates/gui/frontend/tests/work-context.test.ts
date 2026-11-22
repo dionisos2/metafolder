@@ -18,7 +18,7 @@ vi.mock('../src/lib/ipc', () => ({
   invoke: vi.fn(async (cmd: string, args: unknown) => {
     invoked.push({ cmd, args });
     if (cmd === 'context_pending') return pending.value;
-    if (cmd === 'context_set') return { label: 3, name: (args as { name: string }).name };
+    if (cmd === 'context_set') return { log_context: 3, name: (args as { name: string }).name };
     return null;
   }),
   listen: vi.fn(async () => () => {}),
@@ -75,7 +75,7 @@ describe('context:set / context:unset', () => {
 describe('a repository opened with a context left open', () => {
   test('asks whether to stay in it; "end" closes it', async () => {
     invoked.length = 0;
-    pending.value = { state: 'open', label: 4, name: 'tagging' };
+    pending.value = { state: 'open', log_context: 4, name: 'tagging' };
     const done = offerWorkContexts([workspace('ws-1', 'repo-a')]);
     await settle();
     expect(store.ui.promptText).toContain('"tagging"');
@@ -88,7 +88,7 @@ describe('a repository opened with a context left open', () => {
 
   test('"stay" resumes it, and the repository is not asked about again', async () => {
     invoked.length = 0;
-    pending.value = { state: 'open', label: 5, name: 'sorting' };
+    pending.value = { state: 'open', log_context: 5, name: 'sorting' };
     const done = offerWorkContexts([workspace('ws-1', 'repo-b')]);
     await answer('stay');
     await done;
@@ -101,16 +101,16 @@ describe('a repository opened with a context left open', () => {
 
   test('escape leaves things as they were: the context stays in force', async () => {
     invoked.length = 0;
-    pending.value = { state: 'open', label: 6, name: 'x' };
+    pending.value = { state: 'open', log_context: 6, name: 'x' };
     const done = offerWorkContexts([workspace('ws-1', 'repo-c')]);
     await answer(null);
     await done;
     expect(calls('context_resume')).toEqual([{ wsId: 'ws-1' }]);
   });
 
-  test('a context whose label is gone is only reported', async () => {
+  test('a context whose log context is gone is only reported', async () => {
     invoked.length = 0;
-    pending.value = { state: 'gone', label: 7, name: 'old' };
+    pending.value = { state: 'gone', log_context: 7, name: 'old' };
     await offerWorkContexts([workspace('ws-1', 'repo-d')]);
     expect(store.ui.promptText).toBeNull();
     expect(calls('context_resume')).toEqual([]);
@@ -127,13 +127,13 @@ describe('a repository opened with a context left open', () => {
 });
 
 describe('the slot header indicator', () => {
-  test('shows the context name, and its label and description on hover', () => {
+  test('shows the context name, and its log context and description on hover', () => {
     expect(contextIndicator(null)).toBeNull();
-    const shown = contextIndicator({ label: 4, name: 'tagging', description: 'the 2024 trip' });
+    const shown = contextIndicator({ log_context: 4, name: 'tagging', description: 'the 2024 trip' });
     expect(shown?.text).toBe('tagging');
-    expect(shown?.title).toContain('work context "tagging" (label 4)');
+    expect(shown?.title).toContain('work context "tagging" (log context 4)');
     expect(shown?.title).toContain('the 2024 trip');
     expect(shown?.title).toContain('context:unset');
-    expect(contextIndicator({ label: 5, name: 'x' })?.title).not.toContain('undefined');
+    expect(contextIndicator({ log_context: 5, name: 'x' })?.title).not.toContain('undefined');
   });
 });

@@ -114,7 +114,10 @@ async fn a_context_set_is_carried_by_every_write_to_its_repository_until_unset()
     let (repo, metafolder, _root, proxy, stub) = setup("work_context_set").await;
 
     let opened = work_context::set(&proxy, &repo, "sorting photos", None).await.unwrap();
-    assert_eq!(opened, WorkContext { label: 1, name: "sorting photos".into(), description: None });
+    assert_eq!(
+        opened,
+        WorkContext { log_context: 1, name: "sorting photos".into(), description: None }
+    );
     assert!(file(&metafolder).exists(), "remembered in .metafolder/gui/context");
     assert_eq!(work_context::active(&repo), Some(opened.clone()));
 
@@ -126,7 +129,7 @@ async fn a_context_set_is_carried_by_every_write_to_its_repository_until_unset()
     // One at a time: setting another closes the first, and the new label is
     // not opened inside it.
     let second = work_context::set(&proxy, &repo, "tagging", Some("the 2024 trip")).await.unwrap();
-    assert_eq!(second.label, 2);
+    assert_eq!(second.log_context, 2);
     assert_eq!(second.description.as_deref(), Some("the 2024 trip"), "the description is kept");
     assert_eq!(work_context::read_file(&metafolder).unwrap(), Some(second.clone()));
     assert_eq!(write(&proxy, &repo).await, 200);
@@ -155,7 +158,7 @@ async fn a_remembered_context_is_offered_back_and_resumed() {
     assert_eq!(work_context::active(&repo), None);
     assert!(file(&metafolder).exists());
 
-    let expected = WorkContext { label: 1, name: "sorting photos".into(), description: None };
+    let expected = WorkContext { log_context: 1, name: "sorting photos".into(), description: None };
     assert_eq!(
         work_context::pending(&proxy, &repo).await.unwrap(),
         Pending::Open(expected.clone())
@@ -183,7 +186,7 @@ async fn a_remembered_context_whose_label_was_pruned_is_dropped() {
     work_context::forget(&repo);
     stub.lock().unwrap().labels.clear();
 
-    let gone = WorkContext { label: 1, name: "old work".into(), description: None };
+    let gone = WorkContext { log_context: 1, name: "old work".into(), description: None };
     assert_eq!(work_context::pending(&proxy, &repo).await.unwrap(), Pending::Gone(gone));
     assert!(!file(&metafolder).exists(), "nothing to offer next time");
 }
@@ -220,18 +223,40 @@ async fn every_change_of_a_context_is_signalled() {
 }
 
 #[test]
+fn a_file_naming_its_log_context_label_is_still_read() {
+    // Before the log's "label" was renamed "log context" (November 2026).
+    let root = common::TempDir::new("work_context_label_file");
+    std::fs::create_dir_all(root.join("gui")).unwrap();
+    std::fs::write(root.join("gui/context"), r#"{"label": 3, "name": "n", "description": "d"}"#)
+        .unwrap();
+    let expected = WorkContext { log_context: 3, name: "n".into(), description: Some("d".into()) };
+    assert_eq!(work_context::read_file(&root).unwrap(), Some(expected));
+}
+
+#[test]
+fn the_file_names_the_log_context() {
+    let root = common::TempDir::new("work_context_file_key");
+    let context = WorkContext { log_context: 5, name: "n".into(), description: None };
+    work_context::write_file(&root, &context).unwrap();
+    let text = std::fs::read_to_string(root.join("gui/context")).unwrap();
+    let json: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json, json!({"log_context": 5, "name": "n"}));
+}
+
+#[test]
 fn a_file_without_a_description_is_still_read() {
     let root = common::TempDir::new("work_context_old_file");
     std::fs::create_dir_all(root.join("gui")).unwrap();
-    std::fs::write(root.join("gui/context"), r#"{"label": 3, "name": "n"}"#).unwrap();
-    let expected = WorkContext { label: 3, name: "n".into(), description: None };
+    std::fs::write(root.join("gui/context"), r#"{"log_context": 3, "name": "n"}"#).unwrap();
+    let expected = WorkContext { log_context: 3, name: "n".into(), description: None };
     assert_eq!(work_context::read_file(&root).unwrap(), Some(expected));
 }
 
 #[test]
 fn the_file_holds_the_label_and_its_name() {
     let root = common::TempDir::new("work_context_file");
-    let context = WorkContext { label: 42, name: "a name".into(), description: Some("why".into()) };
+    let context =
+        WorkContext { log_context: 42, name: "a name".into(), description: Some("why".into()) };
     work_context::write_file(&root, &context).unwrap();
     assert_eq!(work_context::read_file(&root).unwrap(), Some(context));
     std::fs::write(root.join("gui/context"), "not json").unwrap();

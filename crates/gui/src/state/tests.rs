@@ -912,7 +912,7 @@ fn test_workspace_info_carries_the_work_context_of_its_repo() {
     assert_eq!(state.workspaces()[0].work_context, None);
 
     let context = crate::work_context::WorkContext {
-        label: 4,
+        log_context: 4,
         name: "tagging".into(),
         description: Some("the 2024 trip".into()),
     };

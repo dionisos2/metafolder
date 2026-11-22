@@ -23,9 +23,9 @@ export interface WorkspaceInfo {
   work_context?: WorkContext | null;
 }
 
-/** A work context: the label its writes go in, its name and description. */
+/** A work context: the log context its writes go in, its name and description. */
 export interface WorkContext {
-  label: number;
+  log_context: number;
   name: string;
   description?: string | null;
 }
