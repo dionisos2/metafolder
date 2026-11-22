@@ -5,25 +5,8 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
-* A part's pending writes read once per write transaction
-Read in the code, not measured (22 November 2026). While a write to many records is
-pending, every =load_record= (=kvstore/mass.rs=) reads and decodes the whole list
-of the record's part (=part_entries=, =read_part=: every =Listed=, its values and
-its bitmap) — four times per =set_field= —, and while a deletion of many records
-is pending, =freeze_given_back= (=massops.rs=) reads it again at every
-=save_record=. A list has no limit until the idle fold (doc "Folding in idle
-time"): N writes in one transaction cost N × the length of the list.
-
-The list of a part is decoded once per transaction and kept beside the records:
-the transaction's own appends (=append_listed=) and folds (=fold_part=) change that
-form, written out where they write today.
-
-- Measure first (a probe as for the log: single writes behind a list of a few
-  hundred pending writes), then test first: a counter of part lists decoded, one
-  per part per transaction.
-- Write it down in doc "Mass writes in the store".
-
-Noted with it, smaller, to look at when touching the code:
+* Smaller costs noted with the part lists read once per transaction
+Found 22 November 2026, left when the part lists were read once per transaction:
 - =write_befores=, called by =freeze_given_back= for each write to a record a
   pending deletion names, decodes and encodes a chunk of up to 4096 befores. Rare:
   once written, the record is named by the deletion no more.

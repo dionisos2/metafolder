@@ -835,3 +835,50 @@ fn the_chunk_an_entry_is_extended_in_is_coded_once_per_write_transaction() {
         assert!(Log::snapshots(&kv, op.id).unwrap().is_empty(), "no tag before");
     }
 }
+
+/// While writes to many records are pending, a record is read with the
+/// entries of its part applied (doc "Mass writes in the store"): the list of
+/// the part is decoded once per write transaction, and the transaction's own
+/// appends, folds and deletions change that form. Before, every read of a
+/// record within it decoded the whole list — four times per `set_field` —,
+/// and N writes behind a list of L entries cost N × L.
+#[test]
+fn a_part_list_is_decoded_once_per_write_transaction() {
+    let dir = TempDir::new("kv-cost");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let uuids: Vec<Uuid> = (0..200)
+        .map(|i| w.create_metarecord(vec![Field::new("n", Value::Int(i))]).unwrap().uuid)
+        .collect();
+    w.commit().unwrap();
+    for i in 0..20 {
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        w.set_mass_threshold(0);
+        w.mass_add("tag", Value::Int(i), &uuids).unwrap();
+        w.commit().unwrap();
+    }
+    assert_eq!(kv.pending_mass().unwrap(), 20, "the writes are pending");
+
+    let before = kv.part_lists_decoded();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    for (i, &u) in uuids.iter().enumerate() {
+        w.set_field(u, "x", Value::Int(i as i64)).unwrap();
+        // Behind the list, a write to many records of the transaction's own.
+        if i == 100 {
+            w.set_mass_threshold(0);
+            w.mass_add("tag", Value::Int(99), &uuids).unwrap();
+        }
+    }
+    w.commit().unwrap();
+    assert_eq!(kv.part_lists_decoded() - before, 1, "part lists decoded");
+
+    // Each record reads with every entry applied, its own write kept.
+    for (i, &u) in uuids.iter().enumerate() {
+        let record = kv.metarecord(u).unwrap().expect("the record");
+        let tags = record.fields.iter().filter(|f| f.name == "tag").count();
+        assert_eq!(tags, 21, "tags of record {i}");
+        let x: Vec<_> = record.fields.iter().filter(|f| f.name == "x").collect();
+        assert_eq!(x.len(), 1);
+        assert_eq!(x[0].value, Value::Int(i as i64));
+    }
+}

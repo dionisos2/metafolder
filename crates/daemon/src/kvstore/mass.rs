@@ -28,6 +28,7 @@
 //! its fixed fields and values; one without reads as before.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use heed::RoTxn;
@@ -512,7 +513,7 @@ impl KvStore {
 /// is stored of it the transaction holds, and lends ([`KvTxn::with_record`]).
 pub(super) struct Loaded {
     pub(super) id: u32,
-    pub(super) entries: Vec<Listed>,
+    pub(super) entries: Vec<Arc<Listed>>,
 }
 
 impl Loaded {
@@ -537,10 +538,35 @@ impl KvTxn<'_> {
         self.record_codings[2].fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// The entries of `part`, as the transaction has them.
-    fn part_entries(&self, part: u32) -> Result<Vec<Listed>> {
-        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        read_part(&self.t, &self.txn.borrow(), part)
+    /// `f` given the entries of `part`, oldest first, as the transaction has
+    /// them: read and decoded the first time, then the form its writes change.
+    pub(super) fn with_part<T>(&self, part: u32, f: impl FnOnce(&[Arc<Listed>]) -> T) -> Result<T> {
+        if !self.parts.borrow().contains_key(&part) {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.part_lists.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let entries = read_part(&self.t, &self.txn.borrow(), part)?;
+            self.parts.borrow_mut().insert(part, entries.into_iter().map(Arc::new).collect());
+        }
+        Ok(f(&self.parts.borrow()[&part]))
+    }
+
+    /// The entries of `part`, shared with the transaction's form.
+    pub(super) fn part_entries(&self, part: u32) -> Result<Vec<Arc<Listed>>> {
+        self.with_part(part, |entries| entries.to_vec())
+    }
+
+    /// The entry `op` of `part` changed (`Some`) or gone (`None`), in the
+    /// transaction's form, when it holds the part.
+    pub(super) fn part_changed(&self, part: u32, op: u64, entry: Option<Listed>) {
+        let mut parts = self.parts.borrow_mut();
+        let Some(entries) = parts.get_mut(&part) else { return };
+        let Some(at) = entries.iter().position(|e| e.op == op) else { return };
+        match entry {
+            Some(e) => entries[at] = Arc::new(e),
+            None => {
+                entries.remove(at);
+            }
+        }
     }
 
     /// Reads and decodes the stored record of dense id `id` the first time
@@ -620,14 +646,16 @@ impl KvTxn<'_> {
     pub(super) fn flush_and_forget_records(&self) -> Result<()> {
         self.flush_records()?;
         self.records.borrow_mut().clear();
+        self.parts.borrow_mut().clear();
         Ok(())
     }
 
     /// The record of dense id `id` and the entries naming it.
     pub(super) fn load_record(&self, id: u32) -> Result<Loaded> {
-        let entries: Vec<Listed> = if self.mass_pending() {
-            let part = self.part_entries(part_of(id))?;
-            part.into_iter().filter(|e| e.ids.contains(id)).collect()
+        let entries: Vec<Arc<Listed>> = if self.mass_pending() {
+            self.with_part(part_of(id), |part| {
+                part.iter().filter(|e| e.ids.contains(id)).cloned().collect()
+            })?
         } else {
             Vec::new()
         };
@@ -644,7 +672,7 @@ impl KvTxn<'_> {
             if loaded.entries.is_empty() {
                 r.rows()
             } else {
-                effective(r, &loaded.entries.iter().collect::<Vec<_>>())
+                effective(r, &loaded.entries.iter().map(|e| &**e).collect::<Vec<_>>())
             }
         })?;
         self.copied(rows.len());
@@ -664,7 +692,11 @@ impl KvTxn<'_> {
         }
         let values = self.with_record(loaded.id, |r| {
             let empty = Record::default();
-            effective_values(r.unwrap_or(&empty), &loaded.entries.iter().collect::<Vec<_>>(), field)
+            effective_values(
+                r.unwrap_or(&empty),
+                &loaded.entries.iter().map(|e| &**e).collect::<Vec<_>>(),
+                field,
+            )
         })?;
         Ok(f(&values))
     }
@@ -702,7 +734,7 @@ impl KvTxn<'_> {
         // before the first write that changes them.
         self.freeze_given_back(&RoaringBitmap::from_iter([loaded.id]))?;
         let rewritten = loaded.rewritten();
-        let entries: Vec<&Listed> = loaded.entries.iter().collect();
+        let entries: Vec<&Listed> = loaded.entries.iter().map(|e| &**e).collect();
         self.with_record_mut(loaded.id, |record| {
             if rewritten {
                 let values = effective_values(record, &entries, field);
@@ -776,6 +808,10 @@ impl KvTxn<'_> {
             };
             let key = entry_key(part, op);
             self.t.pending_writes.put(&mut self.txn.borrow_mut(), &key, &entry.encode())?;
+            // The newest: the last of the list.
+            if let Some(entries) = self.parts.borrow_mut().get_mut(&part) {
+                entries.push(Arc::new(entry));
+            }
         }
         self.mass_lists.set(true);
         if kind == Written::Delete {
@@ -796,7 +832,7 @@ impl KvTxn<'_> {
             return Ok(());
         }
         let rewriting: Vec<&Listed> =
-            entries.iter().filter(|e| e.kind != Written::Delete).collect();
+            entries.iter().map(|e| &**e).filter(|e| e.kind != Written::Delete).collect();
         let mut befores = Vec::new();
         for e in entries.iter().filter(|e| e.kind == Written::Delete) {
             for id in &e.ids {
@@ -829,6 +865,7 @@ impl KvTxn<'_> {
         for e in &entries {
             self.t.pending_writes.delete(&mut w, &entry_key(part, e.op))?;
         }
+        self.parts.borrow_mut().insert(part, Vec::new());
         Ok(())
     }
 

@@ -132,6 +132,18 @@ its part, which is why the idle fold writes them in ([[Folding in idle time]]) �
 has no limit of its own, and [[Storage wear]] says how long they are. When no part has
 any, nothing is looked for.
 
+Within one write transaction nothing else writes ([[Writes and atomicity]]): the list
+of a part is read and decoded the first time the transaction needs it
+(`KvTxn::with_part`), its entries then shared, never copied, and the transaction's
+own appends (`append_listed`), folds (`fold_part`) and deletions given back
+(`freeze_given_back`) change that form as they write the table. Before, every read of
+a record within it decoded the whole list — four times per `set_field`, and again at
+each write to a record while a deletion was pending —: 1000 single writes behind 100
+pending writes took 1.1 s, 3.2 s behind 300, against 60 ms behind none; 0.16 s and
+0.24 s now. What is left grows with the list only by the entries checked for the id,
+not decoded (`KvStore::part_lists_decoded`, `tests/kv_cost.rs`: one per part per
+transaction).
+
 !! Written by hand meanwhile
 
 The most recent write wins, a write to one record included. A record that a pending

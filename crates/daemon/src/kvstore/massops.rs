@@ -20,7 +20,7 @@ use super::derived::{
     REFERRERS, SETS,
 };
 use super::entry::{self, Effect, Entry, FileAction, Header, Params};
-use super::mass::{entry_key, read_part, Written};
+use super::mass::{entry_key, Written};
 use super::{name_key, KvTxn, Read};
 use crate::rows::FieldRow;
 use crate::store::{MassApplied, MassKind as Kind};
@@ -656,11 +656,15 @@ impl KvTxn<'_> {
             parts.insert(super::mass::part_of(id));
         }
         for part in parts {
-            let entries = {
-                let txn = self.txn.borrow();
-                read_part(&self.t, &txn, part)?
-            };
-            for mut e in entries.into_iter().filter(|e| e.kind == Written::Delete) {
+            let entries = self.with_part(part, |entries| {
+                entries
+                    .iter()
+                    .filter(|e| e.kind == Written::Delete && e.ids.intersection_len(ids) > 0)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })?;
+            for e in entries {
+                let mut e = (*e).clone();
                 let hit = &e.ids & ids;
                 if hit.is_empty() {
                     continue;
@@ -678,8 +682,12 @@ impl KvTxn<'_> {
                 let mut w = self.txn.borrow_mut();
                 if e.ids.is_empty() {
                     self.t.pending_writes.delete(&mut w, &key)?;
+                    drop(w);
+                    self.part_changed(part, e.op, None);
                 } else {
                     self.t.pending_writes.put(&mut w, &key, &e.encode())?;
+                    drop(w);
+                    self.part_changed(part, e.op, Some(e));
                 }
             }
         }

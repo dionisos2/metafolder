@@ -1225,10 +1225,7 @@ impl KvTxn<'_> {
         // as that deletion's own undo does it, for this one operation: its
         // pending write names the id, and the operation is its rank.
         if self.deletes_pending() {
-            let entries = {
-                let txn = self.txn.borrow();
-                super::mass::read_part(&self.t, &txn, super::mass::part_of(id))?
-            };
+            let entries = self.part_entries(super::mass::part_of(id))?;
             let op = entries.iter().filter(|e| e.ids.contains(id)).find_map(|e| e.deleted_by(id));
             if let Some(op) = op {
                 if self.mass_undelete_log(op, op)?.is_some() {

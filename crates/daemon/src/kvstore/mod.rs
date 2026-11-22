@@ -260,6 +260,9 @@ pub struct KvStore {
     /// the chunk an entry is extended in, once each per transaction
     /// ([`KvStore::log_chunk_codings`]).
     log_chunk_codings: [std::sync::atomic::AtomicU64; 2],
+    /// Lists of a part's pending writes write transactions decoded so far:
+    /// once per part per transaction ([`KvStore::part_lists_decoded`]).
+    part_lists: std::sync::atomic::AtomicU64,
     /// Whether any part has entries pending (doc "Mass writes in the store"):
     /// when none does, no read looks for them.
     mass: std::sync::atomic::AtomicBool,
@@ -661,6 +664,7 @@ impl KvStore {
             reads: Default::default(),
             record_codings: Default::default(),
             log_chunk_codings: Default::default(),
+            part_lists: Default::default(),
             mass: Default::default(),
             deletes: Default::default(),
             written: std::sync::Mutex::new([0; table::TABLES]),
@@ -1657,6 +1661,11 @@ impl KvStore {
         (d.load(std::sync::atomic::Ordering::Relaxed), e.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// How many lists of a part's pending writes write transactions decoded.
+    pub fn part_lists_decoded(&self) -> u64 {
+        self.part_lists.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// How many rows write transactions copied out of the records they hold
     /// so far: a write to a field copies that field, not the record.
     pub fn rows_copied(&self) -> u64 {
@@ -1740,12 +1749,18 @@ pub struct KvTxn<'e> {
     record_codings: &'e [std::sync::atomic::AtomicU64; 3],
     /// The store's counters of log chunks decoded and encoded.
     log_chunk_codings: &'e [std::sync::atomic::AtomicU64; 2],
+    /// The store's counter of part lists decoded.
+    part_lists: &'e std::sync::atomic::AtomicU64,
     /// The stored records the transaction read or wrote, decoded (`None`: no
     /// record), and those it changed, encoded and put at commit: within one
     /// write transaction nothing else writes, so there is nothing to
     /// invalidate (doc "Writes and atomicity").
     records: RefCell<HashMap<u32, Option<mass::Record>>>,
     records_dirty: RefCell<std::collections::BTreeSet<u32>>,
+    /// The list of each part's pending writes the transaction read, decoded,
+    /// as its own appends, folds and deletions change it — written where they
+    /// write (doc "Mass writes in the store").
+    parts: RefCell<HashMap<u32, Vec<std::sync::Arc<mass::Listed>>>>,
     /// Where the store keeps what its last write wrote.
     written: &'e std::sync::Mutex<[u64; table::TABLES]>,
     /// The store's count of committed writes, which this one adds to.
@@ -2404,8 +2419,10 @@ impl<'e> KvTxn<'e> {
             reads: &store.reads,
             record_codings: &store.record_codings,
             log_chunk_codings: &store.log_chunk_codings,
+            part_lists: &store.part_lists,
             records: RefCell::new(HashMap::new()),
             records_dirty: RefCell::new(Default::default()),
+            parts: RefCell::new(HashMap::new()),
             mass_lists: TxnFlag::of(&store.mass),
             deletes: TxnFlag::of(&store.deletes),
             written: &store.written,
