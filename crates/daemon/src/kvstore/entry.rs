@@ -1,5 +1,6 @@
-//! An entry of the log in its one form (doc "Log storage"): an operation on a
-//! list of metarecords, its targets. The header is the value of its first
+//! An entry of the log in its one form (doc "Log storage"): a write on a list
+//! of metarecords, its targets — an individual operation when there is one, a
+//! mass operation when there are many —, one operation per target. The header is the value of its first
 //! operation id in `log_entries`; the targets and their before are in
 //! `log_targets`, in chunks of [`CHUNK`] targets.
 
@@ -21,7 +22,7 @@ pub(crate) const CHUNK: u64 = 4096;
 /// `log_entries_by_metarecord`.
 pub(crate) const INDEX_BUDGET: u64 = 64 * 1024;
 
-/// What an operation does to each of its targets (doc "Log storage").
+/// What an entry does to each of its targets (doc "Log storage").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
     Create,
@@ -35,7 +36,7 @@ pub(crate) enum Effect {
     Unknown,
 }
 
-/// What an undo of the operation does to the files (doc "Filesystem
+/// What an undo of the entry does to the files (doc "Filesystem
 /// coordination").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FileAction {
@@ -205,8 +206,8 @@ impl Header {
         Ok(Header { context, timestamp, origin, effect, file, reverts, params, targets })
     }
 
-    /// The type the wire names the operation by: the file action when there
-    /// is one, else the effect's.
+    /// The type the wire names each operation of the entry by: the file
+    /// action when there is one, else the effect's.
     pub(crate) fn wire_type(&self) -> &'static str {
         match self.file {
             FileAction::None => EFFECTS[code_of(&EFFECTS, &self.effect) as usize].1,
@@ -214,7 +215,7 @@ impl Header {
         }
     }
 
-    /// The field the operation writes, when it writes one.
+    /// The field the entry writes, when it writes one.
     pub(crate) fn field(&self) -> Option<&str> {
         match &self.params {
             Params::None | Params::Rows(_) => None,
@@ -362,7 +363,7 @@ impl Entry {
     }
 }
 
-/// The header of an operation written to one metarecord, and what its chunk
+/// The header of an individual operation, and what its chunk
 /// keeps as its before (doc "Log storage").
 pub(super) fn of_op(op: &NewOp, context: i64, timestamp: i64) -> Result<(Header, Vec<FieldRow>)> {
     use crate::log::OpType as T;

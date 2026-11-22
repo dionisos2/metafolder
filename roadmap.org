@@ -13,13 +13,6 @@ Inventory from a diff of =dddf9437= (before the review) against =main=; the old
 names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 (=kvstore/mod.rs=) stay: they are the conversion's.
 
-** Operation and entry: two words, two things
-A *log entry* is a key of the log (=log_entries=): an individual operation, or a
-mass operation. A *log operation* is an individual operation, the thing that has
-an operation id; an entry holds one or several (doc "Log storage"). Every "op" /
-"operation" of the log (about 870 =ops= in the code, 11 notes) is to be read
-again and named one or the other.
-
 ** Tables and keys renamed, still in the code
 | Old | Now | Where it stays |
 |-----+-----+----------------|

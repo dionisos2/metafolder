@@ -10,7 +10,7 @@
 //!
 //! The tables, their keys and their values are described in doc "Store
 //! tables" (`NAMES` lists them); the log's in doc "Log storage": an entry is
-//! one operation on a list of metarecords, its header in `log_entries`, its
+//! a write on a list of metarecords, one operation per target, its header in `log_entries`, its
 //! targets and their before in `log_targets` ([`entry`]). The log is a
 //! sequence (doc "The operation log"): "the log up to here" is a range of
 //! `log_entries`. `log_watcher_entries` and `log_user_entries` split it by

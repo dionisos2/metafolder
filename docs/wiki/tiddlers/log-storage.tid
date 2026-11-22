@@ -13,11 +13,11 @@ cursor — is `log_head` in `global_primary_state`.
 
 !! One form of entry
 
-Every entry of the log is ''one operation on a list of metarecords'', its
-''targets''; an operation on one metarecord is a list of one. An entry takes as many
-operation ids as it has targets: the operation on the `k`-th target is `first + k`,
-and what reads the log is given, for that id, the operation a write to that target
-alone would have logged — a revert, the history, the change feed and the trash
+Every ''entry'' of the log is one write on a list of metarecords, its
+''targets'': an ''individual operation'' when the list is of one, a ''mass operation''
+when it is of many. An entry holds one ''operation'' per target, each with its id: the
+operation on the `k`-th target is `first + k`, and what reads the log is given, for
+that id, the operation a write to that target alone would have logged — a revert, the history, the change feed and the trash
 correlation know nothing of entries. Ids are never reused. The log is ''counted by
 entry'', one key each, which is what it costs.
 
@@ -27,7 +27,7 @@ log_entries  first op id → log context · timestamp · origin · effect · fil
 log_targets  first op id · chunk number → { uuid } · pending ranks · before of the chunk
 ```
 
-A chunk holds a fixed number of targets (4096): an operation on one metarecord is two
+A chunk holds a fixed number of targets (4096): an entry of one target is two
 keys, with no case of its own. The targets are ''uuids'', never dense ids: one form,
 nothing for a reindex to rewrite. A write to many records, which holds its records as
 a bitmap of dense ids, turns them into uuids as it writes (`uuids`, one key per id, in

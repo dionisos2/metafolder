@@ -6,7 +6,7 @@ summary: The log keeps the last 50 000 entries of the watcher and the last milli
 
 A watched repository records every change the watcher sees and would keep them for ever;
 most of that history is of no interest. Retention is pruning as a standing policy, counted
-in ''entries of the log, per origin'' — an entry being one operation on one or many metarecords ([[Log storage]]): what the log costs is its entries. Two settings, per repository (its `config.json`) or
+in ''entries of the log, per origin'' — an entry holding one operation per metarecord it wrote, one or many ([[Log storage]]): what the log costs is its entries. Two settings, per repository (its `config.json`) or
 daemon-wide (`[settings]`, [[Daemon configuration]]):
 
 * ''`log-retention-watcher-entries`'' — how many of the watcher's entries to keep; default 50 000, `0` keeps them all.

@@ -10,7 +10,7 @@ and three index keys for it. It is one entry ([[Log storage]]): the field, the v
 and the records that ''changed'' — those that lacked the value, or held it. Which ones
 those are comes from the holders of the value ([[Mass writes in the store]]), not from
 the records. An entry has one form whatever its number of targets, so nothing in the
-log tells a mass operation from another: what is particular is how the write finds its
+log tells a mass operation from an individual one: what is particular is how the write finds its
 targets and its before without reading the records.
 
 The write names its records by ''dense id'': the query ends with a bitmap, and the
@@ -75,7 +75,7 @@ records for an add, an add for a remove, whose operation `first + k` reverts
 `reverted + k`. It is done when every record changed is one the revert changes — each
 still holds the value an add put, or lacks the one a remove took, and is still alive;
 if not, the revert goes one record at a time. Reverting such an entry is the same
-operation the other way.
+mass operation the other way.
 
 !!! Giving a pending deletion back
 
