@@ -78,7 +78,7 @@ fn a_mass_write_is_not_written_into_the_records() {
     for &u in &uuids {
         assert!(tags(&store, u).contains(&"jazz".to_string()));
     }
-    assert_eq!(store.pending_mass().unwrap(), 1);
+    assert_eq!(store.pending_writes().unwrap(), 1);
     check(&store);
 }
 
@@ -127,9 +127,9 @@ fn a_fold_writes_the_entries_into_the_records() {
     write(&mut mass, |w| w.mass_set("rank", vec![Value::Int(9)], &uuids[50..]).unwrap());
     let before: Vec<_> =
         uuids.iter().map(|&u| (tags(&mass, u), Rows::rows(&mass, u).unwrap().len())).collect();
-    assert_eq!(mass.pending_mass().unwrap(), 3);
+    assert_eq!(mass.pending_writes().unwrap(), 3);
     mass.fold().unwrap();
-    assert_eq!(mass.pending_mass().unwrap(), 0, "the lists are empty");
+    assert_eq!(mass.pending_writes().unwrap(), 0, "the lists are empty");
     let after: Vec<_> =
         uuids.iter().map(|&u| (tags(&mass, u), Rows::rows(&mass, u).unwrap().len())).collect();
     assert_eq!(before, after);
@@ -144,7 +144,7 @@ fn a_part_whose_list_grows_long_is_left_to_the_idle_fold() {
         write(&mut store, |w| w.mass_add("tag", s(&format!("t{i}")), &uuids).unwrap());
     }
     // No limit: only the idle fold (doc "Folding in idle time") writes them in.
-    assert_eq!(store.pending_mass().unwrap(), 200);
+    assert_eq!(store.pending_writes().unwrap(), 200);
     for &u in &uuids {
         assert_eq!(tags(&store, u).len(), 201, "its own tag and the two hundred added");
     }
@@ -159,7 +159,7 @@ fn a_reindex_folds_the_lists_and_the_rows_stay() {
     write(&mut store, |w| w.mass_unset("tag", &uuids[30..40]).unwrap());
     let before: Vec<_> = uuids.iter().map(|&u| tags(&store, u)).collect();
     store.reindex().unwrap();
-    assert_eq!(store.pending_mass().unwrap(), 0);
+    assert_eq!(store.pending_writes().unwrap(), 0);
     let after: Vec<_> = uuids.iter().map(|&u| tags(&store, u)).collect();
     assert_eq!(before, after);
     check(&store);

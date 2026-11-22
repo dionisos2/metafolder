@@ -56,7 +56,7 @@ pub struct KvSource<'s> {
     index_writes: RefCell<BTreeMap<String, std::rc::Rc<Vec<IndexWrite>>>>,
     /// Whether any part has entries pending, which a record is read with
     /// applied ([`mass`]).
-    mass: bool,
+    writes_pending: bool,
 }
 
 impl KvStore {
@@ -71,7 +71,7 @@ impl KvStore {
             live: std::cell::OnceCell::new(),
             live_chunks: RefCell::new(BTreeMap::new()),
             index_writes: RefCell::new(BTreeMap::new()),
-            mass: self.mass_pending(),
+            writes_pending: self.has_pending_writes(),
         })
     }
 }
@@ -1036,8 +1036,9 @@ impl KvSource<'_> {
     fn values(&self, id: u32, field: &str) -> Vec<Value> {
         let read = || -> Result<Vec<Value>> {
             // The record: one key, and the entries of its part.
-            let rows =
-                mass::read_record(&self.t, &self.r, id, self.mass, &mut |n| self.read_keys(n))?;
+            let rows = mass::read_record(&self.t, &self.r, id, self.writes_pending, &mut |n| {
+                self.read_keys(n)
+            })?;
             Ok(rows.into_iter().filter(|r| r.name == field).map(|r| r.value).collect())
         };
         self.ok(read(), Vec::new())
@@ -1592,7 +1593,9 @@ impl Source for KvSource<'_> {
                 // The record's rows: one key.
                 let mut positions = Vec::new();
                 let rows =
-                    mass::read_record(&self.t, &self.r, id, self.mass, &mut |n| self.read_keys(n))?;
+                    mass::read_record(&self.t, &self.r, id, self.writes_pending, &mut |n| {
+                        self.read_keys(n)
+                    })?;
                 for row in rows {
                     if row.name != field {
                         continue;

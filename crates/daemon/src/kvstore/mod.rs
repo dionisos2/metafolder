@@ -265,7 +265,7 @@ pub struct KvStore {
     part_lists: std::sync::atomic::AtomicU64,
     /// Whether any part has entries pending (doc "Mass writes in the store"):
     /// when none does, no read looks for them.
-    mass: std::sync::atomic::AtomicBool,
+    writes_pending: std::sync::atomic::AtomicBool,
     /// Whether a deletion of many records is pending, whose records are still
     /// stored: when none is, no read sifts what it finds through the universe.
     deletes: std::sync::atomic::AtomicBool,
@@ -665,7 +665,7 @@ impl KvStore {
             record_codings: Default::default(),
             log_chunk_codings: Default::default(),
             part_lists: Default::default(),
-            mass: Default::default(),
+            writes_pending: Default::default(),
             deletes: Default::default(),
             written: std::sync::Mutex::new([0; table::TABLES]),
             generation: Default::default(),
@@ -678,7 +678,7 @@ impl KvStore {
         {
             let r = store.env.read_txn()?;
             let pending = store.t.pending_writes.len(&r)? > 0;
-            store.mass.store(pending, std::sync::atomic::Ordering::Relaxed);
+            store.writes_pending.store(pending, std::sync::atomic::Ordering::Relaxed);
             store.deletes.store(store.deletion_pending(&r)?, std::sync::atomic::Ordering::Relaxed);
         }
         let mut derived = derived;
@@ -779,7 +779,7 @@ struct Read<'a> {
     unwritten: Option<&'a dyn Fn() -> roaring::RoaringBitmap>,
     /// Whether any part has entries pending, which a record is read with
     /// applied ([`mass`]).
-    mass: bool,
+    writes_pending: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
     universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
     /// The store's cache of the entries of the log it read, and the
@@ -855,7 +855,7 @@ impl Read<'_> {
     /// Every dense id that has a record or is named by an entry, those of the
     /// records a write transaction has not put in the table yet included.
     fn record_ids(&self) -> Result<roaring::RoaringBitmap> {
-        let mut ids = mass::record_ids(self.t, self.r, self.mass)?;
+        let mut ids = mass::record_ids(self.t, self.r, self.writes_pending)?;
         if let Some(unwritten) = self.unwritten {
             ids |= unwritten();
         }
@@ -868,7 +868,7 @@ impl Read<'_> {
         if let Some(record) = self.record {
             return record(id);
         }
-        mass::read_record(self.t, self.r, id, self.mass, &mut |n| self.count(n))
+        mass::read_record(self.t, self.r, id, self.writes_pending, &mut |n| self.count(n))
     }
 
     /// A record's rows, in no particular order.
@@ -1592,7 +1592,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         field: None,
         log_chunk: None,
         unwritten: None,
-        mass: me.mass_pending(),
+        writes_pending: me.has_pending_writes(),
         universe: Default::default(),
         entries: Some((&me.entry_cache, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
     })
@@ -1727,7 +1727,7 @@ impl KvTxn<'_> {
             field: Some(&field),
             log_chunk: Some(&log_chunk),
             unwritten: Some(&unwritten),
-            mass: self.mass_pending(),
+            writes_pending: self.has_pending_writes(),
             universe: Default::default(),
             entries: None,
         })
@@ -1786,7 +1786,7 @@ pub struct KvTxn<'e> {
     index_writes: RefCell<HashMap<String, usize>>,
     /// The store's flag that some part has entries pending: a write to many
     /// records raises it.
-    mass_lists: TxnFlag<'e>,
+    writes_listed: TxnFlag<'e>,
     /// The store's flag that a deletion of many records is pending.
     deletes: TxnFlag<'e>,
     /// The targets of the last entry of the log as this transaction extends
@@ -2433,7 +2433,7 @@ impl<'e> KvTxn<'e> {
             records: RefCell::new(HashMap::new()),
             records_dirty: RefCell::new(Default::default()),
             parts: RefCell::new(HashMap::new()),
-            mass_lists: TxnFlag::of(&store.mass),
+            writes_listed: TxnFlag::of(&store.writes_pending),
             deletes: TxnFlag::of(&store.deletes),
             written: &store.written,
             generation: &store.generation,
@@ -2472,7 +2472,7 @@ impl<'e> KvTxn<'e> {
         // held to its own threshold in the slow-operation log.
         metafolder_core::slowlog::mark_write();
         *self.written.lock().unwrap_or_else(|e| e.into_inner()) = written;
-        for flag in [&self.mass_lists, &self.deletes] {
+        for flag in [&self.writes_listed, &self.deletes] {
             flag.publish();
         }
         self.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2594,7 +2594,7 @@ impl KvTxn<'_> {
                     field: None,
                     log_chunk: None,
                     unwritten: None,
-                    mass: false,
+                    writes_pending: false,
                     universe: Default::default(),
                     entries: None,
                 };

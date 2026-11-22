@@ -857,7 +857,7 @@ fn a_part_list_is_decoded_once_per_write_transaction() {
         w.mass_add("tag", Value::Int(i), &uuids).unwrap();
         w.commit().unwrap();
     }
-    assert_eq!(kv.pending_mass().unwrap(), 20, "the writes are pending");
+    assert_eq!(kv.pending_writes().unwrap(), 20, "the writes are pending");
 
     let before = kv.part_lists_decoded();
     let mut w = Writer::begin(&mut kv, None).unwrap();

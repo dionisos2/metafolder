@@ -1070,7 +1070,8 @@ impl KvTxn<'_> {
     /// they change none of its rows, and add none to a field it lacks — the
     /// record says so, or they would apply to the rows again on reading.
     pub(super) fn put_given_back(&self, id: u32, rows: &[crate::rows::FieldRow]) -> Result<()> {
-        let entries = if self.mass_pending() { self.load_record(id)?.entries } else { Vec::new() };
+        let entries =
+            if self.has_pending_writes() { self.load_record(id)?.entries } else { Vec::new() };
         if entries.is_empty() {
             return self.put_stored(id, super::mass::Record::plain(rows.to_vec()));
         }
@@ -1894,7 +1895,7 @@ impl KvStore {
         txn.fold_grams()?;
         txn.meta_put(super::State::DerivedVersion, DERIVED_VERSION)?;
         txn.finish()?;
-        self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.writes_pending.store(false, std::sync::atomic::Ordering::Relaxed);
         self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
@@ -1911,7 +1912,8 @@ impl KvStore {
         let folded = txn.fold_biggest()?;
         txn.finish()?;
         if folded {
-            self.mass.store(self.pending_mass()? > 0, std::sync::atomic::Ordering::Relaxed);
+            self.writes_pending
+                .store(self.pending_writes()? > 0, std::sync::atomic::Ordering::Relaxed);
             let r = self.env.read_txn()?;
             self.deletes.store(self.deletion_pending(&r)?, std::sync::atomic::Ordering::Relaxed);
         }
@@ -1956,7 +1958,7 @@ impl KvStore {
         txn.fold_grams()?;
         while txn.index_log_step(super::entry::INDEX_BUDGET)? {}
         txn.finish()?;
-        self.mass.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.writes_pending.store(false, std::sync::atomic::Ordering::Relaxed);
         self.deletes.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
@@ -2070,7 +2072,7 @@ impl KvStore {
         let mut parents: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
         let mut fields: HashMap<String, u32> = HashMap::new();
         let mut parent_of: HashMap<(u32, Uuid), (Vec<Uuid>, Option<u32>)> = HashMap::new();
-        let pending = self.mass_pending();
+        let pending = self.has_pending_writes();
         let mut parts = super::mass::Parts::default();
         for record_id in super::mass::record_ids(t, r, pending)? {
             let k = record_id.to_be_bytes();

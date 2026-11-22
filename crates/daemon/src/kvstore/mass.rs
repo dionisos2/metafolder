@@ -417,7 +417,7 @@ pub(crate) fn read_record(
     t: &Tables,
     r: &RoTxn<'_>,
     id: u32,
-    mass: bool,
+    writes_pending: bool,
     read: &mut dyn FnMut(u64) -> Result<()>,
 ) -> Result<Vec<FieldRow>> {
     read(1)?;
@@ -425,7 +425,7 @@ pub(crate) fn read_record(
         Some(v) => Record::decode(v)?,
         None => Record::default(),
     };
-    if !mass {
+    if !writes_pending {
         return Ok(record.rows());
     }
     let entries = read_part(t, r, part_of(id))?;
@@ -439,12 +439,12 @@ pub(crate) fn read_record(
 
 /// Every dense id that has a record or is named by an entry (one that is
 /// only named has no record yet).
-pub(crate) fn record_ids(t: &Tables, r: &RoTxn<'_>, mass: bool) -> Result<RoaringBitmap> {
+pub(crate) fn record_ids(t: &Tables, r: &RoTxn<'_>, writes_pending: bool) -> Result<RoaringBitmap> {
     let mut ids = RoaringBitmap::new();
     for entry in t.metarecords.iter(r)? {
         ids.insert(super::derived::dense(entry?.0));
     }
-    if mass {
+    if writes_pending {
         for entry in t.pending_writes.iter(r)? {
             ids |= Listed::decode(0, entry?.1)?.ids;
         }
@@ -465,13 +465,13 @@ impl Parts {
         t: &Tables,
         r: &RoTxn<'_>,
         id: u32,
-        mass: bool,
+        writes_pending: bool,
     ) -> Result<Vec<FieldRow>> {
         let record = match t.metarecords.get(r, &id.to_be_bytes())? {
             Some(v) => Record::decode(v)?,
             None => Record::default(),
         };
-        if !mass {
+        if !writes_pending {
             return Ok(record.rows());
         }
         if self.part != Some(part_of(id)) {
@@ -488,7 +488,7 @@ impl Parts {
 
 impl KvStore {
     /// How many entries are pending, in every part.
-    pub fn pending_mass(&self) -> Result<usize> {
+    pub fn pending_writes(&self) -> Result<usize> {
         let r = self.env.read_txn()?;
         Ok(self.t.pending_writes.len(&r)? as usize)
     }
@@ -504,8 +504,8 @@ impl KvStore {
     }
 
     /// Whether any part has entries: a read looks for them only if so.
-    pub(super) fn mass_pending(&self) -> bool {
-        self.mass.load(std::sync::atomic::Ordering::Relaxed)
+    pub(super) fn has_pending_writes(&self) -> bool {
+        self.writes_pending.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -525,8 +525,8 @@ impl Loaded {
 }
 
 impl KvTxn<'_> {
-    pub(super) fn mass_pending(&self) -> bool {
-        self.mass_lists.get()
+    pub(super) fn has_pending_writes(&self) -> bool {
+        self.writes_listed.get()
     }
 
     pub(super) fn deletes_pending(&self) -> bool {
@@ -652,7 +652,7 @@ impl KvTxn<'_> {
 
     /// The record of dense id `id` and the entries naming it.
     pub(super) fn load_record(&self, id: u32) -> Result<Loaded> {
-        let entries: Vec<Arc<Listed>> = if self.mass_pending() {
+        let entries: Vec<Arc<Listed>> = if self.has_pending_writes() {
             self.with_part(part_of(id), |part| {
                 part.iter().filter(|e| e.ids.contains(id)).cloned().collect()
             })?
@@ -813,7 +813,7 @@ impl KvTxn<'_> {
                 entries.push(Arc::new(entry));
             }
         }
-        self.mass_lists.set(true);
+        self.writes_listed.set(true);
         if kind == Written::Delete {
             self.deletes.set(true);
         }

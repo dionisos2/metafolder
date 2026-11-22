@@ -366,7 +366,7 @@ fn a_write_to_few_records_is_written_into_them() {
         w.mass_add_ids("tag", s("few"), &few).unwrap()
     });
     assert_eq!(changed.len(), 20);
-    assert_eq!(store.pending_mass().unwrap(), 0, "twenty records are no mass write");
+    assert_eq!(store.pending_writes().unwrap(), 0, "twenty records are no mass write");
     assert_eq!(store.pending_index_writes("tag").unwrap(), 0);
     // Twenty-one matches, of which twenty already hold the value: one write.
     let more = ids(&store, 21);
@@ -375,7 +375,7 @@ fn a_write_to_few_records_is_written_into_them() {
         w.mass_add_ids("tag", s("few"), &more).unwrap()
     });
     assert_eq!(changed.len(), 1);
-    assert_eq!(store.pending_mass().unwrap(), 0);
+    assert_eq!(store.pending_writes().unwrap(), 0);
     for kind in ["remove", "unset", "set"] {
         let some = ids(&store, 10);
         let changed = write(&mut store, |w| {
@@ -388,14 +388,14 @@ fn a_write_to_few_records_is_written_into_them() {
             .unwrap()
         });
         assert_eq!(changed.len(), 10, "{kind}");
-        assert_eq!(store.pending_mass().unwrap(), 0, "{kind}");
+        assert_eq!(store.pending_writes().unwrap(), 0, "{kind}");
     }
     let many = ids(&store, 21);
     write(&mut store, |w| {
         w.set_mass_threshold(20);
         w.mass_add_ids("tag", s("many"), &many).unwrap()
     });
-    assert_eq!(store.pending_mass().unwrap(), 1, "twenty-one records are");
+    assert_eq!(store.pending_writes().unwrap(), 1, "twenty-one records are");
     check(&store);
 }
 
@@ -411,7 +411,7 @@ fn a_nothing_and_a_long_text_are_written_in_bulk() {
     store.fold().unwrap();
     let cut = s(&"k".repeat(300)); // its key cut and hashed
     let huge = s(&"h".repeat(600)); // too long for trigrams
-    let entries = |store: &KvStore| store.pending_mass().unwrap();
+    let entries = |store: &KvStore| store.pending_writes().unwrap();
     // Disjoint from the texts: a Nothing takes the place of the values
     // (doc "Nothing versus unknown"), one set in bulk.
     for (value, ids) in

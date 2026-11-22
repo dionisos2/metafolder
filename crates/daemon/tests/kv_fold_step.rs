@@ -44,12 +44,12 @@ fn a_fold_step_folds_one_list_and_the_biggest_first() {
     });
     // Three lists: the entries of the part (the biggest), the index writes of `tag`,
     // those of `mood`.
-    assert_eq!(store.pending_mass().unwrap(), 4);
+    assert_eq!(store.pending_writes().unwrap(), 4);
     assert_eq!(store.pending_index_writes("tag").unwrap(), 3);
     assert_eq!(store.pending_index_writes("mood").unwrap(), 1);
 
     assert!(store.fold_step().unwrap());
-    assert_eq!(store.pending_mass().unwrap(), 0, "the part first");
+    assert_eq!(store.pending_writes().unwrap(), 0, "the part first");
     assert_eq!(store.pending_index_writes("tag").unwrap(), 3);
     assert_eq!(store.pending_index_writes("mood").unwrap(), 1);
 

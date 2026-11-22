@@ -537,7 +537,7 @@ fn a_store_of_layout_10_converts_its_records_and_empties_its_log() {
     assert_eq!(state(&kv), expected10());
     // The pending write was converted, then folded by the reindex that
     // follows a conversion (doc "Checking and reindexing a repository").
-    assert_eq!(kv.pending_mass().unwrap(), 0);
+    assert_eq!(kv.pending_writes().unwrap(), 0);
     assert_eq!(kv.head().unwrap(), None, "the log is emptied (user decision)");
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
     assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
@@ -632,7 +632,7 @@ fn a_store_of_layout_10_drops_the_marks_of_its_log() {
     assert_eq!(state(&kv), want, "the deletion pending stays done, the rest as it was");
     assert!(!kv.metarecords().unwrap().contains(&deleted));
     assert!(kv.metarecords().unwrap().contains(&given_back));
-    assert_eq!(kv.pending_mass().unwrap(), 0);
+    assert_eq!(kv.pending_writes().unwrap(), 0);
     assert_eq!(kv.check().unwrap(), Vec::<String>::new());
     assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
 }
