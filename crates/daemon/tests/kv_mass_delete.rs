@@ -289,7 +289,7 @@ fn undoing_a_pending_mass_delete_only_gives_the_universe_back() {
     w.commit().unwrap();
 
     let written = store.last_write_keys();
-    for table in ["metarecords", "ids", "uuids", "kids", "forest", "log_snaps"] {
+    for table in ["metarecords", "ids", "uuids", "index_raw_holder"] {
         assert_eq!(written.get(table), None, "{table} untouched: {written:?}");
     }
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);
@@ -335,7 +335,7 @@ fn undoing_a_folded_mass_delete_keeps_the_dense_ids() {
     w.commit().unwrap();
 
     let written = store.last_write_keys();
-    for table in ["ids", "uuids", "kids", "forest"] {
+    for table in ["ids", "uuids", "index_raw_holder"] {
         assert_eq!(written.get(table), None, "{table} untouched: {written:?}");
     }
     assert_eq!(Rows::metarecord_count(&store).unwrap(), 80);

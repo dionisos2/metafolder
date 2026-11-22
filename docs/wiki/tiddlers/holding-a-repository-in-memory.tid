@@ -77,8 +77,8 @@ means a write either is on the disk, or did not happen.
 !! Why an ordinary load does not warm the cache
 
 A load could ask the kernel to read the hot key spaces in ahead of use
-(`madvise(WILLNEED)` on the forest, `kids`, the sets, the postings). It was weighed in
-November 2026 and dropped (user decision): the first queries after a boot are the
-only ones it would speed up, a store larger than the memory would evict what it read
-before it is used, and a repository that must never wait on the disk has this switch.
+(`madvise(WILLNEED)` on the forest, `index_parents`, the holders of the values). It
+was weighed in November 2026 and dropped (user decision): the first queries after a
+boot are the only ones it would speed up, a store larger than the memory would evict
+what it read before it is used, and a repository that must never wait on the disk has this switch.
 An ordinary load reads nothing at open.

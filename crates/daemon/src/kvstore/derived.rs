@@ -2,26 +2,18 @@
 //! reads, written in each write's own transaction and rebuilt from the
 //! primary data by [`KvStore::reindex`].
 //!
-//! | table | key                                  | value                    |
-//! |-------|--------------------------------------|--------------------------|
-//! | ids   | uuid                                 | dense id (u32)           |
-//! | uuids | dense id                             | uuid                     |
-//! | sets  | kind · [field] · [key] · chunk       | a roaring bitmap         |
-//! | kids  | parent id · field · dense id         | rows (count)             |
-//! | grams | 0 · field · trigram · text key       | (empty)                  |
-//! | grams | 1 · field · trigram · chunk          | a roaring bitmap         |
-//! | grams | 2 · field                            | the field's trigram state|
-//! | hist  | field · bucket                       | rows (count)             |
+//! Each table and its keys are in doc "Store tables"; [`Bitmaps`] names the
+//! tables of bitmaps.
 //!
 //! A *set* is a bitmap of dense ids cut in chunks of 65 536 ids (the high 16
-//! bits), so a write rewrites one chunk and a read unions a few: the universe,
-//! and per field the ids holding a value (`present`), a `Nothing` (`absent`),
-//! and — on a `tree_ref` field — a child (`parents`). A *partition* orders a
-//! field's `tree_ref` names by a key whose bytes sort like them. `kids` is the forest
-//! keyed by parent first, so a metarecord arriving or leaving finds the fields
-//! it is a parent in without a scan. A value is a *posting*: its holders as
-//! one set (`POSTINGS · field · value key · chunk`), so an equality reads a
-//! key per 65 536 holders and the values are in order of their keys.
+//! bits), so a write rewrites one chunk and a read unions a few: per field the
+//! ids holding a value, a `nothing` (a key among the holders of the field's
+//! values), and — on a `tree_ref` field — a child (`index_parents`). The forest
+//! is `index_raw_holder` (field · parent id · name → id), so a node's children
+//! are one prefix and its names sort like their bytes. A value is a *posting*:
+//! its holders as one set in `index_value_holders` (field · value key · chunk),
+//! so an equality reads a key per 65 536 holders and the values are in order of
+//! their keys.
 //! A number's or a date's row also counts in its field's *histogram*: rows
 //! per bucket, a bucket being a prefix of the value key ([`hist_bucket`]), so
 //! the planner estimates a range by summing a few counts (doc "Planner
