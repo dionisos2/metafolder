@@ -73,9 +73,8 @@ fn a_mass_delete_is_one_entry_and_the_records_stay_until_the_fold() {
     assert_eq!(deleted.len(), 200);
     let written = store.last_write_keys();
     assert_eq!(written.get("log_entries"), Some(&1), "one entry: {written:?}");
-    assert_eq!(written.get("log_snaps"), None, "{written:?}");
+    assert_eq!(written.get("log_targets"), Some(&1), "its targets one key: {written:?}");
     assert_eq!(written.get("metarecords"), None, "no record is written: {written:?}");
-    assert_eq!(written.get("metarecords"), None, "{written:?}");
 
     for u in gone {
         assert!(!Rows::exists(&store, *u).unwrap());

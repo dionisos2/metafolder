@@ -130,7 +130,10 @@ fn a_deletion_writes_nothing_to_the_indexes_but_the_universe() {
     assert_eq!(written.get("metarecords"), None, "the record keeps its key: {written:?}");
     // The live metarecords, and nothing else: the folder still has children.
     assert_eq!(written.get("live_metarecords"), Some(&1), "{written:?}");
-    assert_eq!(written.get("sets"), None, "{written:?}");
+    for table in ["index_value_holders", "index_value_counts", "index_parents", "index_descendants"]
+    {
+        assert_eq!(written.get(table), None, "a deletion wrote to {table}: {written:?}");
+    }
     check(&r.store);
 }
 
