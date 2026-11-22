@@ -956,7 +956,7 @@ fn reverting_a_mass_add_a_record_lost_the_value_of_goes_one_by_one() {
     assert!(store.check().unwrap().is_empty());
 }
 
-/// What a prune cuts of a stub that reverts another leaves no mark behind.
+/// What a prune cuts of an entry that reverts another leaves no mark behind.
 #[test]
 fn pruning_into_a_stub_that_reverts_another_keeps_the_log_consistent() {
     use metafolder_daemon::revert;

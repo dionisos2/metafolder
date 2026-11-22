@@ -87,7 +87,7 @@ async fn make_records(r: &Repo, n: usize) -> Vec<String> {
 async fn the_summaries_say_how_many_operations_a_log_context_holds_and_what_reverts_it() {
     let r = setup("summaries").await;
     let uuids = make_records(&r, 12).await;
-    // A write to many records: one log context, twelve operations, one stub.
+    // A write to many records: one log context, twelve operations, one entry.
     r.call(
         "POST",
         "/query/fields/add",

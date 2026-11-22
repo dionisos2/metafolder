@@ -14,7 +14,6 @@ names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 (=kvstore/mod.rs=) stay: they are the conversion's.
 
 ** Concepts gone or changed
-- "stub" (about 580 in the code): to sort, the log's sense from the others.
 - "version delta" (1 note, 3 places in the code) and "command key" (2 notes):
   gone.
 - "tombs", "row numbers", "cleared fields": gone (a few comments).

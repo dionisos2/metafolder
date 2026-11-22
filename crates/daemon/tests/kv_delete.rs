@@ -273,7 +273,7 @@ fn a_reindex_removes_what_the_deletions_left_behind() {
 }
 
 // A record keeps its dense id between two reindexes (roadmap): what the
-// entries and the stubs name by id keeps naming it when it is given back.
+// pending writes and the log entries name by id keeps naming it when it is given back.
 
 #[test]
 fn a_record_given_back_by_a_revert_keeps_its_dense_id() {
