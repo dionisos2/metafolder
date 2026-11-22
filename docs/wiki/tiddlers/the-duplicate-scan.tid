@@ -38,7 +38,7 @@ the whole scan (15 s on 50 000 files, [[The session scenario]]).
 The scan keeps what it found in memory — ''the hash cache'' (`mfr_partial_hash`,
 `mfr_full_hash`, `mfr_hash_mtime`, `mfr_hash_size`) and ''the groups'' of each size
 class as it completes — and takes the store back to write it every twenty
-seconds, and at the end with ''the prune''. All of it under one label.
+seconds, and at the end with ''the prune''. All of it under one log context.
 
 Since the store was free in between, a write trusts nothing loaded before it:
 

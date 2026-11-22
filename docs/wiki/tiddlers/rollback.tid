@@ -25,13 +25,13 @@ redos count as well: an undo you made since of an older change is taken back, so
 change comes back as it stood at the time; something done and undone since is left alone.
 The precise rule: [[Reverting everything since a time]].
 
-A rollback is one more revert, written in a label of its own (`rollback to
+A rollback is one more revert, written in a log context of its own (`rollback to
 2026-11-08T09:00:00Z`): undoing it — <<key "log:undo" Ctrl+z>> or `mf log undo` — puts
 back what it took ([[Undo and redo]]).
 
 ''Before it writes.'' `plan` lists the operations and names any later write a revert
 would overwrite; without `--force`, the CLI asks before overwriting one, and before moving
-files ([[Reverting a label]] — the same options: `--metadata-only`, `--on-move-available`,
+files ([[Reverting a log context]] — the same options: `--metadata-only`, `--on-move-available`,
 `--on-move-unavailable`, `--silent`). The GUI's confirmation says how many operations go
 back, how many overwrite a later change, and whether files move; then it asks nothing, as
 for any revert ([[Log commands in the GUI]]).

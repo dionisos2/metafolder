@@ -2,29 +2,29 @@ title: The operation log
 tags: [[Event log]]
 kind: overview
 audience: dev
-summary: The event log since October 2026: an ordered set of reversible operations grouped by nested labels, with one mechanism (revert onto the current state) instead of a history tree, HEAD navigation and rollback.
+summary: The event log since October 2026: an ordered set of reversible operations grouped by nested log contexts, with one mechanism (revert onto the current state) instead of a history tree, HEAD navigation and rollback.
 
 ''Proposed 12 October 2026, built the following days.'' Until then the event log was a
 tree of operations with a movable HEAD, two mechanisms (rollback and revert) and
 revisions. It is now an ''ordered set of operations'' — why, in [[Why the log stops being a tree]] — built in steps: reverting onto the current state ([[Reverting onto the current state]]); the log as a sequence, undo and redo as reverts; retention per origin
-([[Automatic retention]]); labels instead of revisions, and contexts in the clients
-([[Log contexts]]); undo and redo by label ([[Undo and redo by log context]]); the log
-panel as a tree of labels ([[log panel]]). Each step that changed the store's layout
+([[Automatic retention]]); log contexts instead of revisions, and contexts in the clients
+([[Log contexts]]); undo and redo by log context ([[Undo and redo by log context]]); the log
+panel as a tree of log contexts ([[log panel]]). Each step that changed the store's layout
 ''emptied the log'' of an older store rather than converting it — the metarecords kept —
 which the user chose ([[Persisted format changes]]).
 
 Two things were left for later, by the user's decision, and built since: the GUI's ''work
 context'' ([[The GUI's work context]], 17 October 2026), and ''"rollback" as "revert
 everything since T"'' ([[Reverting everything since a time]], 8 November 2026). Renaming or describing a
-label after the fact is not built either.
+log context after the fact is not built either.
 
 !! The model
 
 * The log is a sequence of operations, numbered in the order they were written. There is no parent, no HEAD to move, no branch: the log only grows, and shrinks only by retention.
 * Each operation keeps what it found (its before); the state it left is not kept ([[Log storage]]). What it records is ''descriptive'': it says what the operation did, it is never a condition for undoing it.
 * There is ''one mechanism'': reverting a set of operations, which applies each one's inverse to the ''current'' state ([[Reverting onto the current state]]). Undo, redo, "back to this morning" ([[Rollback]]), a script's going back: each is a choice of set, nothing more.
-* Operations are grouped by ''labels'' — named, described, nested — instead of revisions ([[Log contexts]]). A transaction stays one request; a label groups what belongs together, across as many requests as it takes.
-* Undo and redo target a label of the newest operation, chosen by the user when there are several ([[Undo and redo by log context]]).
+* Operations are grouped by ''log contexts'' — named, described, nested — instead of revisions ([[Log contexts]]). A transaction stays one request; a log context groups what belongs together, across as many requests as it takes.
+* Undo and redo target a log context of the newest operation, chosen by the user when there are several ([[Undo and redo by log context]]).
 
 !! Retention
 
@@ -42,12 +42,12 @@ a promise to keep a global state that the log no longer knows how to rebuild.
 * HEAD's navigation, the history tree and its branches; LCA and navigation paths; `mode=active`/`mode=tree` on `GET /log`; `prune linearize`; `mf log list --tree`/`--graph` and the log panel's graph.
 * The coordinated step-by-step navigation and its lock (`/rollback/*`, the navigating `mf log rollback` and `log:rollback` — names since reused for going back to a time, [[Rollback]]); the file side of a revert stays.
 * The dependency analysis: `with_dependents`, "blocked by".
-* Revisions, as a grouping and as a word: `rev_id`, `/log/revisions/:id`, labels set on a revision afterwards (`PATCH`, `log:mark`), the "labelled revision is a retention floor" rule.
+* Revisions, as a grouping and as a word: `rev_id`, `/log/revisions/:id`, log contexts set on a revision afterwards (`PATCH`, `log:mark`), the "labelled revision is a retention floor" rule.
 * Restoring a past ''global'' state. Nothing in daily use needs it; the watcher's work makes it a state that never really existed on disk anyway.
 
 !! Where it differs from the proposal
 
-* ''Origin'' stays on each operation, set by the daemon, instead of being read off the root label a label descends from: a trashing's `trash` origin must survive inside any context ([[Operations and their origin]]).
+* ''Origin'' stays on each operation, set by the daemon, instead of being read off the root log context a log context descends from: a trashing's `trash` origin must survive inside any context ([[Operations and their origin]]).
 * A command's context is created ''before it writes'', by the client, and passed as an id (`X-Metafolder-Log-Context`). From October to November 2026 it was opened at the command's first write, found again by a key the client drew (`X-Metafolder-Command`); explicit contexts replaced that (user decision, [[Log contexts]]).
 * A context names its repository (`METAFOLDER_LOG_CONTEXT=<repo>:<id>`): a context id means nothing in another one.
 * Labels were renamed ''log contexts'' (November 2026). The GUI creates one per command run, so two commands running at once no longer share one.

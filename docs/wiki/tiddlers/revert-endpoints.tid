@@ -11,19 +11,19 @@ summary: GET /revert/plan, the single-shot POST /revert, and the coordinated sta
 |<<cmd "POST /repos/:repo/revert/commit">> |`{"apply": [ids]}` — writes what the client managed, releases the lock |
 |<<cmd "POST /repos/:repo/revert/abort">> |releases the lock, writes nothing → `{"head"}` |
 
-''The target'', the same everywhere: `{"log_context_id": N}` — the label's operations and
-those of every label nested in it ([[Log contexts]]) — `{"log_context_id": "head"}` —
-the label of the newest operation —, `{"op_ids": [22, 23]}`, or `{"since": T}` (Unix ms) —
+''The target'', the same everywhere: `{"log_context_id": N}` — the log context's operations and
+those of every log context nested in it ([[Log contexts]]) — `{"log_context_id": "head"}` —
+the log context of the newest operation —, `{"op_ids": [22, 23]}`, or `{"since": T}` (Unix ms) —
 what going back to the state at T takes: the user's operations written after T and still
 standing, changes and reverts of older operations ([[Reverting everything since a time]]);
-a T older than the log's oldest operation is a `404`. A label target may be
+a T older than the log's oldest operation is a `404`. A log context target may be
 narrowed with `"only"` (`only=` on the plan): `"changes"` keeps the operations that are
 not reverts, not the watcher's and still standing — an undo; `"undos"` the reverts of an
 ordinary change still standing — a redo ([[Undo and redo by log context]]). Anything else is a
 `400`, and so is `only` on an `op_ids` or a `since` target. Nothing blocks a target:
 the revert is applied onto the current state ([[Reverting onto the current state]]).
 
-The revert writes in the request's context like any write: the label named in
+The revert writes in the request's context like any write: the log context named in
 `X-Metafolder-Log-Context`, or one of its own named after the target (`revert of label 12`,
 `revert of operation 7`, `rollback to 2026-11-08T09:00:00Z`) — so the log says what an undo undid ([[Log endpoints]]).
 
@@ -47,12 +47,12 @@ The revert writes in the request's context like any write: the label named in
 "reverted_operations", "skipped_operations": [{"op_id", "reason"}]}`. `skip_filesystem`
 leaves out the operations needing a file action instead of refusing — it never means
 "write the metadata anyway": a revert never records a change it knows untrue of the
-disk. With nothing left to apply it writes nothing (`label: null`). `label` is the label
+disk. With nothing left to apply it writes nothing (`label: null`). `label` is the log context
 the revert wrote in.
 
 |!Status |!When |
-|`400` |an `unknown` operation; a `target_op_ids` entry that is not a number; the revert would leave two types under one name; a context label that does not exist or is the watcher's |
-|`404` |no such label or operation — pruned, trimmed, or never there; a label that exists but holds nothing reverts nothing |
+|`400` |an `unknown` operation; a `target_op_ids` entry that is not a number; the revert would leave two types under one name; a log context that does not exist or is the watcher's |
+|`404` |no such log context or operation — pruned, trimmed, or never there; a log context that exists but holds nothing reverts nothing |
 |`409` |a file action needed without `skip_filesystem`; recreating a metarecord whose uuid exists again |
 |`423` |a revert lock is held |
 

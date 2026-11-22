@@ -36,8 +36,8 @@ since T" only.
 
 !! What it writes
 
-One revert, in the request's context or a label of its own named after the time (`rollback to
-2026-11-08T09:00:00Z`); undoing that label takes the rollback back like any other. `unknown` operations in
+One revert, in the request's context or a log context of its own named after the time (`rollback to
+2026-11-08T09:00:00Z`); undoing that log context takes the rollback back like any other. `unknown` operations in
 the set fail it, as any revert of one does.
 
 !! Cost

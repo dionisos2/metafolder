@@ -1,6 +1,6 @@
 title: mf log redo
 tags: [[CLI command]] [[Event log]]
 kind: reference
-summary: Take back the undos of a label of the newest undo still standing (none named: list them)
+summary: Take back the undos of a log context of the newest undo still standing (none named: list them)
 
-Without a label, lists the labels the newest undo still standing was written in, and writes nothing; with one, reverts its undos still standing; `plan <label>` previews it ([[Undo and redo]]).
+Without a log context, lists the log contexts the newest undo still standing was written in, and writes nothing; with one, reverts its undos still standing; `plan <label>` previews it ([[Undo and redo]]).

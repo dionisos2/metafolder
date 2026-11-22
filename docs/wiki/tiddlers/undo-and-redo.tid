@@ -2,7 +2,7 @@ title: Undo and redo
 tags: [[Event log]]
 kind: guide
 aliases: undo redo
-summary: mf log undo (Ctrl+Z) takes back a label of the newest change you made, whatever the watcher wrote since; mf log redo (Ctrl+Shift+Z) takes a label of the newest undo back.
+summary: mf log undo (Ctrl+Z) takes back a log context of the newest change you made, whatever the watcher wrote since; mf log redo (Ctrl+Shift+Z) takes a log context of the newest undo back.
 
 ```
 mf -n music log undo           # which labels the newest change is in — nothing written
@@ -15,37 +15,37 @@ mf -n music log redo 57
 In the GUI: <<key "log:undo" Ctrl+z>> and <<key "log:redo" Ctrl+Shift+z>>, from anywhere.
 
 ''Undo'' looks for the newest change ''you'' made that still stands — not the watcher's,
-not a previous undo ([[The undo selection]]) — and offers the ''labels'' it was written in,
+not a previous undo ([[The undo selection]]) — and offers the ''log contexts'' it was written in,
 innermost first: the command that made it, the answer of a script it was part of, the
-script's run… ([[Log contexts]]). Undoing a label reverts every change of it still
+script's run… ([[Log contexts]]). Undoing a log context reverts every change of it still
 standing, onto the current state: the watcher's operations written since stay where they
 are — they record what really happened on disk ([[Why undo does not step HEAD back]]).
 Pressed again, it takes back the change before, and so on. The undo is itself written in
-a label: the command's (`mf log undo 42`), or `undo of label 42`.
+a log context: the command's (`mf log undo 42`), or `undo of label 42`.
 
-On the command line the label is named: `mf log undo` alone lists the candidates and
+On the command line the log context is named: `mf log undo` alone lists the candidates and
 writes nothing — undo then never takes back more or less than meant. In the GUI, a change
-written in a single label (an edit, one command) is undone at once; one written in several
+written in a single log context (an edit, one command) is undone at once; one written in several
 (a command inside a script's answer, inside its run) asks which, in the command input's
 completion, innermost first.
 
-''Redo'' is the same over the newest undo that still stands: its labels are offered, and
+''Redo'' is the same over the newest undo that still stands: its log contexts are offered, and
 redoing one reverts its undos — whatever the watcher wrote in between. Pressed again, it
 takes back the undo before. A new change of yours clears what could be redone; it
 re-applies undos only — not arbitrary history (that is `mf log revert`; going back to a
 time is `mf log rollback`, [[Rollback]]). Undo and redo
 compose: undo, redo, undo lands where the first undo did ([[Why undo and redo do not oscillate]]).
 
-`plan` with a label shows what the revert would write, and writes nothing. With nothing to
+`plan` with a log context shows what the revert would write, and writes nothing. With nothing to
 take back they say `Nothing to undo.` / `Nothing to redo.` and exit 0.
 
 !! Two writers at once
 
 "Newest" is the newest ''operation'', not the newest thing you did. When two clients write
 at the same time — a script running while you edit by hand, two windows —, the newest
-operation may be the other one's: undo then offers ''its'' labels, not the ones of what you
+operation may be the other one's: undo then offers ''its'' log contexts, not the ones of what you
 just did. The candidates' names say whose they are before anything is undone; name the
-label you mean. In the GUI, two commands running at once — a long reconcile and a field
+log context you mean. In the GUI, two commands running at once — a long reconcile and a field
 edited meanwhile — each write in a context of their own ([[Log contexts]]): a request
 that names no run (a builtin's, a click's) goes in the newest command's.
 

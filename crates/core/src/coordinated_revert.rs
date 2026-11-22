@@ -43,7 +43,7 @@ impl From<TrashError> for RevertError {
     }
 }
 
-/// What to do with a `move` step (doc "Reverting a label").
+/// What to do with a `move` step (doc "Reverting a log context").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
     Apply,
@@ -148,7 +148,7 @@ pub fn decide_move(
         // Move the file there when it is present; when it is gone there is
         // nothing to move — the metadata still follows the revert, keeping
         // the recorded path rather than rewinding to a location the file is
-        // not at (doc "Reverting a label").
+        // not at (doc "Reverting a log context").
         Policy::Apply => {
             if available {
                 let dest = to_path.as_path();

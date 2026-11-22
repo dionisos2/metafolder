@@ -2,10 +2,10 @@ title: Revert
 tags: [[Event log]]
 kind: overview
 aliases: revert
-summary: A revert undoes a past label or operation in place — writing back the state it replaced as a new write — while everything after it stays.
+summary: A revert undoes a past log context or operation in place — writing back the state it replaced as a new write — while everything after it stays.
 
 A ''revert'' answers "that one rename was a mistake", even in a watched repository, where
-dozens of unrelated watcher writes may have landed since. It undoes a label, or chosen
+dozens of unrelated watcher writes may have landed since. It undoes a log context, or chosen
 operations: the daemon computes the state that change replaced and writes it back as an
 ordinary new write. The log grows by operations saying so, and nothing leaves it — the
 mistake and its correction are both on the record, which is what an audit log is for.
@@ -15,7 +15,7 @@ A revert is an ordinary write in every other respect: it can itself be reverted
 each of its operations, naming what it undid.
 
 A revert goes back to what the change replaced, whatever was written since on the same
-field: a later write is overwritten, and the plan says so first ([[Reverting onto the current state]]). Undo and redo are reverts, of a label they choose for you
+field: a later write is overwritten, and the plan says so first ([[Reverting onto the current state]]). Undo and redo are reverts, of a log context they choose for you
 ([[Undo and redo]]).
 
 !! Use it

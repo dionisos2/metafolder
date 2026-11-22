@@ -1,7 +1,7 @@
 title: The undo selection
 tags: [[Event log]]
 kind: reference
-summary: What undo and redo offer — the labels of the newest change you made, or of the newest undo, still standing — computed from the log alone, in core, by every client; both are reverts.
+summary: What undo and redo offer — the log contexts of the newest change you made, or of the newest undo, still standing — computed from the log alone, in core, by every client; both are reverts.
 
 Both are reverts, applied onto the current state ([[Reverting onto the current state]]):
 nothing moves back over the log, so nothing written since — the watcher's work above all
@@ -10,7 +10,7 @@ nothing moves back over the log, so nothing written since — the watcher's work
 !! Undo
 
 Undo walks the log newest first for the newest operation ''the user wrote'' that still
-stands, and offers the labels it was written in, innermost first ([[Undo and redo by log context]]).
+stands, and offers the log contexts it was written in, innermost first ([[Undo and redo by log context]]).
 An operation is ''not'' the one when:
 
 * it is the daemon's — `origin = watcher` exactly, not any set origin ([[Operations and their origin]]); failing an origin, a watcher op type. A `trash` operation ''is'' one: you asked for it;
@@ -19,20 +19,20 @@ An operation is ''not'' the one when:
 * it is an `unknown` operation, which carries nothing to invert;
 * it is the creation of the repository's root, written at init (`root_op` in `GET /log`). Undo stops there; `mf log revert <label>` still reaches it. Once a prune — or the conversion to layout 11, which empties the log — took it away, nothing stops undo: the oldest operation left is a change like another (user decision, November 2026; until then the oldest operation a prune left stopped it too).
 
-Undoing the label chosen is a revert of `{"log_context_id": L, "only": "changes"}`: the daemon
-takes the operations of L and of every label nested in it, and keeps those that are not
+Undoing the log context chosen is a revert of `{"log_context_id": L, "only": "changes"}`: the daemon
+takes the operations of L and of every log context nested in it, and keeps those that are not
 reverts, not the watcher's, and still standing ([[Revert endpoints]]). The daemon narrows,
-not the client: a label — a script's run — may start long before the window the client
+not the client: a log context — a script's run — may start long before the window the client
 read.
 
 !! Redo
 
 Redo walks the log newest first for the newest ''undo'' that still stands — a revert of an
-ordinary change — and offers its labels. On the way it steps over the daemon's
+ordinary change — and offers its log contexts. On the way it steps over the daemon's
 operations, the redos, and the undos already redone: pressing redo again goes on to the
 undo before. The newest ordinary change still standing ends the search: ''a new change
 clears what could be redone'', as in any editor. What it cleared is still in the log, and
-an explicit `mf log revert` of the undo reaches it. Redoing label L is a revert of
+an explicit `mf log revert` of the undo reaches it. Redoing log context L is a revert of
 `{"log_context_id": L, "only": "undos"}`: its reverts of an ordinary change still standing.
 
 Undo, change, undo, undo — then redo, redo, redo: the first two redos bring back what the

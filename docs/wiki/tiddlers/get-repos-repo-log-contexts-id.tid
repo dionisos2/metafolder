@@ -2,6 +2,6 @@ title: GET /repos/:repo/log/contexts/:id
 tags: [[HTTP endpoint]] [[Log endpoints]]
 kind: reference
 audience: dev
-summary: One label with its own operations and their snapshots; `head` names the label of the newest operation.
+summary: One log context with its own operations and their snapshots; `head` names the log context of the newest operation.
 
 Bodies, answers and errors: [[Log endpoints]].

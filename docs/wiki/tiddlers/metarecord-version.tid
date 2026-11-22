@@ -29,7 +29,7 @@ sync planner records baselines in one). It is ''stored nowhere'': a read compute
 write has no version to keep current — one key less to write per metarecord, and
 nothing at all for a write that touches many. Being a sum, it can still be moved
 without the rows: subtract the terms of the rows removed, add those of the rows
-inserted — how the version a metarecord had before a label is computed back from the
+inserted — how the version a metarecord had before a log context is computed back from the
 log ([[Log storage]]). The terms are xxHash3 over a length-prefixed encoding of the row; that encoding
 is persisted — changing it changes every stored version, and needs a migration.
 

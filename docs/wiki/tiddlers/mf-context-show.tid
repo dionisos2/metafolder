@@ -3,4 +3,4 @@ tags: [[CLI command]] [[Event log]]
 kind: reference
 summary: Show a log context (default: the current one) and the contexts it is nested in
 
-A label — a label id, or a context as `mf context new` prints it; by default the one `METAFOLDER_LOG_CONTEXT` passes on — with its description and the labels it is nested in ([[Log contexts]]).
+A log context — a log context id, or a context as `mf context new` prints it; by default the one `METAFOLDER_LOG_CONTEXT` passes on — with its description and the log contexts it is nested in ([[Log contexts]]).

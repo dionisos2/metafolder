@@ -8,9 +8,9 @@ summary: List the log contexts with their counts and what undid them, newest fir
   label 9   2026-11-15 13:40  field add tag:string=blue  (10000 operations)  [undone]
 ```
 
-One line per label, newest first: its own operations, how many labels are nested in it, and
-what an undo says — `[undone]` or `[partly undone]` on a label that was undone, `[undoes
-label N]` on the undo. `--in LABEL` lists the labels nested in one (the units of work
+One line per log context, newest first: its own operations, how many log contexts are nested in it, and
+what an undo says — `[undone]` or `[partly undone]` on a log context that was undone, `[undoes
+log context N]` on the undo. `--in LABEL` lists the log contexts nested in one (the units of work
 otherwise), `--limit N` and `--all` bound the list. Unlike [[mf log list]], no operation is
 read, so a write to ten thousand records costs one line ([[Log context summaries]]); `mf log show`
-goes into one label.
+goes into one log context.

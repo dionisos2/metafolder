@@ -1,6 +1,6 @@
 title: mf log list
 tags: [[CLI command]] [[Event log]]
 kind: reference
-summary: Display the history, by label
+summary: Display the history, by log context
 
-One line per label — the innermost of the listed operations' —, newest first; `--ops` expands them, filters and limits ([[Reading the log]]).
+One line per log context — the innermost of the listed operations' —, newest first; `--ops` expands them, filters and limits ([[Reading the log]]).

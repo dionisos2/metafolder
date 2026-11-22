@@ -125,7 +125,7 @@ pub struct UndoOpts {
 // ── Move policies ─────────────────────────────────────────────────────────────
 
 /// Parses a `--on-move-available`/`--on-move-unavailable` value
-/// (doc "Reverting a label").
+/// (doc "Reverting a log context").
 pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
     match s {
         "apply" => Ok(Policy::Apply),
@@ -683,7 +683,7 @@ mod tests {
     }
 }
 
-// ── `mf log revert` (doc "Reverting a label") ──────────────────────────────
+// ── `mf log revert` (doc "Reverting a log context") ────────────────────────
 
 /// What to revert: a label — its children's operations included — an
 /// explicit list of operations, what going back to a time takes, or,

@@ -2,31 +2,31 @@ title: Undo and redo by log context
 tags: [[The operation log]]
 kind: reference
 audience: dev
-summary: Undo offers the labels of the newest operation still standing, and reverts the one chosen; redo does the same over the newest undo; the command line names the label.
+summary: Undo offers the log contexts of the newest operation still standing, and reverts the one chosen; redo does the same over the newest undo; the command line names the log context.
 
 !! Undo
 
 Undo looks at the ''newest operation'' that is the user's (not under the watcher's root),
-not part of an undo or a redo, and not already undone. The labels it carries — innermost
+not part of an undo or a redo, and not already undone. The log contexts it carries — innermost
 to outermost — are the candidates:
 
 * one candidate: the GUI undoes it at once;
 * several: the GUI offers them in the command input's completion, innermost first (the answer, the script run, the work context…), and reverts the one chosen.
 
-Undoing a label reverts every change under it still standing — not its undos and redos,
+Undoing a log context reverts every change under it still standing — not its undos and redos,
 not the watcher's — onto the current state ([[Reverting onto the current state]]): the
 revert target `{"log_context_id", "only": "changes"}`, narrowed by the daemon, which sees the
-whole label ([[Revert endpoints]]). On the command line the label is named:
+whole log context ([[Revert endpoints]]). On the command line the log context is named:
 `mf log undo <label-id>`; without one, the candidates are listed. Slower than a single key
 for the common case, but it never takes back more or less than meant; shortcuts can be
 added where it proves impractical.
 
-The undo is itself written in a label: the command's that asked for it (`mf log undo 42`,
+The undo is itself written in a log context: the command's that asked for it (`mf log undo 42`,
 `log:undo 42`), or `undo of label 42` — its operations linked to L's by `reverts_op_id`.
 
 !! Redo
 
-Redo is the same over the ''newest undo still standing'': its labels are the candidates,
+Redo is the same over the ''newest undo still standing'': its log contexts are the candidates,
 and redoing one reverts its undos still standing (`"only": "undos"`). Two rules carried
 over from the selection of revisions ([[Why undo and redo do not oscillate]]):
 
@@ -39,8 +39,8 @@ cleared is still in the log, and an explicit revert of the undo reaches it.
 
 !! Two clients at once — a confusing case
 
-"Newest" is the newest ''operation'', not the newest label. With two clients writing
+"Newest" is the newest ''operation'', not the newest log context. With two clients writing
 concurrently — a script running while the user edits by hand —, the newest operation may
-be the script's, and undo then offers the script's labels and not what the user just did.
+be the script's, and undo then offers the script's log contexts and not what the user just did.
 The user documentation says so ([[Undo and redo]]); the candidates' names make it
 visible before anything is undone.

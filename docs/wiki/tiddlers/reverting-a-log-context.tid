@@ -1,7 +1,7 @@
-title: Reverting a label
+title: Reverting a log context
 tags: Revert
 kind: guide
-summary: mf log revert <label> (or --op) writes the inverse onto the current state; plan shows it first, naming any later write it would overwrite.
+summary: mf log revert <log context> (or --op) writes the inverse onto the current state; plan shows it first, naming any later write it would overwrite.
 
 ```
 mf -n music log revert plan 12          # what it would do — nothing written, no lock

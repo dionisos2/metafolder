@@ -2,6 +2,6 @@ title: GET /repos/:repo/contexts/:id
 tags: [[HTTP endpoint]] [[Log endpoints]]
 kind: reference
 audience: dev
-summary: One label, its ancestors and its children.
+summary: One log context, its ancestors and its children.
 
-Bodies, answers and errors: [[Log endpoints]]; what a label is: [[Log contexts]].
+Bodies, answers and errors: [[Log endpoints]]; what a log context is: [[Log contexts]].

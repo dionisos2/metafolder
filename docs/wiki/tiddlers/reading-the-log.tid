@@ -1,7 +1,7 @@
 title: Reading the log
 tags: [[Event log]]
 kind: guide
-summary: mf log lists the operations by label, newest first, --ops expands them; mf log show details one label.
+summary: mf log lists the operations by log context, newest first, --ops expands them; mf log show details one log context.
 
 ```
 mf -n music log                                # the last 20 labels
@@ -13,9 +13,9 @@ mf -n music log show HEAD
 mf -n music log head                           # the newest operation's id
 ```
 
-`mf log` (`mf log list`) shows the log — a sequence, in the order it was written ([[The operation log]]) — one line per label, newest first, the newest marked HEAD. Each
-operation is counted in its innermost label ([[Log contexts]]); a write made in no
-context has a label of its own, named after what it called:
+`mf log` (`mf log list`) shows the log — a sequence, in the order it was written ([[The operation log]]) — one line per log context, newest first, the newest marked HEAD. Each
+operation is counted in its innermost log context ([[Log contexts]]); a write made in no
+context has a log context of its own, named after what it called:
 
 ```
 > label 12  2024-01-15 14:32  tag run   ← HEAD
@@ -23,14 +23,14 @@ context has a label of its own, named after what it called:
   label 10  2024-01-14 09:12  PUT /repos/:repo/metarecords/:uuid/fields/:name
 ```
 
-* `--ops` expands each label into its operations (`op 23  set_field(rating)  on <uuid>`).
-* `--limit N` (default 20 labels, or operations with `--ops`), `--all`, `--since`/`--until` (ISO-8601 or `@<unix ms>`), `--metarecord <uuid>` combine freely.
-* A reconcile is one label of maybe tens of thousands of operations; the listing reads at most 500, so such a label may be shown cut: `[the newest 95 operations shown]`.
+* `--ops` expands each log context into its operations (`op 23  set_field(rating)  on <uuid>`).
+* `--limit N` (default 20 log contexts, or operations with `--ops`), `--all`, `--since`/`--until` (ISO-8601 or `@<unix ms>`), `--metarecord <uuid>` combine freely.
+* A reconcile is one log context of maybe tens of thousands of operations; the listing reads at most 500, so such a log context may be shown cut: `[the newest 95 operations shown]`.
 
-`mf log show <id>` (or `HEAD`, the newest operation's label) prints the label — its name,
-description and the labels it is nested in — and each of its own operations with its
+`mf log show <id>` (or `HEAD`, the newest operation's log context) prints the log context — its name,
+description and the log contexts it is nested in — and each of its own operations with its
 values before and after; `--raw` the JSON. A `tree_ref` value shows its name, not a
 resolved path. `mf log head` prints the newest operation's id — a point to compare with
-later, or what `mf log revert --op` takes; going back is done by label ([[Undo and redo]]).
+later, or what `mf log revert --op` takes; going back is done by log context ([[Undo and redo]]).
 
 In the GUI: the [[log panel]], down to what each operation changed.

@@ -134,7 +134,7 @@ fn test_prune_without_force_aborts_on_no() {
     assert!(out.stderr.contains("aborted"), "stderr: {}", out.stderr);
 }
 
-// ── `mf log revert` (doc "Reverting a label") ──────────────────────────────
+// ── `mf log revert` (doc "Reverting a log context") ────────────────────────
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_log_revert_undoes_a_revision_and_reports_the_blocker() {

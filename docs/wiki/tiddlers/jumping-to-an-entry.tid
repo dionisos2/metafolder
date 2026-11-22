@@ -17,7 +17,7 @@ the focus ([[Generic panel commands]]). What a row is depends on the panel:
 |!Panel |!Finds |!A candidate reads |
 |[[file-manager panel]] |an entry of the directory shown |its name, with a final `/` for a directory |
 |[[path-ref panel]] |a child of the current node |its name |
-|[[log panel]] |a write listed |`#12`, followed by its label when it has one |
+|[[log panel]] |a write listed |`#12`, followed by its log context when it has one |
 |[[trash panel]] |an entry of the trash |its name, then the path it was trashed from |
 |[[recent panel]] |a metarecord seen recently |its name, then its path |
 |[[duplicates panel]] |a group or a copy |the group's hash and number of copies; the copy's path |
@@ -44,7 +44,7 @@ alternate answer of [[Interactive command arguments]], which runs the step as
 `cursor:find self select`. `Escape` stops where the walk is.
 
 Only the panels whose rows can be entered — the file manager and the tree —
-provide what a walk needs (`descend`) — and the log, whose labels hold labels;
+provide what a walk needs (`descend`) — and the log, whose log contexts hold log contexts;
 elsewhere the key passes through. Another panel gains the mode the day it
 provides `descend`.
 

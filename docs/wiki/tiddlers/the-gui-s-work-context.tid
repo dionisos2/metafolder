@@ -12,7 +12,7 @@ October 2026); built on 17 October 2026, where the user settled the questions le
 
 !! The commands
 
-* <<cmd "context:set">> `<name> [description]` opens a label named `name`, described by the rest of the line, on the active repository — at the root, not inside another — and puts it in force there. A name with spaces is quoted (`context:set "sorting photos" the 2024 trip`); typed bare, the command asks the name, then the description, which may be left empty. ''One at a time'' (user): setting one while another is in force closes the first.
+* <<cmd "context:set">> `<name> [description]` opens a log context named `name`, described by the rest of the line, on the active repository — at the root, not inside another — and puts it in force there. A name with spaces is quoted (`context:set "sorting photos" the 2024 trip`); typed bare, the command asks the name, then the description, which may be left empty. ''One at a time'' (user): setting one while another is in force closes the first.
 * <<cmd "context:unset">> closes it.
 
 Closing writes nothing: a context is an id the GUI sends, and leaving it is ceasing to
@@ -21,7 +21,7 @@ send it ([[Log contexts]]). The context stays in the log with what was written i
 !! The repository's, not the workspace's
 
 A context belongs to ''the repository'' (user): every workspace on it writes in it, and a
-label id means nothing in another repository. The daemon proxy and the blocking client
+log context id means nothing in another repository. The daemon proxy and the blocking client
 send it as `X-Metafolder-Log-Context` with every request to that repository — panel
 edits, undo — and a command run's own context is created inside it. What runs from the GUI follows
 ([[Log contexts]]): a `script:run` run's context is created inside it, and a plain
@@ -32,7 +32,7 @@ is the GUI's.
 !! The indicator
 
 Each slot header shows, beside its repository's name, the context in force on it —
-`⟨name⟩`, its label, description and how to close it on hover. The workspaces the GUI
+`⟨name⟩`, its log context, description and how to close it on hover. The workspaces the GUI
 sends the shell carry it (`work_context` in each workspace's info), and are sent again
 whenever a context is put in force or closed, by a command, the question below or a
 prune.

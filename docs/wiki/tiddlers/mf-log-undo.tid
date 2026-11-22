@@ -1,6 +1,6 @@
 title: mf log undo
 tags: [[CLI command]] [[Event log]]
 kind: reference
-summary: Undo a label of your newest change still standing (none named: list them)
+summary: Undo a log context of your newest change still standing (none named: list them)
 
-Without a label, lists the labels your newest change still standing was written in, innermost first, and writes nothing; with one, reverts its changes still standing; `plan <label>` previews it ([[Undo and redo]], [[The undo selection]]).
+Without a log context, lists the log contexts your newest change still standing was written in, innermost first, and writes nothing; with one, reverts its changes still standing; `plan <label>` previews it ([[Undo and redo]], [[The undo selection]]).

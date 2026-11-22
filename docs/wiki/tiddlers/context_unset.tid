@@ -4,5 +4,5 @@ kind: reference
 summary: Close the active repository's work context
 
 Closes the work context opened by <<cmd "context:set">> on the active repository, and
-forgets it: what was written in it stays in the log under its label
+forgets it: what was written in it stays in the log under its log context
 ([[The GUI's work context]]).

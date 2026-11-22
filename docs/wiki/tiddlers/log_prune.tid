@@ -1,6 +1,6 @@
 title: log:prune
 tags: [[GUI command]] [[Event log]]
 kind: reference
-summary: Log: prune history before the selected label or operation
+summary: Log: prune history before the selected log context or operation
 
-Prunes the history before the selected label — kept whole — or operation, after asking ([[Log commands in the GUI]], [[Pruning the log]]).
+Prunes the history before the selected log context — kept whole — or operation, after asking ([[Log commands in the GUI]], [[Pruning the log]]).

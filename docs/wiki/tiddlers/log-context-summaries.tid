@@ -2,17 +2,17 @@ title: Log context summaries
 tags: Storage [[Event log]]
 kind: rationale
 audience: dev
-summary: What the log says of a label without reading one of its operations — how many it holds, its first and last, who wrote it, which labels it reverts and which revert it — so that a client shows the log by label and reads operations only for the label it goes into.
+summary: What the log says of a log context without reading one of its operations — how many it holds, its first and last, who wrote it, which log contexts it reverts and which revert it — so that a client shows the log by log context and reads operations only for the log context it goes into.
 
 A write to many records is one entry in the log, read back as an operation per record
 ([[Mass operations in the log]]): making up those operations costs a read of each
-record's uuid. A client that shows the log as a list of labels — the log panel's top
-level, `mf log contexts` — does not need them, so a summary of a label is made of what
+record's uuid. A client that shows the log as a list of log contexts — the log panel's top
+level, `mf log contexts` — does not need them, so a summary of a log context is made of what
 the keys of the log say alone.
 
 !! What a summary holds
 
-`GET /repos/:repo/log/contexts` ([[GET /repos/:repo/log/contexts]]) lists labels, newest
+`GET /repos/:repo/log/contexts` ([[GET /repos/:repo/log/contexts]]) lists log contexts, newest
 first — but not a context nothing is in, nor under it: a command that wrote nothing
 (`mf reconcile` on an empty folder) or an answer left empty is no unit of work, and stays
 in the store only until a reindex ([[Log contexts]]); whether one is empty is read off
@@ -21,21 +21,21 @@ its first operation, then its children's, stopping at the first found —, each 
 * its own `operations`, counted off `log_entries_by_context` — one key per entry, which holds its number of targets — and its `first_op` and `last_op`;
 * when it was last written in (`updated`), its `origin` and whether it is the `watcher`'s, read off its first and last operations;
 * how many `children` it has;
-* `reverts` and `reverted_by`: the labels it undid and the labels that undid it, each with `whole` (the label and its children undone, or some of its operations);
+* `reverts` and `reverted_by`: the log contexts it undid and the log contexts that undid it, each with `whole` (the log context and its children undone, or some of its operations);
 * `undone`: `null`, `partly` or `fully`, worked out from those marks alone.
 
-The cost is a few keys per label, whatever the number of operations in it. A log of ten
+The cost is a few keys per log context, whatever the number of operations in it. A log of ten
 thousand operations written as one entry costs what a log of one operation does.
 
 !! The marks
 
-A revert says on its own label which labels it reverts. The revert endpoint says it
-whole when its target was a label (undo, redo) and nothing was left out; whatever it
-reverts is also said label by label, `whole: false`, from the operations it undid. The
-store keeps both directions (`label_reverts`, [[Store tables]]), so a label knows what
-reverts it too, and both go with a label that is pruned.
+A revert says on its own log context which log contexts it reverts. The revert endpoint says it
+whole when its target was a log context (undo, redo) and nothing was left out; whatever it
+reverts is also said log context by log context, `whole: false`, from the operations it undid. The
+store keeps both directions (`label_reverts`, [[Store tables]]), so a log context knows what
+reverts it too, and both go with a log context that is pruned.
 
-A label is `fully` undone when a revert that undid it whole — or the label it is
+A log context is `fully` undone when a revert that undid it whole — or the log context it is
 nested in — still stands, that is when that revert is not itself undone whole (a redo
 stands the first change up again). It is `partly` undone when the reverts that stand
 undid only some of its operations. Overlapping partial reverts can make `partly`
@@ -43,13 +43,13 @@ stand where `fully` would be exact, never the other way round.
 
 !! The units, and going into one
 
-`parent=none` (the default) lists the units of work, the labels nested in none;
-`parent=<id>` the labels nested directly in one. The operations of a label are read by
+`parent=none` (the default) lists the units of work, the log contexts nested in none;
+`parent=<id>` the log contexts nested directly in one. The operations of a log context are read by
 `GET /repos/:repo/log/contexts/:id`, which counts its operations off the keys as well and
 makes up only those of the window asked for (`offset`, `limit`).
 
-Labels are ordered by their id: the order they were opened in, which is the order they
-were written in but for a label that kept receiving writes (a long script's) after
+Log contexts are ordered by their id: the order they were opened in, which is the order they
+were written in but for a log context that kept receiving writes (a long script's) after
 others began.
 
 `mf log contexts` ([[mf log contexts]]) prints them; `tests/kv_label_marks.rs` and

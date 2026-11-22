@@ -90,7 +90,7 @@ pub async fn navigate(
 /// The GUI's move policies. It asks nothing while the lock is held — a window
 /// left open would freeze the repository's writes — so a move applies whether
 /// or not the file is where the log says: when it is not, the metadata follows
-/// the revert and keeps the recorded path (doc "Reverting a label", the CLI's own default when the
+/// the revert and keeps the recorded path (doc "Reverting a log context", the CLI's own default when the
 /// file is there).
 pub const GUI_POLICIES: MovePolicies =
     MovePolicies { on_available: Policy::Apply, on_unavailable: Policy::Apply };

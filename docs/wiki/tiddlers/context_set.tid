@@ -3,7 +3,7 @@ tags: [[GUI command]] [[Event log]]
 kind: reference
 summary: Open a work context on the active repository: every later change is written in it
 
-`context:set <name> [description]` opens a label named `name` — quoted when it has
+`context:set <name> [description]` opens a log context named `name` — quoted when it has
 spaces — described by the rest of the line, on the active repository, and every
 change the GUI makes there afterwards — in any workspace on it — is written inside it,
 until <<cmd "context:unset">>; the slot headers show it beside the repository's name.

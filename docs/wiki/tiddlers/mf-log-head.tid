@@ -3,4 +3,4 @@ tags: [[CLI command]] [[Event log]]
 kind: reference
 summary: Print the id of the newest operation (what mf log prune --id and mf log revert --op take)
 
-The id of the newest operation of the log — what `mf log prune --id` and `mf log revert --op` take; going back to a point is done by label ([[Undo and redo]]). `0` on an empty log.
+The id of the newest operation of the log — what `mf log prune --id` and `mf log revert --op` take; going back to a point is done by log context ([[Undo and redo]]). `0` on an empty log.

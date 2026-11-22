@@ -49,7 +49,7 @@ value gives a macro that asks for a new value and sets it.
 `macro:run` runs the steps in order, each once the one before has finished — what it
 opened shown and loaded ([[When a command has finished]]). It stops at the first step
 that fails, saying which (''macro stopped at step 2 of 3 (…)''), and at a question
-abandoned with `Escape`. Everything the macro writes to the repository is one label
+abandoned with `Escape`. Everything the macro writes to the repository is one log context
 of the log, under which each step's is nested: `log:undo` undoes it all, or offers
 the step ([[Undo and redo by log context]]).
 
