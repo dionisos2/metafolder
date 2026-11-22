@@ -562,9 +562,9 @@ impl KvTxn<'_> {
     }
 
     /// The value keys `field` has a posting of in `chunk`, as the transaction
-    /// sees them — `nothing` left out, which is the field's `absent` set, kept
-    /// at once. A walk of the keys of the field's postings, not of their
-    /// bitmaps.
+    /// sees them — `nothing` left out: its posting is kept exact by the write
+    /// itself, never replayed (doc "Mass writes in the store"). A walk of the
+    /// keys of the field's postings, not of their bitmaps.
     fn values_in_chunk(&self, field: &str, chunk: u16) -> Result<BTreeSet<Vec<u8>>> {
         let posted = [&[POSTINGS][..], &name_key(field)].concat();
         let tail = chunk.to_be_bytes();
@@ -861,5 +861,49 @@ mod tests {
             "the chunks pending after each step"
         );
         assert_eq!(holders(&mut store), before);
+    }
+
+    /// The posting of `nothing` is kept exact by the write itself, never
+    /// replayed nor folded (doc "Mass writes in the store"): a set or an unset
+    /// knows what it does to it — its key is known in advance —, and an add
+    /// over records holding `nothing` is a set (`Writer::add_over_nothing`).
+    #[test]
+    fn the_holders_of_nothing_are_exact_at_the_write_and_through_the_fold() {
+        use crate::store::Rows;
+        let (mut store, _dir) = test_store();
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        let uuids: Vec<Uuid> = (0..6)
+            .map(|_| w.create_metarecord(vec![Field::new("tag", Value::Nothing)]).unwrap().uuid)
+            .collect();
+        w.commit().unwrap();
+        let ids: Vec<u32> =
+            uuids.iter().map(|u| store.dense_ids(&[*u]).unwrap().min().unwrap()).collect();
+        let of = |at: &[usize]| at.iter().map(|&i| ids[i]).collect::<RoaringBitmap>();
+        let nothing = |store: &KvStore| store.value_holder_ids("tag", &Value::Nothing).unwrap();
+
+        // An add over `nothing`: those records leave it at once.
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        w.mass_add("tag", s("x"), &uuids[0..4]).unwrap();
+        w.commit().unwrap();
+        assert_eq!(nothing(&store), of(&[4, 5]), "after the add");
+        // A set to `nothing`, pending for the other values: they join it at once.
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        w.mass_set("tag", vec![Value::Nothing], &uuids[0..2]).unwrap();
+        w.commit().unwrap();
+        assert!(store.pending_events("tag").unwrap() > 0, "the set waits for the fold");
+        assert_eq!(nothing(&store), of(&[0, 1, 4, 5]), "after the set to nothing");
+        // An unset: those records hold nothing at all.
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        w.mass_unset("tag", &uuids[1..3]).unwrap();
+        w.commit().unwrap();
+        assert_eq!(nothing(&store), of(&[0, 4, 5]), "after the unset");
+        check(&store);
+
+        store.fold().unwrap();
+        assert_eq!(store.pending_events("tag").unwrap(), 0);
+        assert_eq!(nothing(&store), of(&[0, 4, 5]), "after the fold");
+        assert_eq!(store.rows(uuids[0]).unwrap().len(), 1);
+        assert!(store.rows(uuids[1]).unwrap().is_empty(), "unset");
+        check(&store);
     }
 }

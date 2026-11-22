@@ -53,20 +53,24 @@ the ids of its chunk. Chunks name disjoint ids, so replaying a field's keys chun
 chunk is replaying them, for each id, in the order they were written:
 
 |!Kind |!Content |!A value's holders become |
-|add |type · value |`∪ B` for the value; `∖ B` for `nothing` |
+|add |type · value |`∪ B` for the value |
 |remove |type · value |`∖ B` for the value |
 |set |type · values (one or more) |`∖ B`, then `∪ B` for the values given |
 |unset |— |`∖ B` |
 
-A set or an unset never names the values it removes. `nothing` is replayed as any
-value — it has a key of its own —, and adding a value takes it away: a field holds
-`nothing` or values, never both ([[Nothing versus unknown]]). The holders of a value
+A set or an unset never names the values it removes. `nothing` is the exception: its
+holders are a posting with a key of its own, known in advance, so the write itself
+keeps it exact — a set or an unset takes B out of it, a set to `nothing` puts B in —
+and it is never replayed nor folded. An add of a value over records holding `nothing`
+is a set on them (`Writer::add_over_nothing`), and an add of `nothing` over records
+holding values one too: a field holds `nothing` or values, never both
+([[Nothing versus unknown]]). The holders of a value
 are what is ''stored'' — its posting in `index_value_holders`, which for a `ref` are its
 referrers ([[Store tables]]) — with the field's pending index writes replayed over it,
 in order.
 
 What cannot wait is kept exact at once, by set operations whatever the number of
-records: the count of values of each record (an increment on a set of ids is a carry
+records: the holders of `nothing`, the count of values of each record (an increment on a set of ids is a carry
 from bit to bit, [[Store tables]]), `live_metarecords`, the long-text sets, the
 trigrams ([[Text search in the store]]: a new text's entries by value, or the ids
 pending by metarecord), and the histograms for a value added or removed.
