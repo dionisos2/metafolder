@@ -5,19 +5,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
-* Smaller costs noted with the part lists read once per transaction
-Found 22 November 2026, left when the part lists were read once per transaction:
-- =write_befores=, called by =freeze_given_back= for each write to a record a
-  pending deletion names, decodes and encodes a chunk of up to 4096 befores. Rare:
-  once written, the record is named by the deletion no more.
-- =read_chunked= (=derived.rs=) keeps nothing, unlike =with_chunk=: each call
-  decodes every stored chunk of the bitmap. Per row, only =has_live_kids= (the
-  parent's referrers, when a position leaves a folder) was found: moving 4096 files
-  out of one folder decodes its referrers 4096 times. Bounded by its number of
-  chunks.
-- =effective= decodes a field's whole list of pending index writes per call; only
-  found once per write to many records, which is acceptable.
-
 * Vocabulary after the store's table review
 The wiki and the code's comments, then its names, still speak the store of before
 the review (November 2026). Done group by group, one commit each: first fix the
@@ -25,28 +12,6 @@ replacement of each term, then the wiki and the comments, then the identifiers.
 Inventory from a diff of =dddf9437= (before the review) against =main=; the old
 names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 (=kvstore/mod.rs=) stay: they are the conversion's.
-
-** "label" → "log context" (first)
-- Wiki: about 400 mentions in 105 notes, many of them UI labels, not the log's.
-  Most hit: =log-endpoints=, =log-panel=, =log-context-summaries= (its summary
-  too), =reading-the-log=, =undo-and-redo=, =the-operation-log=,
-  =revert-endpoints=, =undo-and-redo-by-log-context=, =the-undo-selection=,
-  =operations-and-their-origin=, =event-log=. The note "Reverting a label" to
-  rename.
-- The CLI's help (the generated =mf-log*= notes say "label"): code, not wiki.
-- Code, the log's names: =LabelMeta=, =Log::labels=, =create_label=, =new_label=,
-  =label_ops=, =label_children=, =label_first_op=, =label_last_op=,
-  =label_op_count=, =label_op_ids=, =label_reverts=, =label_reverted_by=,
-  =note_label_reverts=, =version_before_label=, =entity_version_before_label=,
-  =undo_label=, =redo_label=, =revert_label=, =watcher_label=,
-  =set_watcher_label=, =drop_label=, =walk_labels=, =label_summaries=,
-  =label_marks=, =check_client_label=, =LabelsArgs=, =NewLabel=…
-- Files: =cli/src/label.rs=, =daemon/tests/labels_http.rs=,
-  =label_summaries_http.rs=, =kv_label_marks.rs=, =gui/tests/command_label.rs=;
-  in the GUI =panel-types/log/{main,tree}.js=, =work_context.rs=.
-- No exception: the GUI's remembered work context (=.metafolder/gui/context=,
-  ={"label", …}=) is renamed too, its conversion done *before* the rest (doc
-  "Persisted format changes").
 
 ** Operation and entry: two words, two things
 A *log entry* is a key of the log (=log_entries=): an individual operation, or a
