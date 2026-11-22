@@ -1147,7 +1147,11 @@ impl KvTxn<'_> {
     /// "Store tables").
     pub(super) fn reserved(&self, id: u32) -> Result<bool> {
         let txn = self.txn.borrow();
-        Ok(!self.live_in(&txn, id)? && self.t.metarecords.get(&txn, &id.to_be_bytes())?.is_none())
+        if self.live_in(&txn, id)? {
+            return Ok(false);
+        }
+        drop(txn);
+        Ok(self.stored_record(id)?.is_none())
     }
 
     /// A metarecord was created: it gets a dense id, in the universe, and
@@ -1166,10 +1170,8 @@ impl KvTxn<'_> {
         };
         self.chunk_member(LIVE, &[], id, true)?;
         // Every metarecord has a record, an empty one included.
-        let k = id.to_be_bytes();
-        if self.t.metarecords.get(&self.txn.borrow(), &k)?.is_none() {
-            let empty = super::mass::Record::plain(Vec::new()).encode();
-            self.t.metarecords.put(&mut self.txn.borrow_mut(), &k, &empty)?;
+        if self.stored_record(id)?.is_none() {
+            self.put_stored(id, super::mass::Record::plain(Vec::new()))?;
         }
         for field in self.parent_fields(id)? {
             if self.has_live_kids(id, &field, None)? {
@@ -1264,23 +1266,16 @@ impl KvTxn<'_> {
     /// record says so, or they would apply to the rows again on reading.
     pub(super) fn put_given_back(&self, id: u32, rows: &[crate::rows::FieldRow]) -> Result<()> {
         let entries = if self.mass_pending() { self.load_record(id)?.entries } else { Vec::new() };
-        let mut w = self.txn.borrow_mut();
         if entries.is_empty() {
-            {
-                let record = super::mass::Record::plain(rows.to_vec());
-                self.t.metarecords.put(&mut w, &id.to_be_bytes(), &record.encode())?;
-            }
-            return Ok(());
+            return self.put_stored(id, super::mass::Record::plain(rows.to_vec()));
         }
-        drop(w);
         let n = self.next(super::State::NextWriteNumber)? as u64;
         let fields: BTreeSet<&str> = entries.iter().map(|e| e.field.as_str()).collect();
         let mut record = super::mass::Record::plain(rows.to_vec());
         for field in fields {
             record.fix_field(field, n);
         }
-        self.t.metarecords.put(&mut self.txn.borrow_mut(), &id.to_be_bytes(), &record.encode())?;
-        Ok(())
+        self.put_stored(id, record)
     }
 
     /// The histogram forgets a row of a metarecord that was deleted: what the
@@ -1836,6 +1831,8 @@ impl KvTxn<'_> {
     /// Removes from the primary tables what the deleted metarecords left
     /// there (doc "Deleting a metarecord in the store"): their records.
     pub(super) fn drop_left_behind(&self) -> Result<()> {
+        // The table is walked and changed under its own keys.
+        self.flush_and_forget_records()?;
         let t = self.t;
         let mut gone: Vec<(super::Db, Vec<u8>)> = Vec::new();
         {
@@ -1883,6 +1880,9 @@ impl KvTxn<'_> {
         to: impl Fn(&Tables, &RoTxn<'_>, &[u8]) -> Result<Vec<u8>>,
     ) -> Result<()> {
         const BATCH: usize = 10_000;
+        // The records move to other keys: what the transaction decoded is
+        // written first, and named by its former key no more.
+        self.flush_and_forget_records()?;
         let t = self.t;
         let mut after: Option<Vec<u8>> = None;
         loop {

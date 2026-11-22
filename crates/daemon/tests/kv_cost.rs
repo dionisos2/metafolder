@@ -12,6 +12,7 @@ use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
+use metafolder_daemon::store::Rows;
 use uuid::Uuid;
 
 mod common;
@@ -741,4 +742,33 @@ fn of_two_scans_the_narrower_goes_first() {
         "{text_first} keys, against {alone_range} for the range, {probed} to probe its \
          records, {alone_text} for the pattern alone"
     );
+}
+
+/// Within one write transaction nothing else writes: a record is decoded the
+/// first time the transaction needs it, every operation works on that form,
+/// and it is encoded once, at the commit (doc "Writes and atomicity"). Before
+/// that, each `set_field` decoded the whole record three times and encoded it
+/// twice, and a transaction of N writes to a record of K rows cost N × K.
+#[test]
+fn a_record_is_decoded_and_encoded_once_per_write_transaction() {
+    let dir = TempDir::new("kv-cost");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let fields = (0..50).map(|j| Field::new(format!("f{j:02}"), Value::Int(j))).collect();
+    let uuid = w.create_metarecord(fields).unwrap().uuid;
+    w.commit().unwrap();
+
+    let (decoded, encoded) = kv.record_codings();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    for i in 0..100 {
+        w.set_field(uuid, "count", Value::Int(i)).unwrap();
+    }
+    w.commit().unwrap();
+    let (d, e) = kv.record_codings();
+    assert_eq!((d - decoded, e - encoded), (1, 1), "decodes and encodes of the record");
+
+    let record = kv.metarecord(uuid).unwrap().expect("the record");
+    let count: Vec<_> = record.fields.iter().filter(|f| f.name == "count").collect();
+    assert_eq!(count.len(), 1);
+    assert_eq!(count[0].value, Value::Int(99));
 }

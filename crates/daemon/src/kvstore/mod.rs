@@ -249,6 +249,10 @@ pub struct KvStore {
     /// Keys read so far by the store's reads and its query sources — what
     /// the cost assertions count (`tests/kv_cost.rs`).
     reads: std::sync::atomic::AtomicU64,
+    /// Records decoded and encoded so far by write transactions: a record is
+    /// decoded once and encoded once per transaction that changes it
+    /// ([`KvStore::record_codings`]).
+    record_codings: [std::sync::atomic::AtomicU64; 2],
     /// Whether any part has entries pending (doc "Mass writes in the store"):
     /// when none does, no read looks for them.
     mass: std::sync::atomic::AtomicBool,
@@ -518,12 +522,6 @@ fn get_value(r: &mut In) -> Result<Value> {
     Ok(v)
 }
 
-/// A record of rows no pending write names, the value of its key in
-/// `records` ([`mass::Record`]).
-fn enc_rows(rows: &[FieldRow]) -> Vec<u8> {
-    mass::Record::plain(rows.to_vec()).encode()
-}
-
 /// How many targets an entry of `log_entries_by_context` says it has.
 fn targets_of(v: &[u8]) -> Result<i64> {
     let mut r = codec::Dec(v);
@@ -654,6 +652,7 @@ impl KvStore {
             _lock: lock,
             dir: dir.to_path_buf(),
             reads: Default::default(),
+            record_codings: Default::default(),
             mass: Default::default(),
             deletes: Default::default(),
             written: std::sync::Mutex::new([0; table::TABLES]),
@@ -750,6 +749,14 @@ struct Read<'a> {
     /// The ids holding a value of a field as a write transaction sees them;
     /// `None` for a read of the committed store ([`Read::value_holder_ids`]).
     values: Option<&'a ValueHoldersOf<'a>>,
+    /// The rows of a record, the entries of its part applied, as a write
+    /// transaction has it (its own changes included); `None` for a read of
+    /// the committed store, which reads the record itself
+    /// ([`Read::record_raw`]).
+    record: Option<&'a dyn Fn(u32) -> Result<Vec<FieldRow>>>,
+    /// The ids of the records a write transaction wrote and has not put in
+    /// the table yet; `None` for a read of the committed store.
+    unwritten: Option<&'a dyn Fn() -> roaring::RoaringBitmap>,
     /// Whether any part has entries pending, which a record is read with
     /// applied ([`mass`]).
     mass: bool,
@@ -825,9 +832,22 @@ impl Read<'_> {
         self.record_raw(id)
     }
 
+    /// Every dense id that has a record or is named by an entry, those of the
+    /// records a write transaction has not put in the table yet included.
+    fn record_ids(&self) -> Result<roaring::RoaringBitmap> {
+        let mut ids = mass::record_ids(self.t, self.r, self.mass)?;
+        if let Some(unwritten) = self.unwritten {
+            ids |= unwritten();
+        }
+        Ok(ids)
+    }
+
     /// The rows of the record of dense id `id` whether or not it still exists:
     /// what a deletion's operation says its record held.
     pub(super) fn record_raw(&self, id: u32) -> Result<Vec<FieldRow>> {
+        if let Some(record) = self.record {
+            return record(id);
+        }
         mass::read_record(self.t, self.r, id, self.mass, &mut |n| self.count(n))
     }
 
@@ -1191,7 +1211,7 @@ macro_rules! kv_reads {
             fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    for id in mass::record_ids($read.t, $read.r, $read.mass)? {
+                    for id in $read.record_ids()? {
                         // An id only an entry names may be a metarecord's that
                         // is gone.
                         if !$read.live(id)? {
@@ -1530,6 +1550,8 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         live: None,
         holders: None,
         values: None,
+        record: None,
+        unwritten: None,
         mass: me.mass_pending(),
         universe: Default::default(),
         entries: Some((&me.entry_cache, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
@@ -1597,6 +1619,12 @@ impl KvStore {
         self.reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// How many records write transactions decoded and encoded so far.
+    pub fn record_codings(&self) -> (u64, u64) {
+        let [d, e] = &self.record_codings;
+        (d.load(std::sync::atomic::Ordering::Relaxed), e.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     /// The keys the last committed write wrote, by table name (the tables it
     /// wrote nothing to left out). A write is held to the *tables* it may
     /// touch: on a hard disk each scattered key is a seek, whatever its size
@@ -1623,6 +1651,8 @@ impl KvTxn<'_> {
         let live = |id: u32| self.live_in(txn, id);
         let holders = |field: &str| self.holder_ids_now(field);
         let values = |field: &str, value: &Value| self.value_holders_now(field, value);
+        let record = |id: u32| Ok(self.load_record(id)?.rows);
+        let unwritten = || self.records_dirty.borrow().iter().copied().collect();
         f(&Read {
             t: &self.t,
             r: txn,
@@ -1630,6 +1660,8 @@ impl KvTxn<'_> {
             live: Some(&live),
             holders: Some(&holders),
             values: Some(&values),
+            record: Some(&record),
+            unwritten: Some(&unwritten),
             mass: self.mass_pending(),
             universe: Default::default(),
             entries: None,
@@ -1657,6 +1689,14 @@ pub struct KvTxn<'e> {
     /// The store's read counter: a write's reads count as much as a query's
     /// (`tests/log_cost.rs` holds the trim to it).
     reads: &'e std::sync::atomic::AtomicU64,
+    /// The store's counters of records decoded and encoded.
+    record_codings: &'e [std::sync::atomic::AtomicU64; 2],
+    /// The stored records the transaction read or wrote, decoded (`None`: no
+    /// record), and those it changed, encoded and put at commit: within one
+    /// write transaction nothing else writes, so there is nothing to
+    /// invalidate (doc "Writes and atomicity").
+    records: RefCell<HashMap<u32, Option<mass::Record>>>,
+    records_dirty: RefCell<std::collections::BTreeSet<u32>>,
     /// Where the store keeps what its last write wrote.
     written: &'e std::sync::Mutex<[u64; table::TABLES]>,
     /// The store's count of committed writes, which this one adds to.
@@ -2055,6 +2095,8 @@ impl KvStore {
         if let Some(n) = old(b"derived") {
             txn.meta_put(State::DerivedVersion, n)?;
         }
+        // The table of records is walked raw below.
+        txn.flush_and_forget_records()?;
         {
             let mut w = txn.txn.borrow_mut();
             let t = txn.t;
@@ -2308,6 +2350,9 @@ impl<'e> KvTxn<'e> {
             cached_chunks: RefCell::new(HashMap::new()),
             chunks_existing: RefCell::new(Default::default()),
             reads: &store.reads,
+            record_codings: &store.record_codings,
+            records: RefCell::new(HashMap::new()),
+            records_dirty: RefCell::new(Default::default()),
             mass_lists: TxnFlag::of(&store.mass),
             deletes: TxnFlag::of(&store.deletes),
             written: &store.written,
@@ -2327,6 +2372,7 @@ impl<'e> KvTxn<'e> {
 
     /// Writes what the transaction still holds in memory, and commits.
     fn finish(self) -> Result<()> {
+        metafolder_core::slowlog::timed("commit.records", || self.flush_records())?;
         metafolder_core::slowlog::timed("commit.derived", || self.flush_sets())?;
         let wtxn = self.txn.into_inner();
         let written = wtxn.written();
@@ -2397,9 +2443,7 @@ impl KvTxn<'_> {
     /// Writes a record's rows under its key — none included: every
     /// metarecord has a record (doc "Store tables").
     fn put_record(&self, id: u32, rows: &[FieldRow]) -> Result<()> {
-        let mut w = self.txn.borrow_mut();
-        self.t.metarecords.put(&mut w, &id.to_be_bytes(), &enc_rows(rows))?;
-        Ok(())
+        self.put_stored(id, mass::Record::plain(rows.to_vec()))
     }
 
     /// What a row's going away changes outside its record: its forest
@@ -2464,6 +2508,8 @@ impl KvTxn<'_> {
                     live: None,
                     holders: None,
                     values: None,
+                    record: None,
+                    unwritten: None,
                     mass: false,
                     universe: Default::default(),
                     entries: None,
@@ -2805,6 +2851,8 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn clear_metarecords(&self) -> Result<()> {
+        self.records.borrow_mut().clear();
+        self.records_dirty.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
         for db in [t.metarecords, t.live_metarecords, t.ids, t.field_types, t.index_raw_holder] {

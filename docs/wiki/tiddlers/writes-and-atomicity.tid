@@ -21,6 +21,24 @@ Bulk writers (reconcile, a large watcher flush) accumulate their index updates i
 memory, a chunk at a time, and write each chunk once. There is one writer at a time:
 the executor and the API already serialise writes.
 
+!! A record decoded once, written once
+
+Within one write transaction nothing else writes, so what the transaction holds in
+memory is no cache: there is nothing to invalidate. A record ([[Store tables]]) is
+read and decoded the first time the transaction needs it (`KvTxn::stored_record`);
+every operation of the transaction — and every read it makes, through `Read`'s
+`record` hook — works on that decoded form; each record changed is encoded and put
+once, at the commit (`flush_records`, `commit.records` in the slow log). Before,
+each operation read, decoded, re-encoded and wrote the whole record on its own: a
+`set_field` decoded it three times and encoded it twice, and N writes to a record of
+K rows cost N × K (`tests/kv_cost.rs` counts both, `KvStore::record_codings`).
+
+A walk of the table itself — the drop of what deleted metarecords left, the
+re-filing of a renumbering, a layout conversion — writes out the decoded records
+first and forgets them. No bound is set on what a transaction holds: a watcher batch
+is at most 4096 events, a reconcile goes in batches, and a write to many records
+reads no record ([[Mass writes in the store]]).
+
 !! The map, and how large a write can be
 
 LMDB reserves the whole ''map'' — the address range the file is mapped into — when

@@ -5,61 +5,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
-* A record decoded once per write transaction
-Found 21 November 2026 (=test_large_revision_chain_across_bulk_chunks=, 5000
-=set_field= on one record in one =Writer=: 340 s, then 54 s once =put_rows= found
-its groups through a map, =7799b325=). Agreed with the user: within one write
-transaction nothing else writes, so this is no cache — there is nothing to
-invalidate. A record is read from LMDB and decoded the first time the transaction
-needs it, every operation of the transaction works on that decoded form, and each
-record changed is encoded and written once, at the end. The processing functions
-take the decoded record, they do not read it themselves.
-
-What it costs today: every store operation reads, decodes, re-encodes and writes
-the whole record on its own. One =set_field= (=log.rs=, =set_field_as=) is
-=rows_named= (a decode) + =delete_rows= (decode, encode, put) + =insert_row=
-(decode, encode, put): three decodes and two encodes of the whole record per
-operation, so a transaction of N operations on a record of K rows costs N × K.
-Measured with timers in =set_field_as=: =insert_row= ≈ 85 %, of which =save_record=
-(the encode) ≈ 90 %; the LMDB =put= itself costs nothing.
-
-- Test first: a counter of record decodes and encodes (the way =KvStore::reads()=
-  counts keys, doc "Performance testing"), and a test that N writes to one record
-  in one transaction decode and encode it once each — it fails today (3N and 2N).
-  Never a duration (doc "Tests that fail under load").
-- The decoded records of the transaction live in =KvTxn= (=kvstore/mass.rs=:
-  =load_record=, =save_record=, =Loaded=; =kvstore/mod.rs=: =insert_row=,
-  =delete_row=, =delete_rows=, =put_record=, =create_metarecord=). Encoded and put
-  at commit, and before anything that reads the =metarecords= table without going
-  through them.
-- Every read of a record inside a write transaction must see the decoded form
-  being changed, or it reads the state before the transaction. The direct reads
-  of the table to route (or to precede with a write-out): =mass.rs= =read_record=
-  (336), =Source::rows= (382), =load_record= (464), =fold_part= (617);
-  =derived.rs= 1150, 1170 (whether a record exists); =mod.rs= 2170; and the
-  =load_record= callers: =events.rs= 598, =massops.rs= 485 and 671, =mod.rs=
-  2590, =derived.rs= 1205, 1233, 1266 (=restore_deleted= and the pending
-  deletion). =Rows::rows= / =record= / =record_raw= (=mod.rs= 819–840) read through
-  =mass::read_record= too.
-- A record carries more than its rows when a pending write names it: its fixed
-  fields and values with their write numbers (=Record=, =fix_field=,
-  =fix_value=, =write_number=). The decoded form keeps them, and they are
-  computed as today.
-- A bound on what one transaction holds: a watcher batch is at most 4096 events
-  (=MAX_INGEST_BATCH=), a reconcile goes in batches, a write to more records than
-  the mass-write threshold reads no record (doc "Mass writes in the store"). If a
-  bound is still wanted, write out early past a number of records, as the log does
-  past =FLUSH_THRESHOLD= operations.
-- Cost tests (=kv_cost=, =log_cost=, =api_cost=) count keys: a record read
-  from the transaction's decoded form is one key less, so some expectations go
-  down — check each one goes down for this reason.
-- Undo reads the before from the log and must not change: run
-  =undo_redo_properties=, the =storage= suite and =scripts/dev/check.sh=.
-- Write it down in doc "Writes and atomicity" (or "Store tables", § The
-  record): a record is decoded once and written once per transaction.
-- Afterwards, =test_large_revision_chain_across_bulk_chunks= should take a
-  fraction of its 54 s (debug).
-
 * Folding a field's pending index writes chunk by chunk
 Agreed with the user, 22 November 2026. Today a fold step takes *all* the pending
 index writes of one field, every chunk, in one transaction (=fold_events=,

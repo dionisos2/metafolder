@@ -458,13 +458,57 @@ impl KvTxn<'_> {
         read_part(&self.t, &self.txn.borrow(), part)
     }
 
+    /// The stored record of dense id `id`, decoded, as the transaction has
+    /// it: read and decoded the first time, then the form its writes change.
+    pub(super) fn stored_record(&self, id: u32) -> Result<Option<Record>> {
+        if let Some(record) = self.records.borrow().get(&id) {
+            return Ok(record.clone());
+        }
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let record = match self.t.metarecords.get(&self.txn.borrow(), &id.to_be_bytes())? {
+            Some(v) => {
+                self.record_codings[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Some(Record::decode(v)?)
+            }
+            None => None,
+        };
+        self.records.borrow_mut().insert(id, record.clone());
+        Ok(record)
+    }
+
+    /// Writes the stored record of dense id `id`: into the transaction's
+    /// decoded form, encoded and put once, by [`Self::flush_records`].
+    pub(super) fn put_stored(&self, id: u32, record: Record) -> Result<()> {
+        self.records.borrow_mut().insert(id, Some(record));
+        self.records_dirty.borrow_mut().insert(id);
+        Ok(())
+    }
+
+    /// Encodes and puts the records the transaction changed: at its commit,
+    /// and before anything that walks the table of records itself.
+    pub(super) fn flush_records(&self) -> Result<()> {
+        let dirty = std::mem::take(&mut *self.records_dirty.borrow_mut());
+        let records = self.records.borrow();
+        let mut w = self.txn.borrow_mut();
+        for id in dirty {
+            let Some(Some(record)) = records.get(&id) else { continue };
+            self.record_codings[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.t.metarecords.put(&mut w, &id.to_be_bytes(), &record.encode())?;
+        }
+        Ok(())
+    }
+
+    /// [`Self::flush_records`], and the decoded records forgotten: before a
+    /// walk that changes the table of records under its own keys.
+    pub(super) fn flush_and_forget_records(&self) -> Result<()> {
+        self.flush_records()?;
+        self.records.borrow_mut().clear();
+        Ok(())
+    }
+
     /// The record of dense id `id`, with the entries naming it applied.
     pub(super) fn load_record(&self, id: u32) -> Result<Loaded> {
-        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let raw = match self.t.metarecords.get(&self.txn.borrow(), &id.to_be_bytes())? {
-            Some(v) => Record::decode(v)?,
-            None => Record::default(),
-        };
+        let raw = self.stored_record(id)?.unwrap_or_default();
         let entries: Vec<Listed> = if self.mass_pending() {
             let part = self.part_entries(part_of(id))?;
             part.into_iter().filter(|e| e.ids.contains(id)).collect()
@@ -514,9 +558,7 @@ impl KvTxn<'_> {
             }
             record
         };
-        let mut w = self.txn.borrow_mut();
-        self.t.metarecords.put(&mut w, &loaded.id.to_be_bytes(), &record.encode())?;
-        Ok(())
+        self.put_stored(loaded.id, record)
     }
 
     /// Appends the entries of a write to many records: one per part its ids
@@ -614,10 +656,7 @@ impl KvTxn<'_> {
             ids |= &e.ids;
         }
         for id in ids {
-            let raw = match self.t.metarecords.get(&self.txn.borrow(), &id.to_be_bytes())? {
-                Some(v) => Record::decode(v)?,
-                None => Record::default(),
-            };
+            let raw = self.stored_record(id)?.unwrap_or_default();
             let named: Vec<&Listed> =
                 rewriting.iter().copied().filter(|e| e.ids.contains(id)).collect();
             self.put_record(id, &effective(&raw, &named))?;
