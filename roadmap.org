@@ -5,36 +5,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
-* The last log entry's chunk extended in place
-Found 22 November 2026 (a probe: N =set_field= of one value on N records, one
-=Writer=). Operations that differ only by their target are added to the last
-entry of the log (doc "Log storage"): the common case of a watcher batch, a
-reconcile, a script. For each one, =extend_last= (=kvstore/entry.rs=) reads and
-decodes the entry's current chunk — its targets and each one's before, up to
-=CHUNK= = 4096 —, pushes one target, and encodes the whole chunk again: quadratic
-within a chunk. Measured: 2048 operations 1.4 s of which =extend_last= 1.2 s, 4096
-5.2 s / 4.9 s, 16 384 17.3 s / 16.1 s — over 90 % of the write; the time per
-operation grows up to 4096 then stays at about 1 ms. A watcher batch (at most
-4096 events, =MAX_INGEST_BATCH=) pays the worst of it, and larger befores make it
-worse.
-
-The same principle as the record: within one write transaction nothing else
-writes. The last entry's header and its current chunk are decoded once, the
-operations of the transaction push to that form, and the chunk and the header are
-encoded and put once, at the commit or when the entry moves to its next chunk
-(=LastTargets= already keeps its targets across writes; the chunk joins it, or a
-field of =KvTxn= beside =records=).
-
-- Test first: a counter of log chunks decoded and encoded, and a test that N
-  operations extending one entry decode and encode each chunk once — it fails
-  today (N each). Never a duration.
-- Every read of the log inside the transaction (=read_log=, =entry_at=, =chunk=,
-  =chunk_of=, the undo's reads of the before) must see the chunk being extended,
-  or be preceded by a write-out of it.
-- =tests/log_cost.rs= counts keys: check each expectation that goes down goes
-  down for this reason.
-- Write it down in doc "Log storage".
-
 * A part's pending writes read once per write transaction
 Read in the code, not measured (22 November 2026). While a write to many records is
 pending, every =load_record= (=kvstore/mass.rs=) reads and decodes the whole list

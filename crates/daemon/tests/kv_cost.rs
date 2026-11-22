@@ -12,7 +12,7 @@ use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::store::Rows;
+use metafolder_daemon::store::{Log, Rows};
 use uuid::Uuid;
 
 mod common;
@@ -799,4 +799,39 @@ fn a_write_to_a_field_copies_the_field_not_the_record() {
     let (small, large) = (copies(50), copies(5000));
     assert_eq!(small, large, "rows copied by 100 set_field, for 50 and 5000 fields");
     assert!(small <= 100 * 10, "{small} rows copied by 100 set_field of one row");
+}
+
+/// Operations that differ only by their target extend the last entry of the
+/// log (doc "Log storage"): within one write transaction its chunk is held
+/// decoded, each operation pushes to it, and it is encoded once — at the
+/// commit, or when the entry moves to its next chunk. Before, each operation
+/// decoded and encoded the whole chunk, up to 4096 targets and their before.
+#[test]
+fn the_chunk_an_entry_is_extended_in_is_coded_once_per_write_transaction() {
+    let dir = TempDir::new("kv-cost");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    let n = 5000;
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let uuids: Vec<Uuid> = (0..n)
+        .map(|i| w.create_metarecord(vec![Field::new("n", Value::Int(i))]).unwrap().uuid)
+        .collect();
+    w.commit().unwrap();
+
+    let (decoded, encoded) = kv.log_chunk_codings();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    for &u in &uuids {
+        w.set_field(u, "tag", Value::Int(1)).unwrap();
+    }
+    w.commit().unwrap();
+    let (d, e) = kv.log_chunk_codings();
+    // One entry of two chunks, 4096 and 904 targets.
+    assert_eq!((d - decoded, e - encoded), (0, 2), "log chunks decoded and encoded");
+
+    // The log reads every operation back, and its before.
+    let ops = Log::ops_back(&kv, i64::MAX, Some(n as usize)).unwrap();
+    let targets: Vec<Uuid> = ops.iter().rev().map(|op| op.entity_uuid).collect();
+    assert_eq!(targets, uuids);
+    for op in [&ops[0], &ops[904], &ops[n as usize - 1]] {
+        assert!(Log::snapshots(&kv, op.id).unwrap().is_empty(), "no tag before");
+    }
 }

@@ -256,6 +256,10 @@ pub struct KvStore {
     /// ([`KvStore::record_codings`]); and the rows copied out of the records
     /// a write transaction holds ([`KvStore::rows_copied`]).
     record_codings: [std::sync::atomic::AtomicU64; 3],
+    /// Chunks of the log decoded and encoded so far by write transactions:
+    /// the chunk an entry is extended in, once each per transaction
+    /// ([`KvStore::log_chunk_codings`]).
+    log_chunk_codings: [std::sync::atomic::AtomicU64; 2],
     /// Whether any part has entries pending (doc "Mass writes in the store"):
     /// when none does, no read looks for them.
     mass: std::sync::atomic::AtomicBool,
@@ -656,6 +660,7 @@ impl KvStore {
             dir: dir.to_path_buf(),
             reads: Default::default(),
             record_codings: Default::default(),
+            log_chunk_codings: Default::default(),
             mass: Default::default(),
             deletes: Default::default(),
             written: std::sync::Mutex::new([0; table::TABLES]),
@@ -762,6 +767,9 @@ struct Read<'a> {
     /// store, which decodes the record whole (its encoding gives no field
     /// alone, doc "Writes and atomicity").
     field: Option<&'a FieldOf<'a>>,
+    /// The chunk of the log a write transaction holds decoded, by entry and
+    /// number; `None` for a read of the committed store.
+    log_chunk: Option<&'a dyn Fn(i64, u64) -> Option<entry::Chunk>>,
     /// The ids of the records a write transaction wrote and has not put in
     /// the table yet; `None` for a read of the committed store.
     unwritten: Option<&'a dyn Fn() -> roaring::RoaringBitmap>,
@@ -1568,6 +1576,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         values: None,
         record: None,
         field: None,
+        log_chunk: None,
         unwritten: None,
         mass: me.mass_pending(),
         universe: Default::default(),
@@ -1642,6 +1651,12 @@ impl KvStore {
         (d.load(std::sync::atomic::Ordering::Relaxed), e.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// How many chunks of the log write transactions decoded and encoded.
+    pub fn log_chunk_codings(&self) -> (u64, u64) {
+        let [d, e] = &self.log_chunk_codings;
+        (d.load(std::sync::atomic::Ordering::Relaxed), e.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     /// How many rows write transactions copied out of the records they hold
     /// so far: a write to a field copies that field, not the record.
     pub fn rows_copied(&self) -> u64 {
@@ -1680,6 +1695,7 @@ impl KvTxn<'_> {
             let values = self.field_values(&loaded, name)?;
             Ok(values.into_iter().map(|value| FieldRow { name: name.to_string(), value }).collect())
         };
+        let log_chunk = |first: i64, n: u64| self.held_chunk(first, n);
         let unwritten = || self.records_dirty.borrow().iter().copied().collect();
         f(&Read {
             t: &self.t,
@@ -1690,6 +1706,7 @@ impl KvTxn<'_> {
             values: Some(&values),
             record: Some(&record),
             field: Some(&field),
+            log_chunk: Some(&log_chunk),
             unwritten: Some(&unwritten),
             mass: self.mass_pending(),
             universe: Default::default(),
@@ -1721,6 +1738,8 @@ pub struct KvTxn<'e> {
     /// The store's counters of records decoded and encoded, and of rows
     /// copied out of the transaction's records.
     record_codings: &'e [std::sync::atomic::AtomicU64; 3],
+    /// The store's counters of log chunks decoded and encoded.
+    log_chunk_codings: &'e [std::sync::atomic::AtomicU64; 2],
     /// The stored records the transaction read or wrote, decoded (`None`: no
     /// record), and those it changed, encoded and put at commit: within one
     /// write transaction nothing else writes, so there is nothing to
@@ -1748,6 +1767,9 @@ pub struct KvTxn<'e> {
     /// The targets of the last entry of the log as this transaction extends
     /// it, and where the store keeps them once it commits.
     last_targets: RefCell<Option<entry::LastTargets>>,
+    /// The chunk of the log the transaction extends an entry in, decoded:
+    /// encoded and put once, at the commit or when the entry moves on.
+    log_chunk: RefCell<Option<entry::HeldChunk>>,
     last_targets_kept: &'e std::sync::Mutex<Option<entry::LastTargets>>,
 }
 
@@ -2381,6 +2403,7 @@ impl<'e> KvTxn<'e> {
             chunks_existing: RefCell::new(Default::default()),
             reads: &store.reads,
             record_codings: &store.record_codings,
+            log_chunk_codings: &store.log_chunk_codings,
             records: RefCell::new(HashMap::new()),
             records_dirty: RefCell::new(Default::default()),
             mass_lists: TxnFlag::of(&store.mass),
@@ -2392,6 +2415,7 @@ impl<'e> KvTxn<'e> {
             grams_changed: RefCell::new(Default::default()),
             events: RefCell::new(HashMap::new()),
             last_targets: RefCell::new(None),
+            log_chunk: RefCell::new(None),
             last_targets_kept: &store.last_targets,
         })
     }
@@ -2402,6 +2426,7 @@ impl<'e> KvTxn<'e> {
 
     /// Writes what the transaction still holds in memory, and commits.
     fn finish(self) -> Result<()> {
+        self.flush_log_chunk()?;
         metafolder_core::slowlog::timed("commit.records", || self.flush_records())?;
         metafolder_core::slowlog::timed("commit.derived", || self.flush_sets())?;
         let wtxn = self.txn.into_inner();
@@ -2540,6 +2565,7 @@ impl KvTxn<'_> {
                     values: None,
                     record: None,
                     field: None,
+                    log_chunk: None,
                     unwritten: None,
                     mass: false,
                     universe: Default::default(),

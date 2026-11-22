@@ -489,8 +489,12 @@ impl Read<'_> {
         Ok(found)
     }
 
-    /// Chunk `n` of the entry `first`.
+    /// Chunk `n` of the entry `first`: the one a write transaction holds, if
+    /// it is that one.
     pub(super) fn chunk(&self, first: i64, n: u64) -> Result<Chunk> {
+        if let Some(chunk) = self.log_chunk.and_then(|held| held(first, n)) {
+            return Ok(chunk);
+        }
         self.count(1)?;
         let v = self
             .t
@@ -724,6 +728,14 @@ pub(super) struct EntryCache {
     entries: std::collections::BTreeMap<i64, Header>,
 }
 
+/// The chunk of the log a write transaction extends an entry in, decoded
+/// (doc "Log storage"): chunk `n` of the entry `first`.
+pub(super) struct HeldChunk {
+    first: i64,
+    n: u64,
+    chunk: Chunk,
+}
+
 /// The targets of the last entry of the log, while writes extend it: kept by
 /// the store between them, so that an extension reads no chunk to know it
 /// does not name its target already.
@@ -734,6 +746,28 @@ pub(super) struct LastTargets {
 }
 
 impl KvTxn<'_> {
+    /// Counts a chunk of the log decoded (`0`) or encoded (`1`).
+    fn chunk_coded(&self, which: usize) {
+        self.log_chunk_codings[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// A copy of the chunk the transaction holds, if it is chunk `n` of the
+    /// entry `first`.
+    pub(super) fn held_chunk(&self, first: i64, n: u64) -> Option<Chunk> {
+        let held = self.log_chunk.borrow();
+        held.as_ref().filter(|h| h.first == first && h.n == n).map(|h| h.chunk.clone())
+    }
+
+    /// Encodes and puts the chunk the transaction holds, and lets it go: at
+    /// the commit, and before what writes the chunks of the log otherwise.
+    pub(super) fn flush_log_chunk(&self) -> Result<()> {
+        let Some(held) = self.log_chunk.borrow_mut().take() else { return Ok(()) };
+        self.chunk_coded(1);
+        let key = chunk_key(held.first, held.n);
+        self.t.log_targets.put(&mut self.txn.borrow_mut(), &key, &held.chunk.encode())?;
+        Ok(())
+    }
+
     /// Reads through the transaction.
     pub(super) fn read_log<T>(&self, f: impl FnOnce(&Read) -> Result<T>) -> Result<T> {
         let txn = self.txn.borrow();
@@ -744,6 +778,8 @@ impl KvTxn<'_> {
     /// Appends an entry of `chunks` (doc "Log storage"). Its first operation
     /// id.
     pub(super) fn put_entry(&self, h: &Header, chunks: &[Chunk]) -> Result<i64> {
+        // The entry is the log's last now: its last chunk is the one held.
+        self.flush_log_chunk()?;
         let first = {
             let mut w = self.txn.borrow_mut();
             let t = self.t;
@@ -751,8 +787,13 @@ impl KvTxn<'_> {
             debug_assert_eq!(chunks.iter().map(|c| c.targets.len() as u64).sum::<u64>(), h.targets);
             let at = super::be(first);
             t.log_entries.put(&mut w, &at, &h.encode()?)?;
-            for (n, chunk) in chunks.iter().enumerate() {
-                t.log_targets.put(&mut w, &chunk_key(first, n as u64), &chunk.encode())?;
+            if let Some((last, before)) = chunks.split_last() {
+                for (n, chunk) in before.iter().enumerate() {
+                    self.chunk_coded(1);
+                    t.log_targets.put(&mut w, &chunk_key(first, n as u64), &chunk.encode())?;
+                }
+                *self.log_chunk.borrow_mut() =
+                    Some(HeldChunk { first, n: before.len() as u64, chunk: last.clone() });
             }
             let mut count = Enc::default();
             count.varint(h.targets);
@@ -860,13 +901,25 @@ impl KvTxn<'_> {
         drop(last);
         let at = super::be(entry.first);
         let (n, rank) = (entry.h.targets / CHUNK, (entry.h.targets % CHUNK) as usize);
-        let mut chunk = if rank == 0 {
-            Chunk { targets: Vec::new(), before: Vec::new(), pending: RoaringBitmap::new() }
-        } else {
-            self.read_log(|r| r.chunk(entry.first, n))?
-        };
-        chunk.targets.push(target);
-        chunk.before.push(before);
+        // The chunk extended: the one held, else read once and held.
+        let holds =
+            self.log_chunk.borrow().as_ref().is_some_and(|h| h.first == entry.first && h.n == n);
+        if !holds {
+            self.flush_log_chunk()?;
+            let chunk = if rank == 0 {
+                Chunk { targets: Vec::new(), before: Vec::new(), pending: RoaringBitmap::new() }
+            } else {
+                self.chunk_coded(0);
+                self.read_log(|r| r.chunk(entry.first, n))?
+            };
+            *self.log_chunk.borrow_mut() = Some(HeldChunk { first: entry.first, n, chunk });
+        }
+        {
+            let mut held = self.log_chunk.borrow_mut();
+            let chunk = &mut held.as_mut().expect("just held").chunk;
+            chunk.targets.push(target);
+            chunk.before.push(before);
+        }
         entry.h.targets += 1;
         // The revert's key for the entry the previous operation reverted grows
         // when that entry holds the next one too.
@@ -875,7 +928,6 @@ impl KvTxn<'_> {
             None => None,
         };
         let mut w = self.txn.borrow_mut();
-        t.log_targets.put(&mut w, &chunk_key(entry.first, n), &chunk.encode())?;
         t.log_entries.put(&mut w, &at, &entry.h.encode()?)?;
         let mut count = Enc::default();
         count.varint(entry.h.targets);
@@ -931,6 +983,7 @@ impl KvTxn<'_> {
     /// Removes an entry and every key of it: those it has as an entry, as an
     /// entry reverted, and as a revert.
     pub(super) fn remove_entry(&self, entry: &Entry) -> Result<()> {
+        self.flush_log_chunk()?;
         let t = self.t;
         let at = super::be(entry.first);
         let indexed = self.read_log(|r| r.indexed_up_to())?;
@@ -1009,6 +1062,11 @@ impl KvTxn<'_> {
     /// log read in the records until now: each `(operation id, rows)`. An
     /// operation that is no deletion's any more (pruned) is passed over.
     pub(super) fn write_befores(&self, befores: Vec<(i64, Vec<FieldRow>)>) -> Result<()> {
+        if befores.is_empty() {
+            return Ok(());
+        }
+        // The chunks it changes are read from the table, the held one too.
+        self.flush_log_chunk()?;
         let mut changed: std::collections::BTreeMap<(i64, u64), Chunk> = Default::default();
         let mut entry: Option<Entry> = None;
         for (id, rows) in befores {

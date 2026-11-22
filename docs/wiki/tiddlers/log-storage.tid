@@ -89,8 +89,23 @@ A deletion is not extended: the undo of a deletion of many records knows it by i
 entry. Whether the entry already names the target is asked of its targets, which the
 store keeps in memory between the writes that extend it (read from the chunks once,
 and again after a write that failed). An operation added to an entry takes its
-timestamp. The cost is the last chunk rewritten by each write that extends it, up to
-4096 uuids (`tests/kv_log_entries.rs`).
+timestamp.
+
+Within one write transaction nothing else writes, so the chunk an entry is extended in
+is held decoded by the transaction (`KvTxn::log_chunk`): each operation pushes its
+target and its before to it, and it is encoded and put once — at the commit, when the
+entry moves to its next chunk, or when another entry is appended. Every read of the
+log inside the transaction sees it (`Read`'s `log_chunk` hook, under `Read::chunk`);
+what writes the chunks otherwise (`write_befores`, `remove_entry`) writes it out
+first. Before, each operation decoded and encoded the whole chunk — up to 4096 targets
+and their before —, quadratic within a chunk: a watcher batch of 4096 events spent
+over 90 % of its write there (5.2 s of which 4.9 s). `KvStore::log_chunk_codings`
+counts both (`tests/kv_cost.rs`: 5000 operations extending one entry encode its two
+chunks once each, and decode none).
+
+The header (its count of targets) and its key in `log_entries_by_context` are still
+written by each operation: their cost does not grow with the entry, and a walk of
+`log_entries` inside the transaction then reads them as they are.
 
 Compaction happens at the append only, where nothing is to be rewritten. Compacting
 entries afterwards stays possible: every key of the absorbed entry (`log_targets`,
