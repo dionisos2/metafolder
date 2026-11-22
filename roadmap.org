@@ -13,11 +13,6 @@ Inventory from a diff of =dddf9437= (before the review) against =main=; the old
 names in =kvstore/v10.rs= and in the list of tables a store drops when it opens
 (=kvstore/mod.rs=) stay: they are the conversion's.
 
-** Tables and keys renamed, still in the code
-| Old | Now | Where it stays |
-|-----+-----+----------------|
-| =cells=, =field_cells=, =row_owner=, =by_field= | gone (a record keeps its fields) | comments in =log.rs=, =storage.rs=, =kv_layout.rs= |
-
 ** The vocabulary of the former kinds
 The byte of a former kind at the head of the index keys is gone (derived 25, November
 2026): the code names a table by =derived::Bitmaps=. What stays of the kinds is a
