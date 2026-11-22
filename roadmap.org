@@ -5,6 +5,106 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
+* A record changed in place, not copied, within a write transaction
+Found 22 November 2026, after the record was decoded once per transaction
+(=eaf1b740=): =test_large_revision_chain_across_bulk_chunks= (5000 =set_field= of
+a new field on one record, one =Writer=) still takes 17 s in debug, 30 s under
+load, the time per 1000 writes growing from 0.6 s to 17 s. Measured with timers in
+=set_field_as= and =insert_row=: =insert_row= 10.4 s (=load_record= and its
+=before= 2.8 s, =derive_row= 3.6 s, the rows copied and =save_record= 1.8 s, about
+2 s unaccounted, likely the drops), =rows_named= 3.5 s, =delete_rows= 3.1 s. It is
+no longer decoding: it is *copies* of the whole decoded record, about ten per
+=set_field=, a =String= allocated per row each time. =set_field= goes four times
+through =load_record= (=rows_named=, =delete_rows=, =insert_row=, and =derive_row=
+through another =rows_named=), and each makes two: =stored_record= clones the
+transaction's =Record=, =load_record= clones its rows; =insert_row= adds
+=plain_rows()= for =before= and =loaded.rows.clone()=. Still N × K, in copies.
+
+Two changes, agreed with the user:
+
+1. *No copy of the decoded form.* =stored_record= gives access by borrow (a
+   function given =&Record=, or =&mut= to change it), and a write changes the
+   transaction's record in place — =push= / =retain= on its rows — instead of
+   loading a copy, changing it and putting it back. =Loaded= keeps the entries
+   naming the record and borrows the rest.
+2. *A field's rows, not the record's.* =rows_named=, =delete_rows= and
+   =derive_row= want one field's rows; =insert_row= needs =before= only for
+   =valued_in(before, name)=, a count. The decoded record is kept by field (name →
+   values, as its encoding already groups them since =7799b325=), so that an
+   operation on a field costs the field, not the record. Check what this asks of
+   =effective= (the entries of a part replayed over the rows) and of the fixed
+   fields and values (=fix_field=, =fix_value=).
+
+- Test first: the cost must no longer grow with the record. Count, never time
+  (doc "Tests that fail under load"): e.g. a counter of rows copied out of the
+  transaction's records, and a test that a =set_field= on a record of K rows
+  copies O(rows of the field), the same for K = 50 and K = 5000 — it fails today.
+- On the read side too, =Source::values= (=source.rs=) decodes a whole record to
+  read one field, for each candidate of a scan: 2 helps there if the encoding lets
+  one field be decoded alone; say in the note whether it does.
+- Write it down in doc "Writes and atomicity" (§ A record decoded once, written
+  once).
+
+* The last log entry's chunk extended in place
+Found 22 November 2026 (a probe: N =set_field= of one value on N records, one
+=Writer=). Operations that differ only by their target are added to the last
+entry of the log (doc "Log storage"): the common case of a watcher batch, a
+reconcile, a script. For each one, =extend_last= (=kvstore/entry.rs=) reads and
+decodes the entry's current chunk — its targets and each one's before, up to
+=CHUNK= = 4096 —, pushes one target, and encodes the whole chunk again: quadratic
+within a chunk. Measured: 2048 operations 1.4 s of which =extend_last= 1.2 s, 4096
+5.2 s / 4.9 s, 16 384 17.3 s / 16.1 s — over 90 % of the write; the time per
+operation grows up to 4096 then stays at about 1 ms. A watcher batch (at most
+4096 events, =MAX_INGEST_BATCH=) pays the worst of it, and larger befores make it
+worse.
+
+The same principle as the record: within one write transaction nothing else
+writes. The last entry's header and its current chunk are decoded once, the
+operations of the transaction push to that form, and the chunk and the header are
+encoded and put once, at the commit or when the entry moves to its next chunk
+(=LastTargets= already keeps its targets across writes; the chunk joins it, or a
+field of =KvTxn= beside =records=).
+
+- Test first: a counter of log chunks decoded and encoded, and a test that N
+  operations extending one entry decode and encode each chunk once — it fails
+  today (N each). Never a duration.
+- Every read of the log inside the transaction (=read_log=, =entry_at=, =chunk=,
+  =chunk_of=, the undo's reads of the before) must see the chunk being extended,
+  or be preceded by a write-out of it.
+- =tests/log_cost.rs= counts keys: check each expectation that goes down goes
+  down for this reason.
+- Write it down in doc "Log storage".
+
+* A part's pending writes read once per write transaction
+Read in the code, not measured (22 November 2026). While a write to many records is
+pending, every =load_record= (=kvstore/mass.rs=) reads and decodes the whole list
+of the record's part (=part_entries=, =read_part=: every =Listed=, its values and
+its bitmap) — four times per =set_field= —, and while a deletion of many records
+is pending, =freeze_given_back= (=massops.rs=) reads it again at every
+=save_record=. A list has no limit until the idle fold (doc "Folding in idle
+time"): N writes in one transaction cost N × the length of the list.
+
+The list of a part is decoded once per transaction and kept beside the records:
+the transaction's own appends (=append_listed=) and folds (=fold_part=) change that
+form, written out where they write today.
+
+- Measure first (a probe as for the log: single writes behind a list of a few
+  hundred pending writes), then test first: a counter of part lists decoded, one
+  per part per transaction.
+- Write it down in doc "Mass writes in the store".
+
+Noted with it, smaller, to look at when touching the code:
+- =write_befores=, called by =freeze_given_back= for each write to a record a
+  pending deletion names, decodes and encodes a chunk of up to 4096 befores. Rare:
+  once written, the record is named by the deletion no more.
+- =read_chunked= (=derived.rs=) keeps nothing, unlike =with_chunk=: each call
+  decodes every stored chunk of the bitmap. Per row, only =has_live_kids= (the
+  parent's referrers, when a position leaves a folder) was found: moving 4096 files
+  out of one folder decodes its referrers 4096 times. Bounded by its number of
+  chunks.
+- =effective= decodes a field's whole list of pending index writes per call; only
+  found once per write to many records, which is acceptable.
+
 * Vocabulary after the store's table review
 The wiki and the code's comments, then its names, still speak the store of before
 the review (November 2026). Done group by group, one commit each: first fix the
