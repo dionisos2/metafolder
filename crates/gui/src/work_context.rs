@@ -191,7 +191,7 @@ pub async fn set(
         let log_context =
             response.body["id"].as_i64().ok_or("the daemon answered no log context id")?;
         let context = WorkContext {
-            log_context: log_context,
+            log_context,
             name: name.to_string(),
             description: description.map(str::to_string),
         };
