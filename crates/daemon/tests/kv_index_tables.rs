@@ -122,7 +122,8 @@ fn the_trigrams_and_the_histograms_are_tables_of_their_own() {
     for gone in ["grams", "hist", "events"] {
         assert!(!has_table(&env, gone), "{gone}");
     }
-    for table in ["index_trigram_texts", "index_trigram_state", "index_histogram_rows"] {
+    // No trigram of `title` is by metarecord: the field has no trigram state.
+    for table in ["index_trigram_texts", "index_histogram_rows"] {
         let db = open_raw(&env, table);
         let r = env.read_txn().unwrap();
         assert!(db.len(&r).unwrap() > 0, "{table}");

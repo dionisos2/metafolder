@@ -25,6 +25,13 @@ than breaking them.
   records not yet folded (`mass_*` before), `index_writes`, `index_write_fields`,
   `index_write_bytes` for the pending index writes (`events`, `event_*` before).
 
+- **A text search reads far fewer keys among file names**: each trigram of a field is
+  kept by value or by metarecord on its own, not the whole field one way, so a name's
+  common trigrams (`fil`, `txt`) are bitmaps of ids and its rare ones short lists of
+  texts. On the bench's generated repository, a subtree, a range and `file1` read 435
+  keys instead of 2 863 (doc "Text search in the store"). Each repository is
+  reindexed once when it is first opened by this version.
+
 - **Each repository is reindexed once when it is first opened** by this version: an
   index key no longer begins with a byte naming its former kind, a byte less per key
   (doc "Store tables").

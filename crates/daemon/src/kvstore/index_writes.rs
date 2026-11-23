@@ -433,25 +433,19 @@ impl KvTxn<'_> {
     }
 
     /// The trigrams of a text `ids` gained in `field` (doc "Text search in
-    /// the store"): by value, those of a text new to the field; by
-    /// metarecord, the ids pending.
+    /// the store"): a text new to the field joins its trigrams' lists; in a
+    /// field with trigrams by metarecord, the ids are pending.
     fn mass_grams(&self, field: &str, value: &Value, ids: &RoaringBitmap) -> Result<()> {
         // A text too long has no trigrams: the long-text set holds it.
         let Some(text) = search_text(value).filter(|t| t.len() <= TRIGRAM_MAX) else {
             return Ok(());
         };
-        let Some(first) = ids.min() else { return Ok(()) };
-        if self.gram_state(field)?.by_ids {
-            return self.chunk_apply(
-                IndexSet::TrigramPending.table(),
-                &set_prefix(IndexSet::TrigramPending, Some(field)),
-                ids,
-                true,
-            );
+        if ids.is_empty() {
+            return Ok(());
         }
-        let new_text = self.new_text(field, value)?;
-        self.derive_grams(field, first, &text, new_text.as_deref())?;
-        // The field may have turned by metarecord on that text.
+        if let Some(new) = self.new_text(field, value)? {
+            self.list_new_text(field, &text, &new)?;
+        }
         if self.gram_state(field)?.by_ids {
             self.chunk_apply(
                 IndexSet::TrigramPending.table(),

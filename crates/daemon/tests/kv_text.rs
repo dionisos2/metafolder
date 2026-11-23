@@ -1,9 +1,9 @@
-//! The trigram index's two modes (doc "Text search in the store"): a field
-//! starts *by value* — a trigram names the distinct values holding it,
-//! written only when a value is new — and turns *by metarecord* once its
-//! values are too many, where a write only marks its id pending and the
-//! trigrams are built by a fold. What a write puts in `grams` is counted, and
-//! every answer is held to the oracle and to a rebuild.
+//! The trigram index's two modes (doc "Text search in the store"): a trigram
+//! starts *by value* — a list of the distinct values holding it, written only
+//! when a value is new — and turns *by metarecord* once its values are too
+//! many, where a write only marks its id pending and a fold builds the
+//! bitmaps. What a write puts in `grams` is counted, and every answer is held
+//! to the oracle and to a rebuild.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
@@ -80,15 +80,16 @@ fn codes(store: &mut KvStore, n: usize) -> Vec<Uuid> {
 #[test]
 fn a_value_writes_its_trigrams_when_it_is_new_and_only_then() {
     let (mut store, _dir) = open();
-    // `hol`, `oli`, `lid`, `ida`, `day`, and the field's trigram state.
+    // The lists of `hol`, `oli`, `lid`, `ida`, `day`.
     let first = add(&mut store, vec![text("tag", "holiday")]);
-    assert_eq!(written(&store, "grams"), 6, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "grams"), 5, "{:?}", store.last_write_keys());
     // A value the field already holds: nothing.
     let second = add(&mut store, vec![text("tag", "holiday")]);
     assert_eq!(written(&store, "grams"), 0, "{:?}", store.last_write_keys());
-    // A new value writes each of its trigrams, shared with another or not.
+    // A new value writes the list of each of its trigrams, shared with
+    // another or not.
     let third = add(&mut store, vec![text("tag", "Holidays")]);
-    assert_eq!(written(&store, "grams"), 7, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "grams"), 6, "{:?}", store.last_write_keys());
 
     let mut all = vec![first, second, third];
     all.sort();
@@ -230,4 +231,52 @@ fn a_store_of_the_former_trigram_format_is_reindexed_when_it_opens() {
     let store = KvStore::open(dir.path()).unwrap();
     check(&store);
     assert_eq!(search(&store, "tag", "olid"), vec![tagged]);
+}
+
+/// Names as files are named, `file0.txt`, `file1.txt`…: `fil`, `ile`, `txt`
+/// are in every one, most other trigrams in a few. Each trigram keeps its own
+/// mode: the common ones turn by metarecord, the rare ones stay by value, and
+/// a search combining both is held to the oracle at every step.
+#[test]
+fn the_common_trigrams_of_a_field_turn_and_the_rare_ones_stay() {
+    let (mut store, _dir) = open();
+    let mut names: Vec<(String, Uuid)> = (0..300)
+        .map(|i| {
+            let name = format!("file{i}.txt");
+            let uuid = add(&mut store, vec![text("name", &name)]);
+            (name, uuid)
+        })
+        .collect();
+    let patterns = ["file1", r"^file12\.txt$", "txt$", "e29", "9999"];
+    let all = |store: &KvStore, names: &[(String, Uuid)], when: &str| {
+        for p in patterns {
+            let re = regex::Regex::new(p).unwrap();
+            let mut expected: Vec<Uuid> =
+                names.iter().filter(|(n, _)| re.is_match(n)).map(|(_, u)| *u).collect();
+            expected.sort();
+            let found = search(store, "name", p);
+            assert!(
+                found == expected,
+                "{p}, {when}: {} found, {} expected",
+                found.len(),
+                expected.len()
+            );
+        }
+        check(store);
+    };
+    all(&store, &names, "with the common trigrams turning");
+
+    // A new name: its common trigrams have turned, so its id waits for a
+    // fold, and only its rare trigrams write their lists.
+    let late = add(&mut store, vec![text("name", "file9999.txt")]);
+    assert_eq!(written(&store, "index_trigram_pending"), 1, "{:?}", store.last_write_keys());
+    let lists = written(&store, "index_trigram_texts");
+    assert!(lists > 0 && lists < 10, "{lists} lists written: {:?}", store.last_write_keys());
+    names.push(("file9999.txt".into(), late));
+    all(&store, &names, "a name pending");
+
+    store.fold().unwrap();
+    all(&store, &names, "folded");
+    store.reindex().unwrap();
+    all(&store, &names, "reindexed");
 }

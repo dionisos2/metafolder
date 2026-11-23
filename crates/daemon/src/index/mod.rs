@@ -489,11 +489,13 @@ impl Eval<'_> {
             // leaf keeping one candidate in a hundred would otherwise make it
             // walk a hundred times further than it planned.
             let literals = crate::regexp::required_literals(&pattern);
-            if let Some(superset) = self.src.text_superset(field, &literals, Some(&candidates)) {
-                candidates = superset;
-            }
             let re = crate::regexp::compile(&pattern)
                 .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
+            if let Some(superset) =
+                self.src.text_superset(field, &|t| re.is_match(t), &literals, Some(&candidates))
+            {
+                candidates = superset;
+            }
             checks.push((field.as_str(), re));
         }
         Ok((candidates, Residual { leaves, checks, keys }))

@@ -113,13 +113,15 @@ pub trait Source {
     ) -> RoaringBitmap;
 
     /// A superset of the ids (of `restrict`, when given) whose text in `field`
-    /// holds every one of `literals` (ignoring case), read from a text index without
-    /// testing a value — what a check left for later is narrowed with before
+    /// holds every one of `literals` (ignoring case) — and satisfies `keep`,
+    /// where the index lists texts it can test —, read from a text index without
+    /// reading a metarecord — what a check left for later is narrowed with before
     /// anything is counted on it. `None` when the source keeps no such index,
     /// or the literals give it nothing to look up.
     fn text_superset(
         &self,
         _field: &str,
+        _keep: &dyn Fn(&str) -> bool,
         _literals: &[String],
         _restrict: Option<&RoaringBitmap>,
     ) -> Option<RoaringBitmap> {

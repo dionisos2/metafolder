@@ -358,15 +358,15 @@ fn anchors_within(
     anchor_literals: &[String],
 ) -> Option<RoaringBitmap> {
     let src = names.src;
-    let anchors = src.text_superset(field, anchor_literals, None)?;
+    let anchors = src.text_superset(field, &|_| true, anchor_literals, None)?;
     let parents = src.parents(field);
     let rarest = earlier
         .iter()
         .filter(|t| !t.contains('/'))
         .filter_map(|t| {
             let pattern = format!("(?i){}", regex::escape(t));
-            let holders =
-                src.text_superset(field, &crate::regexp::required_literals(&pattern), None)?;
+            let literals = crate::regexp::required_literals(&pattern);
+            let holders = src.text_superset(field, &|_| true, &literals, None)?;
             let folders = holders.intersection_len(&parents);
             Some((folders, holders))
         })

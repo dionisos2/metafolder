@@ -9,44 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:
 
-- Trigrams kept by mode per (field, trigram) rather than per field (user
-  decision, 23 November 2026; to build next, then measure). Why: the bench's
-  =query.subtree_range_text= (a subtree, =rating > 4=, =file1= on 2 000 short
-  names) reads 2 863 keys counted and 2 701 for a page, against 626 and 625 at
-  =2c8bb168=, where every field kept its trigrams by metarecord. The names stay
-  by value (the switch looks at the field's mean, texts per trigram, about 13
-  against 16, while =fil=, =ile=, =txt= are in every name), and by value the
-  trigrams name texts, which cannot be cut to the 380 candidates of the subtree
-  and the range: the join of =fil=, =ile=, =le1= seeks three runs per text they
-  share (1 111 of 2 100), then reads each text's posting. 6d561539 only bounds
-  that join (doc "Text search in the store").
-  - A trigram's key says its mode: =field · trigram · 0= holds the set of the
-    texts holding it (one value, read once: a rare trigram's list is short, so
-    rewriting it when a new text comes is cheap), =field · trigram · 1= its
-    holders as chunked bitmaps of ids (no union of postings to read, which is
-    what a common trigram costs by value). The per-entry keys of
-    =index_trigram_texts= and the per-field mode go.
-  - A trigram turns by metarecord when its texts get too many (a threshold per
-    trigram, to choose and measure): the next fold builds its bitmap from the
-    union of its texts' postings, once. It never turns back. A write adds its id
-    to the field's pending set, as today, and a fold builds the bitmaps of the
-    trigrams by metarecord for the pending ids.
-  - A search: the intersection of its trigrams by metarecord gives a set of ids
-    M (plus the pending ids, unknown), which cuts the candidates C at once; the
-    intersection of its trigrams by value gives a set of texts V, whose sizes are
-    known before anything else is read. The texts of V are matched against the
-    pattern on the text itself, before any posting is read. Then the cheaper
-    order: read the postings of the texts of V that match and intersect with
-    M ∩ C, or check the records of M ∩ C on their own rows (weighed with
-    =SCATTERED=, doc "Query planner"). All trigrams in one mode is one of the two
-    modes of today.
-  - Stale entries stay allowed (a candidate too many, never one too few), so the
-    sizes are upper bounds. A persisted format change: the conversion rewrites
-    every field's trigrams (doc "Persisted format changes"), and =mf repo check=
-    learns the two key forms.
-  - Done when =tests/kv_cost.rs= holds the bench's query to about what =2c8bb168=
-    read, =kv_text.rs= and the oracle pass, and the cost of a write of new names
-    is measured against today's.
 - Open questions, none decided (doc "Storage open questions"): replace and rename
   not being mass writes, the marks a deleted record loses, compressing what the log
   keeps of a deletion.
