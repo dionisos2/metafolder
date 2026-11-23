@@ -12,8 +12,11 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
 - Open questions, none decided (doc "Storage open questions"): replace and rename
   not being mass writes, the marks a deleted record loses, compressing what the log
   keeps of a deletion.
-- The =undo_redo_properties= suite takes about 3 minutes on four cores; the cost
-  left is the writes of its cases, not their set-up.
+- The =undo_redo_properties= suite takes 2 min 50 s on four cores (4 min 20 s
+  before 23 November 2026: one query for a snapshot instead of a request per
+  record, the log's head alone, the templates built once per run); what is left
+  is the cases themselves: copying and loading a repository, the writes, the
+  reverts, the folds and the checks.
 - The sync store (=sync.rs=, one LMDB per pair of repositories: =meta=, =links=,
   =by_a=, =by_b=, =snaps=) was left out of the review of the store's tables
   (user decision, 20 November 2026): independent, with a migration of its own. To

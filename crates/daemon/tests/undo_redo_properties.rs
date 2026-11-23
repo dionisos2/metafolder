@@ -90,32 +90,60 @@ async fn fixture(prefix: &str, n: usize) -> Fix {
     fx
 }
 
-/// A repository of `n` records built once, unloaded and kept on disk: each case
-/// of a test starts from a copy of it instead of creating its records again,
-/// which was most of the time the suite took.
+/// A repository of `n` records built once per run, unloaded, and kept in
+/// memory: each case of every test starts from a copy of it instead of
+/// creating its records again, which was most of the time the suite took. In
+/// memory, not in a directory: nothing runs when the test binary exits, and a
+/// directory would outlive it.
+#[derive(Clone)]
 struct Template {
-    root: TempDir,
+    /// The repository's files, by their path under its root.
+    files: Arc<Vec<(std::path::PathBuf, Vec<u8>)>>,
     repo: String,
     uuids: Vec<String>,
 }
 
-async fn template(prefix: &str, n: usize) -> Template {
-    let fx = fixture(prefix, n).await;
-    let Fix { app, repo, uuids, _root } = fx;
-    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
-    assert_eq!(status, StatusCode::OK, "unload failed: {body}");
-    Template { root: _root, repo, uuids }
+async fn template(n: usize) -> Template {
+    type Cell = Arc<std::sync::OnceLock<Template>>;
+    static BUILT: std::sync::OnceLock<std::sync::Mutex<BTreeMap<usize, Cell>>> =
+        std::sync::OnceLock::new();
+    let cell = BUILT.get_or_init(Default::default).lock().unwrap().entry(n).or_default().clone();
+    if let Some(built) = cell.get() {
+        return built.clone();
+    }
+    // Built on a runtime of its own: the tests run side by side, each on its
+    // own runtime, and the first to ask builds while the others wait.
+    let built = std::thread::spawn(move || {
+        cell.get_or_init(|| {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let Fix { app, repo, uuids, _root } = fixture("template", n).await;
+                let (status, body) =
+                    request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+                assert_eq!(status, StatusCode::OK, "unload failed: {body}");
+                let mut files = Vec::new();
+                read_dir(&_root, std::path::Path::new(""), &mut files);
+                Template { files: Arc::new(files), repo, uuids }
+            })
+        })
+        .clone()
+    })
+    .join()
+    .unwrap();
+    built
 }
 
-fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
+fn read_dir(
+    root: &std::path::Path,
+    under: &std::path::Path,
+    out: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+) {
+    for entry in std::fs::read_dir(root.join(under)).unwrap() {
         let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
+        let path = under.join(entry.file_name());
         if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
+            read_dir(root, &path, out);
         } else {
-            std::fs::copy(entry.path(), &target).unwrap();
+            out.push((path.clone(), std::fs::read(root.join(&path)).unwrap()));
         }
     }
 }
@@ -124,7 +152,11 @@ impl Template {
     /// A repository of its own, a copy of the template, loaded and ready.
     async fn instance(&self) -> Fix {
         let root = TempDir::new("undo_props_copy");
-        copy_dir(&self.root, &root);
+        for (path, bytes) in self.files.iter() {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
         let app = routes::build(Arc::new(common::watching_state()));
         let (status, body) =
             request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()})))
@@ -164,13 +196,15 @@ impl Fix {
         json!({"type": "uuid_in", "uuids": self.uuids[range].to_vec()})
     }
 
+    /// The log's head, without reading the log (`/log/since` with no
+    /// operation answers the head alone).
     async fn head(&self) -> i64 {
-        self.ok("GET", "/log", None).await["head"].as_i64().unwrap()
+        self.ok("GET", "/log/since", None).await["head"].as_i64().unwrap()
     }
 
     /// The log context of the newest operation.
     async fn newest_log_context(&self) -> i64 {
-        let log = self.ok("GET", "/log", None).await;
+        let log = self.ok("GET", "/log?limit=1", None).await;
         let head = log["head"].as_i64().unwrap();
         log["operations"]
             .as_array()
@@ -185,13 +219,12 @@ impl Fix {
     /// Every record, keyed by its `key` field: its other rows sorted, and its version.
     /// What two states must agree on, whatever the uuids.
     async fn snapshot(&self) -> BTreeMap<i64, Value> {
-        let hits = self
-            .ok("POST", "/query", Some(json!({"query": {"type": "is_present", "field": "key"}})))
-            .await;
+        // Every record in one request, as `GET /metarecords/:uuid` gives each:
+        // a request per record was the largest part of the suite's time.
+        let query = json!({"query": {"type": "is_present", "field": "key"}, "select": "*"});
+        let records = self.ok("POST", "/query", Some(query)).await;
         let mut state = BTreeMap::new();
-        for hit in hits.as_array().unwrap() {
-            let uuid = hit.as_str().unwrap();
-            let record = self.ok("GET", &format!("/metarecords/{uuid}"), None).await;
+        for record in records.as_array().unwrap() {
             let mut rows: Vec<String> = vec![];
             let mut key = None;
             for f in record["fields"].as_array().unwrap() {
@@ -434,7 +467,7 @@ macro_rules! each_write {
 
 async fn undoing_again(write: Write) {
     for n in SIZES {
-        let tpl = template("undo_again", n).await;
+        let tpl = template(n).await;
         for between in BETWEENS {
             for mask in 0..4u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, fold mask {mask}");
@@ -480,7 +513,7 @@ each_write! { undoing_again:
 
 async fn redoing_again(write: Write) {
     for n in SIZES {
-        let tpl = template("redo_again", n).await;
+        let tpl = template(n).await;
         for between in BETWEENS {
             for mask in 0..4u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, fold mask {mask}");
@@ -542,7 +575,7 @@ each_write! { redoing_again:
 /// more.
 async fn undo_of_undo(write: Write) {
     for n in SIZES {
-        let tpl = template("undo_of_undo", n).await;
+        let tpl = template(n).await;
         for between in BETWEENS {
             for mask in 0..8u8 {
                 let case = format!("{write:?}, {between:?}, {n} records, mask {mask:03b}");
@@ -629,7 +662,7 @@ async fn later_writes(fx: &Fix) {
 /// it again changes nothing; redoing it and undoing it again does not either.
 async fn older_write(write: Write) {
     for n in SIZES {
-        let tpl = template("older", n).await;
+        let tpl = template(n).await;
         for mask in 0..4u8 {
             let case = format!("{write:?}, {n} records, fold mask {mask}");
             let fx = tpl.instance().await;
@@ -684,7 +717,7 @@ each_write! { older_write:
 #[tokio::test]
 async fn two_writes_are_undone_and_redone_as_a_stack() {
     for n in SIZES {
-        let tpl = template("stack", n).await;
+        let tpl = template(n).await;
         for (i, first) in WRITES.into_iter().enumerate() {
             for (j, second) in WRITES.into_iter().enumerate() {
                 {
