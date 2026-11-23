@@ -38,6 +38,16 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   turns a name that is not UTF-8 into its displayed form (=%XX=). The wire would
   carry such a string as paths are carried, ={text, bytes}= (doc "Tree
   names").
+- A text search within narrow candidates, on a field keeping its trigrams by
+  value: the bench's =query.subtree_range_text= (a subtree, =rating > 4=, =file1=
+  on 2 000 short names) reads 2 863 keys counted and 2 701 for a page, against 626
+  and 625 at =2c8bb168=, where every field kept its trigrams by metarecord and so
+  intersected them with the 380 candidates. By value, the trigrams name texts, not
+  ids, and cannot be cut to the candidates: the join gives up (6d561539) and the
+  names are scanned. Checking the candidates on their own rows would cost about
+  what =2c8bb168= read, but the planner's weight for it (=SCATTERED=, calibrated
+  cold) says a scan is cheaper; to measure cold before changing either (doc "Query
+  planner", doc "Text search in the store").
 - The bench's history is stale: =2c8bb168= measured today is 4 to 12 times slower
   than its own baseline of 9 November on every =query.*= scenario (=query.count=
   0.77 ms against 0.14), so the bench's verdicts against it mean nothing until a
