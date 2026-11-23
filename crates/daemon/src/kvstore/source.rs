@@ -367,17 +367,33 @@ impl KvSource<'_> {
     /// one sorted run of keys, and the runs are joined by seeking in each the
     /// first key at or after the furthest one reached — so the join reads
     /// about what the rarest trigram holds, not what the commonest does.
-    fn gram_values(&self, field: &str, grams: &BTreeSet<[u8; 3]>) -> Vec<Vec<u8>> {
+    ///
+    /// A few keys per text the trigrams share: when the rarest is common —
+    /// `file1` among names that all hold `fil` — the join reads more than a
+    /// scan of the field's texts, which reads each once. `None` once it has
+    /// read a quarter of the field's holders' worth of keys (what that scan
+    /// costs at most): the caller scans instead, having spent a quarter more
+    /// than the scan alone, where a selective join reads a handful of keys.
+    fn gram_values(&self, field: &str, grams: &BTreeSet<[u8; 3]>) -> Option<Vec<Vec<u8>>> {
         let prefixes: Vec<Vec<u8>> =
             grams.iter().map(|g| derived::gram_values_prefix(field, g)).collect();
-        let read = || -> Result<Vec<Vec<u8>>> {
+        let budget = self.valued(field).len() / 4;
+        let read = || -> Result<Option<Vec<Vec<u8>>>> {
             let mut out = Vec::new();
+            let mut spent = 0u64;
+            let mut spend = || -> Result<bool> {
+                self.read_keys(1)?;
+                spent += 1;
+                Ok(spent > budget)
+            };
             if let [only] = &prefixes[..] {
                 for entry in self.t.index_trigram_texts.prefix_iter(&self.r, only)? {
-                    self.read_keys(1)?;
+                    if spend()? {
+                        return Ok(None);
+                    }
                     out.push(entry?.0[only.len()..].to_vec());
                 }
-                return Ok(out);
+                return Ok(Some(out));
             }
             // The key every run must hold next, and how many runs in a row
             // were found to hold it.
@@ -388,7 +404,9 @@ impl KvSource<'_> {
                 let prefix = &prefixes[i % prefixes.len()];
                 let from = [&prefix[..], &at].concat();
                 let range = (Bound::Included(from.as_slice()), Bound::Unbounded);
-                self.read_keys(1)?;
+                if spend()? {
+                    return Ok(None);
+                }
                 let Some((k, _)) =
                     self.t.index_trigram_texts.range(&self.r, &range)?.next().transpose()?
                 else {
@@ -411,9 +429,9 @@ impl KvSource<'_> {
                 }
                 i += 1;
             }
-            Ok(out)
+            Ok(Some(out))
         };
-        self.ok(read(), Vec::new())
+        self.ok(read(), Some(Vec::new()))
     }
 
     /// The ids holding a trigram in `field`'s texts; a read per chunk.
@@ -1069,7 +1087,7 @@ impl KvSource<'_> {
         } else {
             let part = self.text_part(field);
             let mut ids = RoaringBitmap::new();
-            for key in self.gram_values(field, &grams) {
+            for key in self.gram_values(field, &grams)? {
                 ids |= self.bucket(field, part, &key);
             }
             ids
@@ -1131,29 +1149,33 @@ impl KvSource<'_> {
             };
             let long = within(self.set(derived::IndexSet::LongTexts, Some(field)));
             if !self.gram_state(field).by_ids {
-                let mut out = RoaringBitmap::new();
-                // A key cut and hashed does not hold its whole text: its
-                // holders are decided on their values.
-                let mut undecided = long;
-                for key in self.gram_values(field, &grams) {
-                    let Some(tail) = key.strip_prefix(region) else { continue };
-                    if long_prefix(tail).is_some() {
-                        undecided |= within(self.bucket(field, part, &key));
-                    } else if derived::unesc(tail)
-                        .is_ok_and(|(bytes, _)| keep(&String::from_utf8_lossy(&bytes)))
-                    {
-                        out |= within(self.bucket(field, part, &key));
+                // A join of the trigrams dearer than the scan below gives up.
+                if let Some(keys) = self.gram_values(field, &grams) {
+                    let mut out = RoaringBitmap::new();
+                    // A key cut and hashed does not hold its whole text: its
+                    // holders are decided on their values.
+                    let mut undecided = long;
+                    for key in keys {
+                        let Some(tail) = key.strip_prefix(region) else { continue };
+                        if long_prefix(tail).is_some() {
+                            undecided |= within(self.bucket(field, part, &key));
+                        } else if derived::unesc(tail)
+                            .is_ok_and(|(bytes, _)| keep(&String::from_utf8_lossy(&bytes)))
+                        {
+                            out |= within(self.bucket(field, part, &key));
+                        }
                     }
+                    undecided -= &out;
+                    return out | self.having(undecided, field, &text);
                 }
-                undecided -= &out;
-                return out | self.having(undecided, field, &text);
-            }
-            let pending = within(self.set(derived::IndexSet::TrigramPending, Some(field)));
-            // Checked one by one, unless the ids awaiting a fold are so many
-            // that the scan below is the cheaper way to all of them.
-            if plan::probes(pending.len(), self.present(field).len()) {
-                let candidates = self.gram_ids(field, &grams, restrict) | pending | long;
-                return self.having(self.sift(candidates), field, &text);
+            } else {
+                let pending = within(self.set(derived::IndexSet::TrigramPending, Some(field)));
+                // Checked one by one, unless the ids awaiting a fold are so
+                // many that the scan below is the cheaper way to all of them.
+                if plan::probes(pending.len(), self.present(field).len()) {
+                    let candidates = self.gram_ids(field, &grams, restrict) | pending | long;
+                    return self.having(self.sift(candidates), field, &text);
+                }
             }
         }
         if let Some(r) = restrict {

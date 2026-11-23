@@ -39,7 +39,13 @@ only when its text is one the field did not hold: tagging a file with an existin
 writes nothing. A search joins the texts of its trigrams, tests each text once — on
 the key itself, no metarecord is read — and unions the holders of the texts that
 match, from their postings. The answer is exact, with nothing
-pending.
+pending. The join reads a few keys per text its trigrams share, so when the rarest of
+them is common (`file1` among names that all hold `fil`) it costs more than a scan
+of the field's texts, which reads each once: it gives up after a quarter of the
+field's holders' worth of keys, and the search scans instead — a page without its
+count then checks the text in its walk. Before that bound, `file1` on 2 000 short
+names read 4 600 keys for its count and 4 800 for a page; it reads under 3 000 and
+1 000.
 
 ''By metarecord'' — for a field whose texts are mostly new ones, file names first:
 by value, each would write its twenty entries. A trigram names the ''ids'' holding

@@ -933,3 +933,54 @@ fn a_part_list_is_decoded_once_per_write_transaction() {
         assert_eq!(x[0].value, Value::Int(i as i64));
     }
 }
+
+/// `n` files named as the bench names them, `file0.txt`, `file1.txt`…, a
+/// hundred per folder: short names, whose trigrams the field keeps by value.
+fn short_names(n: usize) -> (KvStore, TempDir) {
+    shared(format!("short names {n}"), || {
+        let dir = TempDir::new("kv-cost");
+        let mut kv = KvStore::open(dir.path()).unwrap();
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        let tree = |parent: Option<Uuid>, name: &str| {
+            Field::new("loc", Value::TreeRef { parent, name: name.into() })
+        };
+        let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
+        let mut folder = root;
+        for i in 0..n {
+            if i % 100 == 0 {
+                folder =
+                    w.create_metarecord(vec![tree(Some(root), &format!("d{i}"))]).unwrap().uuid;
+            }
+            w.create_metarecord(vec![
+                tree(Some(folder), &format!("file{i}.txt")),
+                Field::new("rating", Value::Int((i % 10) as i64)),
+            ])
+            .unwrap();
+        }
+        w.commit().unwrap();
+        kv.fold().unwrap();
+        (kv, dir)
+    })
+}
+
+/// A name pattern most names hold (`file1`: 1 111 of 2 000), on a field
+/// keeping its trigrams by value. Joining the trigrams' texts reads a few
+/// keys per text they share, more than scanning the field's names once: the
+/// join gives up after a quarter of that scan, then the search scans, and a
+/// page without its count leaves the check to its walk: it reads fewer keys
+/// than there are names (it read 4 800 for 2 000 before).
+#[test]
+fn a_common_name_pattern_costs_no_more_than_a_scan_of_the_names() {
+    let n = 2_000;
+    let (kv, _root) = short_names(n);
+    let q = value_matches("loc", "file1");
+    let (found, counted) = reads(&kv, &q, &[], true);
+    assert_eq!(found, 1_111);
+    assert!(counted < 3 * n as u64 / 2, "counted: {counted} keys for {n} names");
+    let (found, page) = reads(&kv, &q, &[], false);
+    assert_eq!(found, 50);
+    assert!(page < n as u64, "a page: {page} keys for {n} names");
+    let q = and(vec![int(gt, "rating", 4), value_matches("loc", "file1")]);
+    let (_, page) = reads(&kv, &q, &[], false);
+    assert!(page < n as u64, "a page within a range: {page} keys for {n} names");
+}

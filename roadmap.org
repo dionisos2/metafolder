@@ -35,19 +35,11 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   turns a name that is not UTF-8 into its displayed form (=%XX=). The wire would
   carry such a string as paths are carried, ={text, bytes}= (doc "Tree
   names").
-- Seen 21 November 2026: =query.subtree_range_text= measured 4 to 9 ms at =main=
-  against 0.7 to 1 ms at =2c8bb168= (9 November), the bench at size S too noisy
-  to bisect it (two commits with the same daemon measured 1.03 and 2.67 ms). Not
-  in the store (22 November): its query in the bench's shape (subtree, =rating >
-  4=, a forest name matching, a page with its count, then the page's records) on
-  16 000 files, in-process in release, reads 303 keys at =main= against 463 at
-  =2c8bb168=, in 0.25 to 0.32 ms at both; =a_subtree_a_range_and_a_text_combine=
-  reads 141 and 226 keys against 197 and 317. What is left is the route (its
-  answer's rendering, the paths it resolves) or the bench's own data. The history's
-  baseline of 9 November gives false alarms (=tree.resolve_page=: 2.75 to 5 ms at
-  =2c8bb168= today, against 1.55 recorded); measure in the repository itself, not
-  in a worktree under =/tmp= (doc "Storage pitfalls": writes on the wrong
-  filesystem).
+- The bench's history is stale: =2c8bb168= measured today is 4 to 12 times slower
+  than its own baseline of 9 November on every =query.*= scenario (=query.count=
+  0.77 ms against 0.14), so the bench's verdicts against it mean nothing until a
+  new baseline is recorded on a neutral machine (doc "The timed regression
+  suite"; ask before).
 - The mass-write threshold (=mass-write-threshold=, 20 to start) is one number for
   every operation: a way to derive better values from the repository is to come
   (doc "Mass writes in the store").
