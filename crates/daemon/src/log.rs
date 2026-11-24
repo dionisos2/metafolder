@@ -1451,6 +1451,149 @@ impl<'c> Writer<'c> {
         Ok(self.tx.dense_ids(&changed, false)?.unwrap_or_default())
     }
 
+    /// Replaces the value `from` of `name` by `to` on the records `ids` that
+    /// hold it, the other values staying: the many-record form of
+    /// [`Self::replace_value`], made of a mass remove and a mass add (doc
+    /// "Query endpoints"). Onto a value a record already holds, the two merge.
+    /// Refused whole, naming them, when `to` is `nothing` and some of them
+    /// hold other values. The ids of the records it changed.
+    pub fn mass_replace_ids(
+        &mut self,
+        name: &str,
+        from: &Value,
+        to: Value,
+        ids: &RoaringBitmap,
+    ) -> Result<RoaringBitmap> {
+        if from == &to {
+            return Ok(RoaringBitmap::new());
+        }
+        // A value with a position is checked against its forest record by
+        // record (doc "TreeRef forest"): one at a time.
+        if from.position().is_some() || to.position().is_some() {
+            let candidates = ids & self.value_holders(name, from)?;
+            let mut changed = RoaringBitmap::new();
+            let uuids = self.tx.uuids_of(&candidates)?;
+            for (uuid, id) in uuids.into_iter().zip(candidates.iter()) {
+                if self.tx.rows_named(uuid, name)?.iter().any(|r| &r.value == from) {
+                    self.replace_value(uuid, name, from, to.clone())?;
+                    changed.insert(id);
+                }
+            }
+            return Ok(changed);
+        }
+        // Checked before anything is removed: taking `from` away may unlock
+        // the field's type, which would then take any `to`.
+        self.validate_value_type(name, &to)?;
+        if matches!(to, Value::Nothing) {
+            self.refuse_nothing_beside_values(name, from, ids)?;
+        }
+        let removed = self.mass_remove_ids(name, from, ids)?;
+        if !removed.is_empty() {
+            self.mass_add_ids(name, to, &removed)?;
+        }
+        Ok(removed)
+    }
+
+    /// Refuses, naming them, the records of `ids` holding `from` in `name`
+    /// beside other values: `nothing` cannot stand beside them (doc "Nothing
+    /// versus unknown").
+    fn refuse_nothing_beside_values(
+        &mut self,
+        name: &str,
+        from: &Value,
+        ids: &RoaringBitmap,
+    ) -> Result<()> {
+        let holding = ids & self.value_holders(name, from)?;
+        let suspects = match self.rows_over(name, 1)? {
+            Some(several) => holding & several,
+            None => holding,
+        };
+        let mut breach = Vec::new();
+        for uuid in self.tx.uuids_of(&suspects)? {
+            let rows = self.tx.rows_named(uuid, name)?;
+            if rows.len() > 1 && rows.iter().any(|r| &r.value == from) {
+                breach.push(uuid);
+            }
+        }
+        if breach.is_empty() {
+            return Ok(());
+        }
+        Err(DomainError::BadRequest(format!(
+            "field '{name}' holds other values beside the one replaced, and nothing cannot \
+             stand beside them, on {}",
+            named_uuids(&breach)
+        ))
+        .into())
+    }
+
+    /// Renames the field `name` to `to` on the records `ids` that have it:
+    /// every value moves. The many-record form of
+    /// [`Self::rename_record_field`], made of a mass add per value and one
+    /// mass unset (doc "Query endpoints"). Refused whole, naming them, when
+    /// some of them already have a field `to`. The ids of the records it
+    /// changed, and the values it moved (for the schema check).
+    pub fn mass_rename_ids(
+        &mut self,
+        name: &str,
+        to: &str,
+        ids: &RoaringBitmap,
+    ) -> Result<(RoaringBitmap, Vec<Value>)> {
+        let holders = ids & crate::store::Rows::holder_ids(&*self.tx, name)?;
+        if name == to || holders.is_empty() {
+            return Ok((RoaringBitmap::new(), Vec::new()));
+        }
+        let taken = &holders & crate::store::Rows::holder_ids(&*self.tx, to)?;
+        if !taken.is_empty() {
+            let taken = self.tx.uuids_of(&taken)?;
+            return Err(DomainError::BadRequest(format!(
+                "a field '{to}' is already on {}",
+                named_uuids(&taken)
+            ))
+            .into());
+        }
+        // The values are read record by record, the writes are not: each
+        // value moves to its holders in one write (doc "Mass writes in the
+        // store"). Keyed by their JSON form: a `Value` is not `Ord`.
+        let uuids = self.tx.uuids_of(&holders)?;
+        let mut by_value: std::collections::BTreeMap<String, (Value, RoaringBitmap)> =
+            Default::default();
+        let mut placed = Vec::new();
+        for (uuid, id) in uuids.into_iter().zip(holders.iter()) {
+            for row in self.tx.rows_named(uuid, name)? {
+                if row.value.position().is_some() {
+                    placed.push(uuid);
+                    break;
+                }
+                let key = serde_json::to_string(&row.value)?;
+                by_value
+                    .entry(key)
+                    .or_insert_with(|| (row.value, RoaringBitmap::new()))
+                    .1
+                    .insert(id);
+            }
+        }
+        // A position is checked against its forest record by record (doc
+        // "TreeRef forest"): such a record is renamed alone.
+        let placed_ids = self.tx.dense_ids(&placed, false)?.unwrap_or_default();
+        let mut moved = Vec::with_capacity(by_value.len());
+        for &uuid in &placed {
+            moved.extend(self.tx.rows_named(uuid, name)?.into_iter().map(|r| r.value));
+            self.rename_record_field(uuid, name, to)?;
+        }
+        let rest = &holders - &placed_ids;
+        if !rest.is_empty() {
+            for (_, (value, holding)) in by_value {
+                let holding = holding - &placed_ids;
+                if !holding.is_empty() {
+                    self.mass_add_ids(to, value.clone(), &holding)?;
+                    moved.push(value);
+                }
+            }
+            self.mass_unset_ids(name, &rest)?;
+        }
+        Ok((holders, moved))
+    }
+
     /// [`Self::mass_add`] one record at a time.
     fn add_each(&mut self, name: &str, value: &Value, uuids: &[Uuid]) -> Result<Vec<Uuid>> {
         self.one_by_one(uuids, |w, uuid| Ok(w.append_field(uuid, name, value.clone())?.created()))
@@ -2072,6 +2215,17 @@ fn collapse_duplicate_fields(fields: Vec<Field>) -> Vec<Field> {
 }
 
 /// The refusal of a write naming a value the field does not hold.
+/// The metarecords a refusal names: their uuids in the wire's hex, the first
+/// ten and how many more.
+fn named_uuids(uuids: &[Uuid]) -> String {
+    const SHOWN: usize = 10;
+    let mut text: Vec<String> = uuids.iter().take(SHOWN).map(|u| u.simple().to_string()).collect();
+    if uuids.len() > SHOWN {
+        text.push(format!("and {} more", uuids.len() - SHOWN));
+    }
+    format!("{} metarecord(s): {}", uuids.len(), text.join(", "))
+}
+
 fn no_such_value(uuid: Uuid, name: &str) -> anyhow::Error {
     DomainError::NotFound(format!("field '{name}' of metarecord {uuid} does not hold that value"))
         .into()

@@ -590,6 +590,95 @@ pub(super) async fn batch_unset(
     .await
 }
 
+#[derive(Deserialize)]
+pub(super) struct BatchReplaceBody {
+    query: MetaQuery,
+    name: String,
+    value: Value,
+    to: Value,
+    #[serde(default)]
+    force: bool,
+}
+
+/// Runs the query server-side and replaces the value `value` of the field by
+/// `to` on every match holding it, the other values staying, in one write —
+/// the bulk form of `PATCH /metarecords/:uuid/fields/:name`. Refused whole,
+/// naming them, when `to` is `nothing` and matches hold other values.
+/// `updated` counts the matches that held `value`.
+pub(super) async fn batch_replace(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BatchReplaceBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let field = body.name.clone();
+    let (from, to) = (body.value, body.to);
+    write_matched_ids(
+        &state,
+        repo_uuid,
+        body.name,
+        body.force,
+        body.query,
+        vec![to.clone()],
+        move |writer, ids| Ok(writer.mass_replace_ids(&field, &from, to.clone(), ids)?),
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+pub(super) struct BatchRenameBody {
+    query: MetaQuery,
+    name: String,
+    to: String,
+    #[serde(default)]
+    force: bool,
+}
+
+/// Runs the query server-side and renames the field `name` to `to` on every
+/// match having it — every value moves — in one write: the bulk form of
+/// `POST /metarecords/:uuid/fields/:name/rename`. Refused whole, naming them,
+/// when matches already have a field `to`. `updated` counts the matches that
+/// had `name`.
+pub(super) async fn batch_rename(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BatchRenameBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        check_writable(&body.name, body.force)?;
+        check_writable(&body.to, body.force)?;
+        slowlog::note("field", body.name.as_str());
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let cache = repo_state.tree();
+        let ids = resolve_query_ids(&*conn, &cache, &body.query)?;
+
+        let mut writer = repo_state.writer(&mut conn, request_context())?;
+        let writing = slowlog::phase("write.fields");
+        let (changed, moved) = writer.mass_rename_ids(&body.name, &body.to, &ids)?;
+        // Judged on both names: one lost its rows, the other gained them.
+        let mut suspects: std::collections::BTreeSet<Uuid> = Default::default();
+        suspects.extend(schema_suspects(repo_state, &writer, &changed, &body.name, &[])?);
+        suspects.extend(schema_suspects(repo_state, &writer, &changed, &body.to, &moved)?);
+        let names = [body.name.clone(), body.to.clone()];
+        for uuid in suspects {
+            slowlog::timed("validate.schema", || {
+                validate_schema(repo_state, writer.store(), uuid, &names)
+            })?;
+        }
+        drop(writing);
+        let effects = writer.effects();
+        slowlog::timed("commit", || writer.commit())?;
+        repo_state.settle(&conn, &effects)?;
+        slowlog::note("updated", changed.len().to_string());
+        Ok(Json(json!({ "updated": changed.len() })))
+    })
+    .await
+}
+
 /// One write of a `POST /query/fields/batch`: a creation, or one of the four
 /// set-layer verbs over a query.
 #[derive(Deserialize)]

@@ -11,6 +11,8 @@ summary: POST /query and the /query/* family — every operation over a set of m
 |<<cmd "POST /repos/:repo/query/fields/add">> |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
 |<<cmd "POST /repos/:repo/query/fields/remove">> |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
 |<<cmd "POST /repos/:repo/query/fields/unset">> |`{"query", "name", "force"?}` |`{"updated": N}` |
+|<<cmd "POST /repos/:repo/query/fields/replace">> |`{"query", "name", "value", "to", "force"?}` |`{"updated": N}` |
+|<<cmd "POST /repos/:repo/query/fields/rename">> |`{"query", "name", "to", "force"?}` |`{"updated": N}` |
 |<<cmd "POST /repos/:repo/query/fields/batch">> |`{"ops": [{"op", …}, …]}` |`{"results": [{"uuid"} or {"updated": N}, …]}` (below) |
 |<<cmd "POST /repos/:repo/query/fields/resolve-tree">> |`{"query", "field"?}` |`{"<uuid>": ["<path>"], …}` ([[Tree endpoints]]) |
 |<<cmd "POST /repos/:repo/query/profile">> |a query |its phases ([[POST /repos/:repo/query/profile]]) |
@@ -45,6 +47,15 @@ without `force` is a `400` ([[Reserved fields]]).
 * ''add'' appends a row to each match; a match already holding the value is untouched, so `updated` counts the metarecords that gained a row and re-running it gives `0`.
 * ''remove'' takes out the row equal to the value — at most one per match — leaving other rows and non-matches alone.
 * ''unset'' removes every row of the name: the field becomes unknown, not `nothing`.
+* ''replace'' replaces the row equal to `value` by `to` on each match holding it, the other rows staying; onto a value the match already holds, the two merge ([[No duplicate rows]]). `updated` counts the matches that held `value`. `to` of another type than the field's is a `400`, and so is `nothing` when matches hold other values: the whole write is refused, naming them, as the form on one metarecord is ([[Nothing versus unknown]]).
+* ''rename'' moves every row of the name to `to` on each match having it. A match that already has a field `to` refuses the whole write, naming the matches in that case — a merge would hide a name most likely forgotten; a `to` whose type is not the values' is a `400`. Both names are checked for `force` ([[Reserved fields]]).
+
+A replacement is a mass remove then a mass add, a rename a mass add per value then one
+mass unset ([[Mass writes in the store]]): a few entries of the log, not one or two per
+metarecord, undone in one step since they are one write. A rename reads the values of
+its matches, one record at a time; it writes none of them one at a time. A value with a
+position (`tree_ref`, `hierarchy_ref`) is checked against its forest record by record,
+so such a field is replaced or renamed one metarecord at a time ([[TreeRef forest]]).
 
 !! Several writes as one write
 

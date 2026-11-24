@@ -1,0 +1,7 @@
+title: POST /repos/:repo/query/fields/rename
+tags: [[HTTP endpoint]] [[Query endpoints]]
+kind: reference
+audience: dev
+summary: Renames a field, every value moving, on every metarecord a query matches.
+
+Bodies, answers and errors: [[Query endpoints]].

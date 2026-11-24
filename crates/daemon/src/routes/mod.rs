@@ -105,6 +105,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/{repo}/query/fields/add", post(batch_add))
         .route("/repos/{repo}/query/fields/remove", post(batch_remove))
         .route("/repos/{repo}/query/fields/unset", post(batch_unset))
+        .route("/repos/{repo}/query/fields/replace", post(batch_replace))
+        .route("/repos/{repo}/query/fields/rename", post(batch_rename))
         .route("/repos/{repo}/query/fields/batch", post(batch_writes))
         .route("/repos/{repo}/query/fields/resolve-tree", post(query_resolve_tree))
         .route("/repos/{repo}/log", get(get_log))
