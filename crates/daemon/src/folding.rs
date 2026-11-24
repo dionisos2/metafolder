@@ -1,6 +1,6 @@
 //! Folding in idle time (doc "Folding in idle time"): what writes to many
-//! records left pending — a part's entries, a field's events, the trigrams
-//! kept by metarecord — is written into the store once the repository has
+//! records left pending — a part's entries, a field's index writes — is
+//! written into the store once the repository has
 //! been quiet for [`IDLE`], one list per step, the biggest first.
 //!
 //! Each step is a transaction of its own and holds the connection for that

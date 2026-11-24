@@ -1946,11 +1946,8 @@ impl KvStore {
         Ok(())
     }
 
-    /// Integrates what the writes left pending for a quiet moment: the
-    /// trigrams of the fields kept by metarecord (doc "Text search in the
-    /// store"). A reindex does as much.
-    /// Folds the biggest list pending — a part's entries, a field's index writes
-    /// or a field's pending trigrams — in one transaction of its own, so
+    /// Folds the biggest list pending — a part's entries, a field's index
+    /// writes — in one transaction of its own, so
     /// that what waits for the store waits for one list (doc "Folding in
     /// idle time"). Returns whether there was one.
     pub fn fold_step(&mut self) -> Result<bool> {
@@ -1994,6 +1991,10 @@ impl KvStore {
         Ok(wear)
     }
 
+    /// Integrates everything the writes left pending for a quiet moment: the
+    /// parts' entries, the fields' index writes, the log entries not yet
+    /// indexed by metarecord (doc "Folding in idle time"). A reindex leaves
+    /// nothing pending.
     pub fn fold(&mut self) -> Result<()> {
         let txn = KvTxn::new(self)?;
         txn.fold_all_mass()?;
@@ -2921,7 +2922,7 @@ mod tests {
     }
 
     /// A trigram by metarecord missing an id: more texts share `tit` than a
-    /// list holds, so it turned, and the fold built its bitmap.
+    /// list holds, so it turned in the write that grew its list past it.
     #[test]
     fn test_an_id_lost_from_a_trigram_bitmap_is_named() {
         let (mut store, _dir) = populated();
@@ -2931,7 +2932,6 @@ mod tests {
             w.create_metarecord(vec![Field::new("title", title)]).unwrap();
         }
         w.commit().unwrap();
-        store.fold().unwrap();
         assert_eq!(store.check_derived().unwrap(), Vec::<String>::new());
         let key = first_key(&store, |t| t.index_trigram_holders, &gram_prefix("title", b"tit"));
         tamper(&store, |t, w| {

@@ -22,9 +22,9 @@ too many costs a check; one missing would be a wrong answer. So a text that chan
 or goes — a tag removed, a file renamed or deleted — leaves its trigrams where they
 are: only a text ''coming'' writes. `mf repo reindex` drops what is stale.
 
-This is what makes the index cheap to write. A file's texts hold some twenty
-trigrams; kept exact per metarecord, each write touched twenty scattered keys, and
-each removal the same twenty again.
+This is what keeps the index cheap to write: a file's texts hold some twenty
+trigrams, and a removal or a rename takes none of them out — kept exact, it would
+touch twenty scattered keys again.
 
 !! Two modes per trigram
 
@@ -76,9 +76,10 @@ next fold to turn — the postings not being exact behind pending index writes �
 trigram turning narrowed nothing meanwhile: a repository written in one go, as the
 bench generates it, had hundreds of trigrams turning and its searches scanned the
 names until an idle fold (16 ms instead of 6.4 for `query.subtree_range_text` on
-20 000 files). The mode
-being a trigram's, a field of file names keeps its rare trigrams — the digits of
-`file12.txt` — by value: before November 2026 the mode was the field's, chosen on
+20 000 files).
+
+''A mode per trigram.'' A field of file names keeps its rare trigrams — the digits
+of `file12.txt` — by value, its common ones by metarecord: before November 2026 the mode was the field's, chosen on
 the mean number of texts per trigram, and file names short enough stayed by value
 whole, every search among them joining lists of a thousand texts.
 
@@ -88,7 +89,9 @@ whole, every search among them joining lists of a thousand texts.
 ones are allowed: it verifies that no text lacks one — by value, the text in each of
 its trigrams' lists; by metarecord, the id in each trigram's bitmap.
 
-''A page without a count checks text lazily.'' A text leaf, or the text conjuncts of
+!! A page without a count
+
+''It checks text lazily.'' A text leaf, or the text conjuncts of
 an `and`, are split off the filter: what is evaluated is the candidate bitmap, and the
 predicate is checked only on the ids the sort visits, stopping at the page's end. A
 search as you type then costs its page — 0.5 to 3 ms on 5 million files, measured —
