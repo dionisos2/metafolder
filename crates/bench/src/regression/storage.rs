@@ -359,7 +359,7 @@ async fn pending_summary(ctx: &Ctx) -> Result<String> {
     let n = |k: &str| wear[k].as_u64().unwrap_or(0);
     Ok(format!(
         "pending: {} entries in {} parts ({} KiB), {} index writes in {} fields ({} KiB), \
-         {} ids of trigrams",
+         {} trigrams turning",
         n("pending_writes"),
         n("pending_write_parts"),
         n("pending_write_bytes") / 1024,

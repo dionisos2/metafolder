@@ -1,9 +1,10 @@
 //! The trigram index's two modes (doc "Text search in the store"): a trigram
 //! starts *by value* — a list of the distinct values holding it, written only
 //! when a value is new — and turns *by metarecord* once its values are too
-//! many, where a write only marks its id pending and a fold builds the
-//! bitmaps. What a write puts in `grams` is counted, and every answer is held
-//! to the oracle and to a rebuild.
+//! many — frozen until a fold builds its bitmap from the postings — after
+//! which a write files its ids in the bitmap itself. What a write puts in
+//! `grams` is counted, and every answer is held to the oracle and to a
+//! rebuild.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
@@ -129,43 +130,81 @@ fn a_value_going_leaves_its_trigrams_and_is_not_found() {
 }
 
 #[test]
-fn a_field_of_many_values_stops_writing_trigrams() {
+fn a_text_in_a_field_of_many_values_files_its_id_in_its_trigrams() {
     let (mut store, _dir) = open();
     let all = codes(&mut store, 200);
-    // By now a trigram names most of the field's values: a new value is
-    // only marked pending, in one chunk of one set.
+    store.fold().unwrap();
+    // By now a trigram names most of the field's values, and is kept by
+    // metarecord: a new value adds its id to the one chunk of `bbb`.
     let last = add(&mut store, vec![text("code", "bbbbbbbbbbbb")]);
-    assert_eq!(written(&store, "grams"), 0, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "index_trigram_holders"), 1, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "index_trigram_texts"), 0, "{:?}", store.last_write_keys());
     assert_eq!(search(&store, "code", "bbbbbbbbbbbb"), vec![last]);
+    // Nothing was left for a fold.
+    store.fold().unwrap();
+    assert_eq!(written(&store, "grams"), 0, "{:?}", store.last_write_keys());
     assert_eq!(search(&store, "code", &format!("^{}$", code(77))), vec![all[77]]);
     assert_eq!(search(&store, "code", "ab").len(), 199);
     check(&store);
 }
 
 #[test]
-fn a_fold_builds_the_trigrams_the_writes_left_pending() {
+fn a_fold_turns_the_trigrams_that_outgrew_their_lists() {
     let (mut store, _dir) = open();
     let all = codes(&mut store, 600);
     let pattern = format!("^{}$", code(77));
-    let pending = search_cost(&store, "code", &pattern);
+    let turning = search_cost(&store, "code", &pattern);
 
     store.fold().unwrap();
     check(&store);
     assert_eq!(search(&store, "code", &pattern), vec![all[77]]);
     let folded = search_cost(&store, "code", &pattern);
     assert!(
-        folded * 4 < pending,
-        "a search reads {folded} keys once folded, {pending} with every id pending"
+        folded * 4 < turning,
+        "a search reads {folded} keys once folded, {turning} with every trigram turning"
     );
 
-    // A write after the fold is pending again, alone: found, and the search
-    // still reads its candidates.
+    // A write after the fold files its id in the bitmaps of its two
+    // trigrams: found, and the other searches read no more.
     let late = add(&mut store, vec![text("code", "babababababab")]);
-    assert_eq!(written(&store, "grams"), 0, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "index_trigram_holders"), 2, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "index_trigram_texts"), 0, "{:?}", store.last_write_keys());
     assert_eq!(search(&store, "code", "babababababab"), vec![late]);
     assert_eq!(search(&store, "code", &pattern), vec![all[77]]);
-    assert!(search_cost(&store, "code", &pattern) <= folded + 10);
+    assert!(search_cost(&store, "code", &pattern) <= folded + 2);
     check(&store);
+}
+
+/// A mass write gaining a text in a field whose trigrams are by metarecord
+/// files its ids at once, chunk by chunk: a search right after it, before
+/// any fold, does not check them.
+#[test]
+fn a_mass_write_files_its_ids_in_the_trigrams_at_once() {
+    let (mut store, _dir) = open();
+    let all = codes(&mut store, 600);
+    store.fold().unwrap();
+    let pattern = format!("^{}$", code(77));
+    let folded = search_cost(&store, "code", &pattern);
+
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.mass_add("code", Value::String("bbbbbb".into()), &all[100..400]).unwrap();
+    w.commit().unwrap();
+    // `bbb`, which the pattern has not: the 300 ids in its one chunk.
+    assert_eq!(written(&store, "index_trigram_holders"), 1, "{:?}", store.last_write_keys());
+
+    assert_eq!(search(&store, "code", &pattern), vec![all[77]]);
+    // The 300 ids are no candidates: what the search reads more is the
+    // write's entries, which every record read applies until a fold (with
+    // its ids pending, before November 2026, it read 629 keys).
+    let after = search_cost(&store, "code", &pattern);
+    assert!(after < 3 * folded, "a search reads {after} keys after the write, {folded} before");
+    let mut expected = all[100..400].to_vec();
+    expected.sort();
+    assert_eq!(search(&store, "code", "^bbbbbb$"), expected);
+    check(&store);
+    // The fold has the entries to write in, and no trigram to build.
+    store.fold().unwrap();
+    assert_eq!(search_cost(&store, "code", &pattern), folded);
 }
 
 #[test]
@@ -201,9 +240,12 @@ fn a_reindex_leaves_nothing_pending_in_either_mode() {
     store.fold().unwrap();
     assert_eq!(search_cost(&store, "code", &pattern), reindexed, "the reindex folded already");
 
-    // Each field kept its mode: the one of many values writes no trigram.
+    // Each field kept its mode: the one of many values files the id in the
+    // bitmaps of `abb`, `bba`, `baa`, `aab`, the tag the field holds writes
+    // nothing.
     add(&mut store, vec![text("code", "abbaabbaabba"), text("tag", "holiday")]);
-    assert_eq!(written(&store, "grams"), 0, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "index_trigram_holders"), 4, "{:?}", store.last_write_keys());
+    assert_eq!(written(&store, "index_trigram_texts"), 0, "{:?}", store.last_write_keys());
     check(&store);
 }
 
@@ -231,6 +273,43 @@ fn a_store_of_the_former_trigram_format_is_reindexed_when_it_opens() {
     let store = KvStore::open(dir.path()).unwrap();
     check(&store);
     assert_eq!(search(&store, "tag", "olid"), vec![tagged]);
+}
+
+/// A store of format 26 kept ids pending in a table of their own, which its
+/// bitmaps lacked: it is reindexed when it opens, and the table goes.
+#[test]
+fn a_store_whose_trigram_ids_were_pending_is_reindexed_and_loses_the_table() {
+    let (mut store, dir) = open();
+    let all = codes(&mut store, 200);
+    drop(store);
+    {
+        let env = common::kv::raw_env(dir.path());
+        let holders = common::kv::open_raw(&env, "index_trigram_holders");
+        let pending = common::kv::create_raw(&env, "index_trigram_pending");
+        let meta = common::kv::open_raw(&env, "version");
+        let mut w = env.write_txn().unwrap();
+        holders.clear(&mut w).unwrap();
+        pending.put(&mut w, b"code", b"ids").unwrap();
+        meta.put(&mut w, b"derived_version", &26u64.to_be_bytes()).unwrap();
+        w.commit().unwrap();
+    }
+    let store = KvStore::open(dir.path()).unwrap();
+    check(&store);
+    assert_eq!(search(&store, "code", &format!("^{}$", code(77))), vec![all[77]]);
+    drop(store);
+    let env = common::kv::raw_env(dir.path());
+    let r = env.read_txn().unwrap();
+    let table: Option<common::kv::Raw> = env
+        .open_databases_and_commit(r, |dbo, r| -> heed::Result<_> {
+            Ok(heed::CommitOrAbort::<_, ()>::Commit(
+                dbo.open_database(r, Some("index_trigram_pending"))?,
+            ))
+        })
+        .unwrap()
+        .commit()
+        .unwrap();
+    let gone = table.is_none();
+    assert!(gone, "the table of pending ids is still there");
 }
 
 /// Names as files are named, `file0.txt`, `file1.txt`…: `fil`, `ile`, `txt`
@@ -266,14 +345,16 @@ fn the_common_trigrams_of_a_field_turn_and_the_rare_ones_stay() {
     };
     all(&store, &names, "with the common trigrams turning");
 
-    // A new name: its common trigrams have turned, so its id waits for a
-    // fold, and only its rare trigrams write their lists.
+    // A new name: its common trigrams turning, its id goes in their bitmaps,
+    // and only its rare trigrams write their lists.
     let late = add(&mut store, vec![text("name", "file9999.txt")]);
-    assert_eq!(written(&store, "index_trigram_pending"), 1, "{:?}", store.last_write_keys());
+    let bitmaps = written(&store, "index_trigram_holders");
+    assert!(bitmaps > 0, "no bitmap written: {:?}", store.last_write_keys());
     let lists = written(&store, "index_trigram_texts");
     assert!(lists > 0 && lists < 10, "{lists} lists written: {:?}", store.last_write_keys());
+    assert_eq!(bitmaps + lists, 9, "one key per trigram: {:?}", store.last_write_keys());
     names.push(("file9999.txt".into(), late));
-    all(&store, &names, "a name pending");
+    all(&store, &names, "a name written after the trigrams turned");
 
     store.fold().unwrap();
     all(&store, &names, "folded");

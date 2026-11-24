@@ -135,7 +135,6 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`index_trigram_holders` |F · trigram · chunk |bitmap |the ids holding a trigram kept by metarecord |
 |`index_trigram_state` |F |by_ids · trigrams turning |whether a trigram of the field is by metarecord, the ones turning |
 |`index_long_texts` |F · chunk |bitmap |the ids whose text is too long for trigrams |
-|`index_trigram_pending` |F · chunk |bitmap |in a field with a trigram by metarecord, the ids written since the last fold |
 |`index_histogram_rows` |F · bucket |rows (count) |the planner's estimate of a range ([[Query planner]]) |
 |`index_histogram_keys` |F · bucket |posting keys (count) |the cost of walking it |
 |`index_pending_writes` |F · chunk · write number |kind · content · the ids of the chunk |a write to many records' values not yet in the postings ([[Mass writes in the store]]) |

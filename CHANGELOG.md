@@ -32,6 +32,13 @@ than breaking them.
   keys instead of 2 863 (doc "Text search in the store"). Each repository is
   reindexed once when it is first opened by this version.
 
+- **A text search no longer slows down after files are written, until the next
+  fold**: a write files its ids in the trigrams of its texts at once, where it left
+  them pending for an idle fold, which every search had to check — 2 237 keys instead
+  of 1 275 for `file1` among 2 000 names after 50 new ones. `mf repo wear`'s
+  `trigrams` (`trigrams_pending` on the wire) now counts the trigrams a fold has to
+  turn, not ids (doc "Text search in the store").
+
 - **Each repository is reindexed once when it is first opened** by this version: an
   index key no longer begins with a byte naming its former kind, a byte less per key
   (doc "Store tables").

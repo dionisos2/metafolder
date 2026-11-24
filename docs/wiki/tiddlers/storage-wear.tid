@@ -13,7 +13,7 @@ two counters, and `GET /repos/:repo/wear` ([[GET /repos/:repo/wear]]) serves it,
 |!Field |!Means |
 |`pending_writes`, `pending_write_parts`, `pending_write_bytes` |pending writes of the parts (`pending_writes`, [[Mass writes in the store]]), the parts they are in, their size |
 |`index_writes`, `index_write_fields`, `index_write_bytes` |pending index writes of the fields' values (`index_pending_writes`), the fields, their size |
-|`trigrams_pending` |ids whose trigrams a fold has still to build ([[Text search in the store]]) |
+|`trigrams_pending` |trigrams turning, whose bitmap a fold has still to build ([[Text search in the store]]) |
 
 Every read of a record pays for the pending writes of its part and every read of a
 field's values for the field's pending index writes, so the cost of reading grows with these. The idle fold

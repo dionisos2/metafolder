@@ -984,3 +984,39 @@ fn a_common_name_pattern_costs_no_more_than_a_scan_of_the_names() {
     let (_, page) = reads(&kv, &q, &[], false);
     assert!(page < n as u64, "a page within a range: {page} keys for {n} names");
 }
+
+/// Names written one by one after the fold, as the watcher writes new files:
+/// each is filed in the bitmaps of its trigrams at once, a key per trigram at
+/// most, and a search after them checks none of them unless it matches
+/// (with their ids pending, before November 2026, it checked them all until
+/// the next fold).
+#[test]
+fn names_written_after_a_fold_cost_a_key_per_trigram_and_no_check() {
+    let n = 2_000;
+    let (mut kv, _root) = short_names(n);
+    let q = value_matches("loc", "file1");
+    let (found, before) = reads(&kv, &q, &[], true);
+    assert_eq!(found, 1_111);
+    let folder = Forest::new(false).resolve_path(&kv, "loc", "/d0").unwrap().expect("d0");
+    for i in n..n + 50 {
+        let name = format!("file{i}.txt");
+        let mut w = Writer::begin(&mut kv, None).unwrap();
+        w.create_metarecord(vec![Field::new(
+            "loc",
+            Value::TreeRef { parent: Some(folder), name: name.clone().into() },
+        )])
+        .unwrap();
+        w.commit().unwrap();
+        let keys = kv.last_write_keys();
+        let grams: u64 = ["index_trigram_texts", "index_trigram_holders", "index_trigram_state"]
+            .iter()
+            .map(|t| keys.get(*t).copied().unwrap_or(0))
+            .sum();
+        let distinct: std::collections::BTreeSet<_> =
+            name.as_bytes().windows(3).map(<[u8]>::to_vec).collect();
+        assert!(grams <= distinct.len() as u64, "{name}: {grams} trigram keys: {keys:?}");
+    }
+    let (found, after) = reads(&kv, &q, &[], true);
+    assert_eq!(found, 1_111);
+    assert!(after <= before + 5, "a search reads {after} keys after 50 names, {before} before");
+}

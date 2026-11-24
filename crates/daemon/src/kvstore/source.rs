@@ -342,22 +342,11 @@ impl KvSource<'_> {
         found
     }
 
-    /// How `field`'s trigrams are kept; a read.
-    fn gram_state(&self, field: &str) -> derived::GramState {
-        let read = || -> Result<derived::GramState> {
-            self.read_keys(1)?;
-            derived::GramState::decode(
-                self.t.index_trigram_state.get(&self.r, &derived::gram_state_key(field))?,
-            )
-        };
-        self.ok(read(), Default::default())
-    }
-
     /// What `grams` say of `field`'s texts (doc "Text search in the store"),
     /// a key or a few per trigram: the texts listed under every trigram kept
     /// by value — a list holds at most [`derived::GRAM_TEXTS_MAX`] texts, so
     /// this side is short — and the ids under every trigram kept by
-    /// metarecord, within `restrict`, with the ids pending. A trigram turning
+    /// metarecord, within `restrict`. A trigram turning
     /// narrows neither side; one no text holds empties the ids side.
     fn gram_lookup(
         &self,
@@ -399,15 +388,6 @@ impl KvSource<'_> {
                             Some(prev) => prev & held,
                         });
                     }
-                }
-            }
-            if let Some(ids) = ids.as_mut() {
-                if self.gram_state(field).by_ids {
-                    let mut pending = self.set(derived::IndexSet::TrigramPending, Some(field));
-                    if let Some(r) = restrict {
-                        pending &= r;
-                    }
-                    *ids |= pending;
                 }
             }
             Ok(GramLookup { texts, ids })
@@ -1064,7 +1044,7 @@ impl KvSource<'_> {
     /// listed under all of them are few: each is tested on its key, and the
     /// holders of those that match are the answer — but for the texts whose
     /// key is cut, which are left to check. Otherwise the ids under the
-    /// trigrams kept by metarecord, and those pending, are candidates to check.
+    /// trigrams kept by metarecord are candidates to check.
     /// Either way with the texts too long to be split.
     fn gram_answer(
         &self,
@@ -1145,15 +1125,7 @@ impl KvSource<'_> {
         let region: &[u8] = if part == VALUE { &[2] } else { &[] };
         match self.gram_answer(field, keep, literals, restrict) {
             GramAnswer::Exact(out, undecided) => return out | self.having(undecided, field, &text),
-            // Checked one by one, unless the ids awaiting a fold are so many
-            // that the scan below is the cheaper way to all of them.
-            GramAnswer::Candidates(candidates) => {
-                let pending =
-                    &candidates & self.set(derived::IndexSet::TrigramPending, Some(field));
-                if plan::probes(pending.len(), self.present(field).len()) {
-                    return self.having(candidates, field, &text);
-                }
-            }
+            GramAnswer::Candidates(candidates) => return self.having(candidates, field, &text),
             GramAnswer::Nothing => {}
         }
         if let Some(r) = restrict {
@@ -1261,8 +1233,7 @@ fn name_of(v: &Value) -> Option<String> {
 struct GramLookup {
     /// The texts listed under every trigram kept by value, when one is.
     texts: Option<Vec<derived::GramText>>,
-    /// The ids under every trigram kept by metarecord, with those pending,
-    /// when one is.
+    /// The ids under every trigram kept by metarecord, when one is.
     ids: Option<RoaringBitmap>,
 }
 
@@ -1600,13 +1571,7 @@ impl Source for KvSource<'_> {
         if self.kind(field) != Some(Kind::Reference { tree: true }) {
             return Some(Vec::new());
         }
-        let mut candidates = self.text_candidates(field, keep, literals, within)?;
-        // Most of them ids awaiting a fold, which no trigram narrowed: the
-        // names are scanned first, so that only the matching nodes are read.
-        let pending = &candidates & self.set(derived::IndexSet::TrigramPending, Some(field));
-        if !plan::probes(pending.len(), self.present(field).len()) {
-            candidates = self.sift(self.scan(field, NAME, &name_of, keep, literals, within));
-        }
+        let candidates = self.text_candidates(field, keep, literals, within)?;
         let read = || -> Result<Vec<NamedNode>> {
             let mut out = Vec::new();
             for id in &candidates {

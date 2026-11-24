@@ -86,7 +86,6 @@ struct Tables {
     index_parent_holders: Db,
     index_descendants: Db,
     index_value_holders: Db,
-    index_trigram_pending: Db,
     index_value_counts: Db,
     index_raw_holder: Db,
     index_trigram_texts: Db,
@@ -123,7 +122,6 @@ const NAMES: [&str; table::TABLES] = [
     "index_parent_holders",
     "index_descendants",
     "index_value_holders",
-    "index_trigram_pending",
     "index_value_counts",
     "index_raw_holder",
     "index_trigram_texts",
@@ -152,7 +150,7 @@ impl Tables {
         let dbs = created.commit().expect("the databases are committed");
         let mut index = 0..;
         let dbs = dbs.map(|db| Db::new(db, index.next().expect("unbounded")));
-        let [version, global_primary_state, metarecords, live_metarecords, pending_writes, field_types, log_entries, log_targets, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_trigram_pending, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
+        let [version, global_primary_state, metarecords, live_metarecords, pending_writes, field_types, log_entries, log_targets, log_entries_by_context, log_entries_by_metarecord, log_contexts, log_context_children, log_reverted_by, log_watcher_entries, log_user_entries, global_derived_state, ids, uuids, index_parents, index_long_texts, index_parent_holders, index_descendants, index_value_holders, index_value_counts, index_raw_holder, index_trigram_texts, index_trigram_holders, index_trigram_state, index_histogram_rows, index_histogram_keys, index_pending_writes, log_context_reverts] =
             dbs;
         Ok(Tables {
             version,
@@ -178,7 +176,6 @@ impl Tables {
             index_parent_holders,
             index_descendants,
             index_value_holders,
-            index_trigram_pending,
             index_value_counts,
             index_raw_holder,
             index_trigram_texts,
@@ -217,7 +214,6 @@ impl Tables {
             self.index_parent_holders,
             self.index_descendants,
             self.index_value_holders,
-            self.index_trigram_pending,
             self.index_value_counts,
             self.index_raw_holder,
             self.index_trigram_texts,
@@ -2065,7 +2061,8 @@ impl KvStore {
     /// layout holds no data in them, so this runs at every open, and does
     /// nothing when there are none.
     fn remove_older_tables(&self) -> Result<()> {
-        const OLDER: [&str; 29] = [
+        const OLDER: [&str; 30] = [
+            "index_trigram_pending",
             "meta",
             "log_label_keys",
             "ops_by_label",
@@ -2104,7 +2101,7 @@ impl KvStore {
                 for name in OLDER {
                     found.push(dbo.open_database::<Bytes, Bytes>(r, Some(name))?);
                 }
-                let found: [_; 29] = found.try_into().expect("one per name");
+                let found: [_; 30] = found.try_into().expect("one per name");
                 Ok(CommitOrAbort::<_, ()>::Commit(found))
             })?
             .commit()

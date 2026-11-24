@@ -5,7 +5,7 @@ audience: dev
 summary: What writes to many records leave pending is folded into the store by a thread of the repository, after thirty seconds without activity, one list per step, the biggest first.
 
 A write to many records leaves lists pending — the pending writes of a part, the
-pending index writes of a field, the trigrams kept by metarecord ([[Mass writes in the store]],
+pending index writes of a field, the trigrams turning by metarecord ([[Mass writes in the store]],
 [[Text search in the store]]) — and every read pays for them until they are folded. The fold is work
 the user did not ask for at that moment, so it waits for a moment when nobody is
 asking for anything.
@@ -31,8 +31,8 @@ a file touched every few seconds must not keep the repository busy for ever.
 !! How
 
 One ''list'' per step — a part's pending writes, a field's pending index writes in
-one chunk of 65 536 ids, a field's pending trigrams, the log entries not yet indexed
-by metarecord — the biggest first (bytes for the first two, ids for the third), each
+one chunk of 65 536 ids, a field's trigrams turning, the log entries not yet indexed
+by metarecord — the biggest first (bytes for the first two, trigrams for the third), each
 in a transaction of its own (`KvStore::fold_step`): a read or a write that arrives
 waits for one list, not for all of them. After a fold the next step is one second
 later (`NEXT`) if the repository is still quiet; with nothing left, the thread looks
