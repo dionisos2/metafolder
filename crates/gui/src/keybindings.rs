@@ -2279,6 +2279,12 @@ vars.y = ","
             (vec!["m", "q", "r"], "metarecord:bulk query remove"),
             (vec!["m", "q", "u"], "metarecord:bulk query unset"),
             (vec!["m", "q", "d"], "metarecord:bulk query delete"),
+            (vec!["m", "m", "e"], "metarecord:bulk selection replace"),
+            (vec!["shift+m", "e"], "metarecord:bulk selection replace"),
+            (vec!["m", "q", "e"], "metarecord:bulk query replace"),
+            (vec!["m", "m", "n"], "metarecord:bulk selection rename"),
+            (vec!["shift+m", "n"], "metarecord:bulk selection rename"),
+            (vec!["m", "q", "n"], "metarecord:bulk query rename"),
         ] {
             let keys: Vec<&str> = keys;
             let found = bound(&keys);

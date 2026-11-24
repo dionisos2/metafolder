@@ -11,16 +11,22 @@ summary: Bulk operation on the selection or the current query
 
 * ``m m a`` → ``metarecord:bulk selection add``
 * ``m m d`` → ``metarecord:bulk selection delete``
+* ``m m e`` → ``metarecord:bulk selection replace``
+* ``m m n`` → ``metarecord:bulk selection rename``
 * ``m m r`` → ``metarecord:bulk selection remove``
 * ``m m s`` → ``metarecord:bulk selection set``
 * ``m m u`` → ``metarecord:bulk selection unset``
 * ``m q a`` → ``metarecord:bulk query add``
 * ``m q d`` → ``metarecord:bulk query delete``
+* ``m q e`` → ``metarecord:bulk query replace``
+* ``m q n`` → ``metarecord:bulk query rename``
 * ``m q r`` → ``metarecord:bulk query remove``
 * ``m q s`` → ``metarecord:bulk query set``
 * ``m q u`` → ``metarecord:bulk query unset``
 * ``shift+m a`` → ``metarecord:bulk selection add``
 * ``shift+m d`` → ``metarecord:bulk selection delete``
+* ``shift+m e`` → ``metarecord:bulk selection replace``
+* ``shift+m n`` → ``metarecord:bulk selection rename``
 * ``shift+m r`` → ``metarecord:bulk selection remove``
 * ``shift+m s`` → ``metarecord:bulk selection set``
 * ``shift+m u`` → ``metarecord:bulk selection unset``

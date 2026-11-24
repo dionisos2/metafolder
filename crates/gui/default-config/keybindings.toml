@@ -605,16 +605,22 @@ vars.index = "i"
 "shift+{record} {add}" = { command = "metarecord:bulk selection add" }
 "shift+{record} {remove}" = { command = "metarecord:bulk selection remove" }
 "shift+{record} {unset}" = { command = "metarecord:bulk selection unset" }
+"shift+{record} {edit}" = { command = "metarecord:bulk selection replace" }
+"shift+{record} {rename}" = { command = "metarecord:bulk selection rename" }
 "shift+{record} {delete}" = { command = "metarecord:bulk selection delete" }
 "{record} {record} {set}" = { command = "metarecord:bulk selection set" }
 "{record} {record} {add}" = { command = "metarecord:bulk selection add" }
 "{record} {record} {remove}" = { command = "metarecord:bulk selection remove" }
 "{record} {record} {unset}" = { command = "metarecord:bulk selection unset" }
+"{record} {record} {edit}" = { command = "metarecord:bulk selection replace" }
+"{record} {record} {rename}" = { command = "metarecord:bulk selection rename" }
 "{record} {record} {delete}" = { command = "metarecord:bulk selection delete" }
 "{record} {query-verb} {set}" = { command = "metarecord:bulk query set" }
 "{record} {query-verb} {add}" = { command = "metarecord:bulk query add" }
 "{record} {query-verb} {remove}" = { command = "metarecord:bulk query remove" }
 "{record} {query-verb} {unset}" = { command = "metarecord:bulk query unset" }
+"{record} {query-verb} {edit}" = { command = "metarecord:bulk query replace" }
+"{record} {query-verb} {rename}" = { command = "metarecord:bulk query rename" }
 "{record} {query-verb} {delete}" = { command = "metarecord:bulk query delete" }
 "shift+delete" = [
   { command = "metarecord:delete", when = "metarecord-list" },
