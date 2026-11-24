@@ -38,7 +38,7 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   turns a name that is not UTF-8 into its displayed form (=%XX=). The wire would
   carry such a string as paths are carried, ={text, bytes}= (doc "Tree
   names").
-- The bench's history is stale: =2c8bb168= measured today is 4 to 12 times slower
+- The bench's history is stale: =2c8bb168= measured on 23 November 2026 is 4 to 12 times slower
   than its own baseline of 9 November on every =query.*= scenario (=query.count=
   0.77 ms against 0.14), so the bench's verdicts against it mean nothing until a
   new baseline is recorded on a neutral machine (doc "The timed regression
@@ -57,6 +57,10 @@ full validation at creation, range constraints.
 
 ** Watcher open questions
 doc "Watcher open questions": a per-repository choice of source.
+
+** Configuration open questions
+doc "Configuration open questions": installing without a source checkout, the
+defaults embedded in =metafolder-sync-config=.
 
 ** Platform open questions
 doc "Platform open questions": Unicode normalisation of names, Windows long
