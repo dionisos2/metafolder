@@ -583,12 +583,35 @@ fn test_field_rename_moves_every_value() {
 }
 
 #[test]
-fn test_field_replace_and_rename_need_one_metarecord() {
+fn test_field_replace_and_rename_over_a_query() {
     let (repo, _root) = init_repo("field_replace_q");
-    create_metarecord(&repo, &["tag:string=jazz"]);
-    let query = ["-u", &repo, "metarecord", "-q", "tag IS PRESENT", "field"];
-    assert_eq!(mf(&[&query[..], &["replace", "tag:string=jazz", "blues"]].concat()).code, 2);
-    assert_eq!(mf(&[&query[..], &["rename", "tag", "label"]].concat()).code, 2);
+    let a = create_metarecord(&repo, &["tag:string=jazz", "tag:string=live", "pick:bool=true"]);
+    let b = create_metarecord(&repo, &["tag:string=jazz", "pick:bool=true"]);
+    let other = create_metarecord(&repo, &["tag:string=jazz"]);
+    let query = ["-u", &repo, "metarecord", "-q", "pick IS PRESENT", "field"];
+    let run = |args: &[&str]| mf(&[&query[..], args].concat());
+
+    // The count of the matches changed is printed, as the other verbs over a
+    // query print theirs.
+    let out = run(&["replace", "tag:string=jazz", "blues"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "2");
+    assert_eq!(values_of(&repo, &a, "tag"), ["\"blues\"", "\"live\""]);
+    assert_eq!(values_of(&repo, &b, "tag"), ["\"blues\""]);
+    assert_eq!(values_of(&repo, &other, "tag"), ["\"jazz\""]);
+
+    // By an absence beside other values: refused whole, nothing written.
+    let out = run(&["replace", "tag:string=blues", "--nothing"]);
+    assert_ne!(out.code, 0, "nothing beside other values must fail");
+    assert!(out.stderr.contains(&a), "the refusal names {a}: {}", out.stderr);
+    assert_eq!(values_of(&repo, &b, "tag"), ["\"blues\""]);
+
+    let out = run(&["rename", "tag", "label"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "2");
+    assert_eq!(values_of(&repo, &a, "label"), ["\"blues\"", "\"live\""]);
+    assert!(values_of(&repo, &a, "tag").is_empty());
+    assert_eq!(values_of(&repo, &other, "tag"), ["\"jazz\""]);
 }
 
 /// One vocabulary across the daemon, the CLI and the GUI: `set` / `add` /

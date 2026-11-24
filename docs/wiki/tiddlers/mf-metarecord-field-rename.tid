@@ -1,6 +1,6 @@
 title: mf metarecord field rename
 tags: [[CLI command]] [[Data model]]
 kind: reference
-summary: Rename the field on this metarecord: every value moves (requires -i)
+summary: Rename the field: every value moves
 
-Moves every value of the field to the new name, `nothing` rows included; refused when the metarecord already has a field of that name ([[Editing metarecords from the command line]]).
+Moves every value of the field to the new name, `nothing` rows included; refused when the metarecord already has a field of that name — over a query, on every match having it, the whole write refused when one already has it ([[Editing metarecords from the command line]]).

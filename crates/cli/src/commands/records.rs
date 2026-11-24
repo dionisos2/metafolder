@@ -524,20 +524,9 @@ pub fn field_unset(ctx: &Ctx, selector: &str, name: &str, force: bool) -> Result
     Ok(0)
 }
 
-/// The one metarecord `field replace` and `field rename` work on: they have
-/// no form over a query.
-fn one_metarecord(selector: &str, verb: &str) -> Result<uuid::Uuid, CliError> {
-    match parse_target(selector)? {
-        Target::Entry(uuid) => Ok(uuid),
-        Target::Predicate(_) => {
-            Err(CliError::Usage(format!("field {verb} works on one metarecord: give -i <uuid>")))
-        }
-    }
-}
-
-/// `mf metarecord -i <uuid> field replace <spec> (<value> | --nothing)` —
+/// `mf metarecord <sel> field replace <spec> (<value> | --nothing)` —
 /// replaces the value the spec names by another, the field's other values
-/// staying. `to` is the new value alone, read as the type of the one replaced
+/// staying; over a query, on every match holding it, and prints how many. `to` is the new value alone, read as the type of the one replaced
 /// (as `value_type` when that one is `nothing`); `None` replaces by an absence.
 pub fn field_replace(
     ctx: &Ctx,
@@ -547,7 +536,6 @@ pub fn field_replace(
     value_type: Option<&str>,
     force: bool,
 ) -> Result<i32, CliError> {
-    let uuid = one_metarecord(selector, "replace")?;
     let (name, from) = parse_spec(spec)?;
     let from_type = from["type"].as_str().unwrap_or_default();
     let read_as = match (from_type, value_type) {
@@ -571,13 +559,23 @@ pub fn field_replace(
         None => json!({"type": "nothing"}),
     };
     let base = ctx.repo_base()?;
-    let body = json!({"value": from, "to": to, "force": force});
-    ctx.client.request("PATCH", &field_url(&base, uuid, &name), &[], Some(&body))?;
+    match parse_target(selector)? {
+        Target::Entry(uuid) => {
+            let body = json!({"value": from, "to": to, "force": force});
+            ctx.client.request("PATCH", &field_url(&base, uuid, &name), &[], Some(&body))?;
+        }
+        Target::Predicate(query) => {
+            let body = json!({"query": query, "name": name, "value": from, "to": to,
+                              "force": force});
+            let resp = ctx.client.post(&format!("{base}/query/fields/replace"), &body)?;
+            println!("{}", resp["updated"].as_u64().unwrap_or(0));
+        }
+    }
     Ok(0)
 }
 
-/// `mf metarecord -i <uuid> field rename <name> <to>` — renames the field on
-/// that metarecord: every value moves.
+/// `mf metarecord <sel> field rename <name> <to>` — renames the field: every
+/// value moves; over a query, on every match having it, and prints how many.
 pub fn field_rename(
     ctx: &Ctx,
     selector: &str,
@@ -585,10 +583,18 @@ pub fn field_rename(
     to: &str,
     force: bool,
 ) -> Result<i32, CliError> {
-    let uuid = one_metarecord(selector, "rename")?;
     let base = ctx.repo_base()?;
-    let body = json!({"to": to, "force": force});
-    ctx.client.post(&format!("{}/rename", field_url(&base, uuid, name)), &body)?;
+    match parse_target(selector)? {
+        Target::Entry(uuid) => {
+            let body = json!({"to": to, "force": force});
+            ctx.client.post(&format!("{}/rename", field_url(&base, uuid, name)), &body)?;
+        }
+        Target::Predicate(query) => {
+            let body = json!({"query": query, "name": name, "to": to, "force": force});
+            let resp = ctx.client.post(&format!("{base}/query/fields/rename"), &body)?;
+            println!("{}", resp["updated"].as_u64().unwrap_or(0));
+        }
+    }
     Ok(0)
 }
 

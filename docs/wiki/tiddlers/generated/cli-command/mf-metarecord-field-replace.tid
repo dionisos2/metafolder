@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf metarecord field replace
 catalog: CLI command
 target: mf metarecord field replace
-summary: Replace one value of the field by another (requires -i)
+summary: Replace one value of the field by another, the other values staying
 
 !! Reference
 
 ```
-Replace one value of the field by another (requires -i)
+Replace one value of the field by another, the other values staying
 
 Usage: mf metarecord field replace [OPTIONS] <SPEC> [VALUE]
 

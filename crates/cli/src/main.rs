@@ -840,7 +840,7 @@ enum FieldVerb {
         #[arg(long, short = 'f')]
         force: bool,
     },
-    /// Replace one value of the field by another (requires -i)
+    /// Replace one value of the field by another, the other values staying
     Replace {
         /// Field spec name:type[=value] — the value to replace
         spec: String,
@@ -856,7 +856,7 @@ enum FieldVerb {
         #[arg(long, short = 'f')]
         force: bool,
     },
-    /// Rename the field on this metarecord: every value moves (requires -i)
+    /// Rename the field: every value moves
     Rename {
         name: String,
         to: String,
