@@ -53,12 +53,7 @@ pub fn in_userns(test: &str) -> bool {
         eprintln!("skipped: user namespaces are not available here");
         return false;
     }
-    let scratch = std::env::temp_dir().join("metafolder-tests").join(format!(
-        "watchd-{}-{}",
-        test.rsplit("::").next().unwrap(),
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&scratch).unwrap();
+    let scratch = short_dir();
     rerun(test, &["unshare", "-rm", "--"], scratch.to_str().unwrap());
     std::fs::remove_dir_all(&scratch).ok();
     false
@@ -86,4 +81,17 @@ pub fn with_descriptor_limit<T>(cur: Option<u64>, f: impl FnOnce() -> T) -> T {
     let out = f();
     setrlimit(Resource::Nofile, old).unwrap();
     out
+}
+
+/// A new empty directory under the tests' temporary directory, its name short:
+/// a Unix socket's path must fit `sun_path` (108 bytes, its final zero
+/// included), and a test's name in it would not, under a deep `TMPDIR`.
+pub fn short_dir() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join("metafolder-tests").join(format!("w{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
 }

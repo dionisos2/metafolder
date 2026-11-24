@@ -313,19 +313,14 @@ mod tests {
         assert_eq!(format!("{err:#}"), "mounts appearing later will not be covered: no /proc");
     }
 
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("watchd-bind-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn scratch_dir() -> PathBuf {
+        crate::test_support::short_dir()
     }
 
     #[test]
     fn test_the_socket_is_bound_world_connectable_replacing_a_stale_one() {
         use std::os::unix::fs::MetadataExt;
-        let dir = scratch_dir("ok");
+        let dir = scratch_dir();
         let socket = dir.join("run/watchd.sock"); // Its directory made on the way.
         let first = bind(&socket).unwrap();
         assert_eq!(std::fs::metadata(&socket).unwrap().mode() & 0o777, 0o666);
@@ -347,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_a_socket_that_cannot_be_bound_says_why() {
-        let dir = scratch_dir("fail");
+        let dir = scratch_dir();
         let text = |r: Result<UnixListener>| format!("{:#}", r.unwrap_err());
 
         let occupied = dir.join("occupied");

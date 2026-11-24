@@ -1186,13 +1186,8 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("watchd-sim-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::canonicalize(dir).unwrap()
+    fn scratch() -> PathBuf {
+        std::fs::canonicalize(crate::test_support::short_dir()).unwrap()
     }
 
     /// A subscriber of `broker` watching `root`, handshake done.
@@ -1238,8 +1233,8 @@ mod tests {
             .collect()
     }
 
-    fn started(name: &str) -> (SimBroker, PathBuf, BufReader<UnixStream>) {
-        let mount = scratch(name);
+    fn started() -> (SimBroker, PathBuf, BufReader<UnixStream>) {
+        let mount = scratch();
         let root = mount.join("repo");
         std::fs::create_dir(&root).unwrap();
         let broker = SimBroker::start(&mount.join("watchd.sock"), &mount).unwrap();
@@ -1253,7 +1248,7 @@ mod tests {
 
     #[test]
     fn test_operations_reach_a_subscriber_as_the_kernel_reports_them() {
-        let (broker, root, mut r) = started("ops");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         fs.create_dir(root.join("d")).unwrap();
         fs.write(root.join("d/x"), b"x").unwrap();
@@ -1285,7 +1280,7 @@ mod tests {
 
     #[test]
     fn test_data_and_attribute_changes_are_reported() {
-        let (broker, root, mut r) = started("data");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         fs.write(root.join("f"), b"one").unwrap();
         fs.write(root.join("f"), b"two").unwrap();
@@ -1315,7 +1310,7 @@ mod tests {
         // The kernel queues handles; the broker resolves them when it reads.
         // A folder made, filled and renamed before the read: its content is
         // reported inside the folder's *new* name, and before the rename.
-        let (broker, root, mut r) = started("late");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         {
             let _held = fs.hold();
@@ -1339,7 +1334,7 @@ mod tests {
         // (identical records) and queues two renames — the stream alone ends
         // with the file at `a`. The object is at `b`, and the hop the stream
         // lacks repeats one it holds: the broker puts it back.
-        let (broker, root, mut r) = started("pingpong");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         fs.write(root.join("ping"), b"p").unwrap();
         received(&mut r);
@@ -1365,7 +1360,7 @@ mod tests {
         // unread, an event is dropped and the overflow event queued in its
         // place — once, however many follow — and a full queue merges nothing
         // either (the check comes before the merge). Reading makes room again.
-        let mount = scratch("overflow");
+        let mount = scratch();
         let fs = SimFs::new(&mount).unwrap();
         assert!(fs.group().cover(std::slice::from_ref(&mount)).is_empty());
         fs.set_max_queued_events(2);
@@ -1392,7 +1387,7 @@ mod tests {
         // A repository deleted while its daemon still subscribes: its root can
         // no longer be covered. That is nothing to the next subscriber, whose
         // handshake must be the plain answer to its own subscription.
-        let (broker, root, _first) = started("goneroot");
+        let (broker, root, _first) = started();
         std::fs::remove_dir_all(&root).unwrap();
         let other = broker.fs().mount().join("other");
         std::fs::create_dir(&other).unwrap();
@@ -1415,7 +1410,7 @@ mod tests {
     fn test_a_root_that_cannot_be_covered_is_denied_to_its_subscriber() {
         // Accessible, but not on the (simulated) filesystem: no mark covers it,
         // and its subscriber must not believe it is covered.
-        let (broker, _root, _first) = started("uncoverable");
+        let (broker, _root, _first) = started();
         let stream = UnixStream::connect(broker.socket()).unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let sub = ClientMsg::Subscribe { roots: vec!["/".into()] };
@@ -1435,7 +1430,7 @@ mod tests {
     fn test_a_file_removed_and_made_again_unread_arrives_in_that_order() {
         // Two objects, so two events the kernel keeps apart (the object's
         // handle is in each): the removal, then the creation.
-        let (broker, root, mut r) = started("remade");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         fs.write(root.join("doc"), b"1").unwrap();
         received(&mut r);
@@ -1457,7 +1452,7 @@ mod tests {
         // whose parent lives on, is reported. (Made behind the broker's back,
         // so no path of it is remembered: what the broker resolved in the last
         // moments it still can — `Memo`.)
-        let (broker, root, mut r) = started("gone");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         std::fs::write(root.join("a/b/f"), b"f").unwrap();
@@ -1470,7 +1465,7 @@ mod tests {
 
     #[test]
     fn test_what_happens_outside_the_roots_is_dropped_and_a_move_in_is_an_arrival() {
-        let (broker, root, mut r) = started("outside");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         let outside = fs.mount().join("elsewhere");
         fs.create_dir(&outside).unwrap();
@@ -1492,7 +1487,7 @@ mod tests {
 
     #[test]
     fn test_a_busy_directory_outside_is_silenced_and_heard_again_once_moved_in() {
-        let (broker, root, mut r) = started("busy");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         let cache = fs.mount().join("cache");
         busy(fs, &cache);
@@ -1516,7 +1511,7 @@ mod tests {
         // What happens in it between the move and its read is silenced: the
         // mark is lifted only once the move is read. The move itself is
         // there — an arrival, which the daemon walks, finding `new` then.
-        let (broker, root, mut r) = started("busylate");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         let cache = fs.mount().join("cache");
         busy(fs, &cache);
@@ -1532,7 +1527,7 @@ mod tests {
 
     #[test]
     fn test_a_new_subscription_flushes_the_ignore_marks() {
-        let (broker, _root, _r) = started("busyflush");
+        let (broker, _root, _r) = started();
         let fs = broker.fs();
         let cache = fs.mount().join("cache");
         busy(fs, &cache);
@@ -1545,7 +1540,7 @@ mod tests {
 
     #[test]
     fn test_records_can_be_emitted_by_hand() {
-        let (broker, root, mut r) = started("emit");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         std::fs::write(root.join("f"), b"f").unwrap(); // No event: not through the simulator.
         fs.emit(Raw::Create { path: root.join("f"), dir: false }).unwrap();
@@ -1569,7 +1564,7 @@ mod tests {
 
     #[test]
     fn test_nothing_is_queued_before_a_root_is_marked() {
-        let mount = scratch("unmarked");
+        let mount = scratch();
         let fs = SimFs::new(&mount).unwrap();
         fs.write(mount.join("f"), b"f").unwrap();
         assert!(fs.take_bytes().is_empty());
@@ -1584,7 +1579,7 @@ mod tests {
 
     #[test]
     fn test_a_read_takes_whole_events_that_fit() {
-        let mount = scratch("fit");
+        let mount = scratch();
         let fs = SimFs::new(&mount).unwrap();
         assert!(fs.group().cover(std::slice::from_ref(&mount)).is_empty());
         for n in 0..3 {
@@ -1610,8 +1605,8 @@ mod tests {
     // ── Several subscribers on one filesystem ────────────────────────────────
 
     /// A broker with two subscribers whose roots nest: `repo` and `repo/sub`.
-    fn nested(name: &str) -> (SimBroker, PathBuf, BufReader<UnixStream>, BufReader<UnixStream>) {
-        let (broker, root, outer) = started(name);
+    fn nested() -> (SimBroker, PathBuf, BufReader<UnixStream>, BufReader<UnixStream>) {
+        let (broker, root, outer) = started();
         broker.fs().create_dir(root.join("sub")).unwrap();
         let inner = subscriber(&broker, &root.join("sub"));
         (broker, root, outer, inner)
@@ -1619,7 +1614,7 @@ mod tests {
 
     #[test]
     fn test_nested_roots_each_see_a_move_across_the_boundary_from_their_side() {
-        let (broker, root, mut outer, mut inner) = nested("nested");
+        let (broker, root, mut outer, mut inner) = nested();
         received(&mut outer);
         let fs = broker.fs();
         fs.write(root.join("sub/f"), b"f").unwrap();
@@ -1649,7 +1644,7 @@ mod tests {
     fn test_nested_roots_read_late_each_get_where_things_are_by_then() {
         // One read serves both: a folder made in the inner root, filled, and
         // moved out to the outer one before the broker reads anything.
-        let (broker, root, mut outer, mut inner) = nested("nestedlate");
+        let (broker, root, mut outer, mut inner) = nested();
         received(&mut outer);
         let fs = broker.fs();
         {
@@ -1684,8 +1679,7 @@ mod tests {
     #[test]
     fn test_a_subscriber_leaving_leaves_the_overlapping_one_covered() {
         for leaving_outer in [false, true] {
-            let name = if leaving_outer { "leaveouter" } else { "leaveinner" };
-            let (broker, root, mut outer, inner) = nested(name);
+            let (broker, root, mut outer, inner) = nested();
             received(&mut outer);
             let (gone, mut stays) = if leaving_outer { (outer, inner) } else { (inner, outer) };
             drop(gone);
@@ -1696,14 +1690,14 @@ mod tests {
             assert_eq!(
                 tree(&received(&mut stays)),
                 vec![Event::Create { path: p(&root, "sub/after") }],
-                "{name}"
+                "leaving the outer one: {leaving_outer}"
             );
         }
     }
 
     #[test]
     fn test_the_inner_root_moved_away_is_not_announced_to_its_subscriber() {
-        let (broker, root, mut outer, mut inner) = nested("innermoved");
+        let (broker, root, mut outer, mut inner) = nested();
         received(&mut outer);
         let fs = broker.fs();
         fs.write(root.join("sub/f"), b"f").unwrap();
@@ -1740,7 +1734,7 @@ mod tests {
         {
             return;
         }
-        let (broker, root, mut r) = started("drive");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         fs.create_dir(root.join("usb")).unwrap();
         fs.mount_tmpfs(root.join("usb")).unwrap();
@@ -1772,7 +1766,7 @@ mod tests {
         if !in_userns("test_what_a_drive_queued_unread_goes_with_it") {
             return;
         }
-        let (broker, root, mut r) = started("driveunread");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         fs.create_dir(root.join("usb")).unwrap();
         fs.mount_tmpfs(root.join("usb")).unwrap();
@@ -1801,7 +1795,7 @@ mod tests {
         if !in_userns("test_a_drive_outside_every_root_queues_nothing_until_mounted_under_one") {
             return;
         }
-        let (broker, root, mut r) = started("driveoutside");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         let store = drive(fs, "store");
         fs.write(store.join("x"), b"x").unwrap();
@@ -1824,7 +1818,7 @@ mod tests {
         if !in_userns("test_a_drive_plugged_back_resolves_its_objects_again") {
             return;
         }
-        let (broker, root, mut r) = started("driveback");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         let store = drive(fs, "store");
         fs.create_dir(root.join("usb")).unwrap();
@@ -1852,7 +1846,7 @@ mod tests {
         if !in_userns("test_a_drive_at_two_points_is_reported_at_both") {
             return;
         }
-        let (broker, root, mut r) = started("drivetwice");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         let store = drive(fs, "store");
         fs.create_dir(root.join("a")).unwrap();
@@ -1877,7 +1871,7 @@ mod tests {
         if !in_userns("test_a_drive_in_two_repositories_is_heard_in_each") {
             return;
         }
-        let (broker, one, mut r1) = started("drivetworepos");
+        let (broker, one, mut r1) = started();
         let fs = broker.fs();
         let two = fs.mount().join("two");
         fs.create_dir(&two).unwrap();
@@ -1908,7 +1902,7 @@ mod tests {
         if !in_userns("test_a_drive_over_a_full_directory_hides_it_and_gives_it_back") {
             return;
         }
-        let (broker, root, mut r) = started("driveover");
+        let (broker, root, mut r) = started();
         let fs = broker.fs();
         fs.create_dir(root.join("d")).unwrap();
         fs.write(root.join("d/old"), b"o").unwrap();

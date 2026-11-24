@@ -75,7 +75,10 @@ The guard must stay bound for as long as the directory is used:
 * a helper that creates a directory hands the guard back with whatever it returns.
 
 The unit tests in `src/` still clean up by hand, under the same parent; give them
-guards as you touch them. After a crashed run, one command purges everything:
+guards as you touch them. A directory that holds a Unix socket keeps its path short:
+the socket's whole path must fit `sun_path`, 108 bytes with its final zero, and a
+test's name under a deep `TMPDIR` does not (`bind` fails, "path too long"). The
+watcher broker's tests take theirs from `test_support::short_dir()`. After a crashed run, one command purges everything:
 
 ```
 rm -rf "${TMPDIR:-/tmp}/metafolder-tests"
