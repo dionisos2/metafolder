@@ -17,7 +17,7 @@ mf -n photos repo calibrate-threshold --records 20000 # a smaller throwaway stor
 !! What it measures
 
 A throwaway store is created in `.metafolder/internal/`, on the same disk as the
-repository's, filled with `--records` records (100 000 by default, 100 at least) — files
+repository's, filled with `--records` records (100 000 by default, 200 at least) — files
 of a hundred per folder, a few tags each —, and removed at the end, or when the task is
 stopped. The repository itself is neither read nor written, and stays usable
 meanwhile; a write to it during the measure shares the disk, and so weighs on what is
@@ -25,10 +25,14 @@ measured.
 
 For each kind of write — `add` (a value added), `remove` (a value removed), `set` (a
 field set; an unset goes with it), `delete` (records deleted) —, and N = 4, 8, 16, 32…
-(below four records the bulk write never pays) up to a twentieth of the store, a write to N records spread over the store is
-timed one record at a time and in bulk, each three times, the median kept. Every write
-is measured ''cold'' — the store closed, its file dropped from the page cache, opened
-again — and ''committed'', its `fsync` included. What the bulk write leaves pending is
+(below four records the bulk write never pays) up to a fortieth of the store, a write
+to N records spread over the store is timed one record at a time and in bulk, each
+three times, the median kept. A deletion takes its records for good: the fortieth
+leaves half the store at the end of the worst sweep. Every write of N records starts
+''cold'' — the store closed, its file dropped from the page cache, opened again —,
+once: the N writes one record at a time then follow in one transaction, as a real
+write does, the pages they read in staying cached. Each is ''committed'', its `fsync`
+included. What the bulk write leaves pending is
 folded after each measure, untimed: the fold runs in idle time ([[Folding in idle time]]), so it is not counted.
 
 !! How a threshold is chosen
@@ -39,14 +43,20 @@ A write goes in bulk only where both hold (user decision, November 2026):
 * in bulk, it is at least three times quicker.
 
 The sweep of a kind stops at the first N where they do, and the threshold is N − 1:
-no size goes in bulk without having been seen to pay. When no size measured does, the
+no size goes in bulk without having been seen to pay. N doubling, that first size may
+take far more than 250 ms one record at a time — 832 ms at 512 where 256 took 245.
+The sweep then bisects between it and the size before (user decision, November 2026),
+until the size that pays takes at most 400 ms one at a time, or comes within an
+eighth of a size that does not pay; at most three sizes more. In the example: 384
+pays but takes 500 ms, 320 does not pay, 352 pays in 300 ms — the threshold is 351. When no size measured does, the
 calibration has not found the right value: the threshold is still the largest N
 measured (user decision, November 2026), and the command says `not found`. Beyond it,
 a write goes in bulk without having been seen to pay; a larger `--records` measures
 further.
 
-A repository held in memory ([[Holding a repository in memory]]) reads its store from
-memory: the cold measure overstates what a write one record at a time costs it.
+A repository held in memory ([[Holding a repository in memory]]), its store copied to
+`/dev/shm`, reads it from memory, while the throwaway store is on the disk: the cold
+measure overstates what a write one record at a time costs that repository.
 
 !! The result
 

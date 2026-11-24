@@ -444,13 +444,14 @@ enum RepoCommand {
     ///
     /// On a throwaway store beside the repository's, removed afterwards, each
     /// kind of write (add, remove, set, delete) to N records is timed one
-    /// record at a time and in bulk, cold, for N = 4, 8, 16, 32…: a kind's
-    /// threshold is the most records written one at a time before going in
-    /// bulk is past 250 ms one at a time and three times quicker (doc
+    /// record at a time and in bulk, cold, for N = 4, 8, 16, 32… then bisected
+    /// back under 400 ms: a kind's threshold is the most records written one
+    /// at a time before going in bulk is past 250 ms one at a time and three
+    /// times quicker (doc
     /// "Calibrating the mass-write thresholds"). Takes minutes on a hard disk;
     /// the repository stays usable meanwhile.
     CalibrateThreshold {
-        /// Records of the throwaway store
+        /// Records of the throwaway store (200 at least)
         #[arg(long, default_value_t = 100_000)]
         records: u64,
         /// Write the thresholds found into the repository's config.json, in

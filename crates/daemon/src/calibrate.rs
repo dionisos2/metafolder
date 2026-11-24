@@ -19,6 +19,11 @@ use crate::tasks::Reporter;
 /// Below this, a write one record at a time is quick enough: never in bulk.
 pub const MAX_INDIVIDUAL_MS: f64 = 250.0;
 
+/// Past this one at a time, the first size that pays is too far past
+/// `MAX_INDIVIDUAL_MS`: the sweep looks for a smaller one (user decision,
+/// November 2026).
+pub const MAX_REFINED_MS: f64 = 400.0;
+
 /// In bulk only when it is at least this many times quicker (its fold not
 /// counted).
 pub const MIN_SPEEDUP: f64 = 3.0;
@@ -30,7 +35,12 @@ pub const RUNS: usize = 3;
 pub const DEFAULT_RECORDS: u64 = 100_000;
 
 /// The fewest records the throwaway store may hold.
-pub const MIN_RECORDS: u64 = 100;
+pub const MIN_RECORDS: u64 = 200;
+
+/// The largest size measured is this share of the throwaway store: every
+/// measure of a deletion takes its records for good, the sweep must not run
+/// out of them.
+pub const LARGEST_SHARE: u64 = 40;
 
 /// The throwaway store's history is never trimmed: it goes with the store,
 /// and a trim would weigh on what is measured.
@@ -96,19 +106,40 @@ pub fn sizes(max: u64) -> Vec<u64> {
 
 /// Measures `sizes` in order until the bulk write pays: the threshold is then
 /// one less than that size — no size is written in bulk without having been
-/// seen to pay —, else the largest size measured.
+/// seen to pay —, else the largest size measured. The sizes double, so the
+/// first that pays may take far longer one at a time than the criterion's
+/// bound: the sweep then bisects back towards the size before it, until the
+/// size that pays takes at most `MAX_REFINED_MS` one at a time, or is within
+/// an eighth of a size that does not pay.
 pub fn sweep(
     kind: Kind,
     sizes: &[u64],
     mut measure: impl FnMut(u64) -> Result<Sample>,
 ) -> Result<KindResult> {
-    let mut samples = Vec::new();
+    let mut samples: Vec<Sample> = Vec::new();
     for &n in sizes {
         let sample = measure(n)?;
+        let below = samples.last().map(|s| s.records);
         samples.push(sample);
-        if sample.pays() {
-            return Ok(KindResult { kind, threshold: n - 1, reached: true, samples });
+        if !sample.pays() {
+            continue;
         }
+        let mut pays = sample;
+        if let Some(mut lo) = below {
+            // Within an eighth is close enough: at most three more sizes.
+            while pays.each_ms > MAX_REFINED_MS && (pays.records - lo) * 8 > pays.records {
+                let mid = lo + (pays.records - lo) / 2;
+                let s = measure(mid)?;
+                samples.push(s);
+                if s.pays() {
+                    pays = s;
+                } else {
+                    lo = mid;
+                }
+            }
+        }
+        samples.sort_by_key(|s| s.records);
+        return Ok(KindResult { kind, threshold: pays.records - 1, reached: true, samples });
     }
     let threshold = sizes.last().copied().unwrap_or(0);
     Ok(KindResult { kind, threshold, reached: false, samples })
@@ -288,7 +319,7 @@ pub fn calibrate(dir: &Path, records: u64, reporter: &Reporter) -> Result<Vec<Ki
     let mut picker = Picker { files, calls: 0 };
     // Every kind's sweep, two modes, RUNS runs each, must find records:
     // deletions take theirs, so the sizes stop well below the store.
-    let largest = sizes(records / 20);
+    let largest = sizes(records / LARGEST_SHARE);
     let mut round = 0u64;
     let mut results = Vec::new();
     for kind in KINDS {
@@ -345,6 +376,65 @@ mod tests {
         assert_eq!(r.threshold, 31);
         assert!(r.reached);
         assert_eq!(r.samples.last().unwrap().records, 32, "the sweep stops there");
+    }
+
+    /// The doubling overshoots: at 512 records, one at a time takes 832 ms.
+    /// The sweep bisects back between 256 and 512 until the size that pays
+    /// is under 400 ms one at a time (user's example, November 2026).
+    #[test]
+    fn test_a_size_that_pays_too_late_is_bisected_back() {
+        let each = |n: u64| match n {
+            512 => 832.0,
+            384 => 500.0,
+            320 => 200.0,
+            352 => 300.0,
+            n if n <= 256 => 100.0,
+            n => panic!("{n} is not measured"),
+        };
+        let r = sweep(Kind::Delete, &sizes(4096), |n| Ok(sample(n, each(n), 10.0))).unwrap();
+        assert_eq!(r.threshold, 351);
+        assert!(r.reached);
+        let measured: Vec<u64> = r.samples.iter().map(|s| s.records).collect();
+        assert_eq!(measured, [4, 8, 16, 32, 64, 128, 256, 320, 352, 384, 512], "in size order");
+    }
+
+    #[test]
+    fn test_a_size_that_pays_under_400_ms_is_kept_as_is() {
+        let each = |n: u64| if n < 512 { 100.0 } else { 390.0 };
+        let r = sweep(Kind::Add, &sizes(4096), |n| Ok(sample(n, each(n), 10.0))).unwrap();
+        assert_eq!(r.threshold, 511);
+        assert_eq!(r.samples.last().unwrap().records, 512, "nothing bisected");
+    }
+
+    #[test]
+    fn test_the_bisection_stops_within_an_eighth() {
+        // Past 256 every size pays, each well over 400 ms: 384, 320, 288 are
+        // measured, then 256 and 288 are within an eighth of 288.
+        let each = |n: u64| if n <= 256 { 100.0 } else { 1000.0 };
+        let r = sweep(Kind::Set, &sizes(4096), |n| Ok(sample(n, each(n), 10.0))).unwrap();
+        assert_eq!(r.threshold, 287);
+        assert!(r.reached);
+        assert_eq!(r.samples.len(), 11);
+    }
+
+    /// Deletions take their records for good: the worst sweep — the last
+    /// size the first that pays, every bisected size paying too, far over
+    /// 400 ms — must leave at least half the throwaway store.
+    #[test]
+    fn test_the_worst_deletion_sweep_fits_the_store() {
+        for records in [MIN_RECORDS, 1000, DEFAULT_RECORDS, 1_000_000] {
+            let sizes = sizes(records / LARGEST_SHARE);
+            assert!(!sizes.is_empty(), "{records} records measure something");
+            let last = *sizes.last().unwrap();
+            let mut taken = 0;
+            sweep(Kind::Delete, &sizes, |n| {
+                taken += n * 2 * RUNS as u64;
+                Ok(sample(n, if n < last { 1.0 } else { 10_000.0 }, 1.0))
+            })
+            .unwrap();
+            // At least half left: the records still spread over the store.
+            assert!(taken * 2 <= records, "{taken} records deleted out of {records}");
+        }
     }
 
     #[test]
