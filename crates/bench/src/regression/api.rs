@@ -109,6 +109,8 @@ pub const SCENARIOS: &[Scenario] = &[
     s("api.query.remove", &[(P, "/repos/:repo/query/fields/remove")]),
     s("api.query.unset", &[(P, "/repos/:repo/query/fields/unset")]),
     s("api.query.batch", &[(P, "/repos/:repo/query/fields/batch")]),
+    s("api.query.replace", &[(P, "/repos/:repo/query/fields/replace")]),
+    s("api.query.rename", &[(P, "/repos/:repo/query/fields/rename")]),
     s("api.query.delete", &[(P, "/repos/:repo/query/delete")]),
     s("api.label.create", &[(P, "/repos/:repo/contexts")]),
     s("api.revert", &[(P, "/repos/:repo/revert")]),
@@ -455,6 +457,43 @@ pub async fn run(id: &str, c: &Ctx) -> Result<()> {
                     {"op": "set", "query": uuid_in(&page), "name": "bench_batch", "value": int(1)},
                     {"op": "create", "fields": [{"name": "bench_batch", "value": int(2)}]},
                 ]}),
+            )
+            .await?;
+        }
+        "api.query.replace" => {
+            // Set, then replaced: the next repetition's set finds it again.
+            let page: Vec<&str> = c.page.iter().map(String::as_str).collect();
+            let (query, name) = (uuid_in(&page), "bench_query_replace");
+            post(
+                &format!("{base}/query/fields/set"),
+                json!({"query": query, "name": name, "value": int(1)}),
+            )
+            .await?;
+            post(
+                &format!("{base}/query/fields/replace"),
+                json!({"query": query, "name": name, "value": int(1), "to": int(2)}),
+            )
+            .await?;
+        }
+        "api.query.rename" => {
+            // Set, renamed, then unset under its new name: the next repetition
+            // finds neither name.
+            let page: Vec<&str> = c.page.iter().map(String::as_str).collect();
+            let query = uuid_in(&page);
+            let fields = format!("{base}/query/fields");
+            post(
+                &format!("{fields}/set"),
+                json!({"query": query, "name": "bench_query_rename", "value": int(1)}),
+            )
+            .await?;
+            post(
+                &format!("{fields}/rename"),
+                json!({"query": query, "name": "bench_query_rename", "to": "bench_query_renamed"}),
+            )
+            .await?;
+            post(
+                &format!("{fields}/unset"),
+                json!({"query": query, "name": "bench_query_renamed"}),
             )
             .await?;
         }
