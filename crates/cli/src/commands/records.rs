@@ -45,7 +45,11 @@ pub fn retype(ctx: &Ctx, name: &str, to: &str) -> Result<i32, CliError> {
     let resp = ctx.client.post(&format!("{base}/retype"), &json!({"name": name, "to": to}))?;
     let converted = resp["converted"].as_u64().unwrap_or(0);
     let fallbacks = resp["fallback_count"].as_u64().unwrap_or(0);
-    println!("retyped {name} to {to}: {converted} value(s) converted, {fallbacks} metarecord(s) lost a value that did not convert");
+    // Each lost value is traced on its metarecord, save the trace's own
+    // (doc "Changing a field's type").
+    let traced =
+        if fallbacks > 0 && name != "retype_lost" { ", traced in retype_lost" } else { "" };
+    println!("retyped {name} to {to}: {converted} value(s) converted, {fallbacks} metarecord(s) lost a value that did not convert{traced}");
     Ok(0)
 }
 

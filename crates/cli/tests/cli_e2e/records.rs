@@ -19,6 +19,24 @@ fn test_create_and_get_by_uuid() {
     assert!(rating.get("id").is_none(), "a field is its name and value");
 }
 
+/// A value the retype cannot convert is traced in `retype_lost`, and the
+/// command says so (doc "Changing a field's type").
+#[test]
+fn test_retype_traces_a_lost_value() {
+    let (repo, _root) = init_repo("retype-lost");
+    let uuid = create_metarecord(&repo, &["code:string=oops"]);
+
+    let out = mf(&["-u", &repo, "retype", "code", "int"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("1 metarecord(s) lost a value"), "{}", out.stdout);
+    assert!(out.stdout.contains("traced in retype_lost"), "{}", out.stdout);
+
+    let entries = get_entries(&repo, &uuid);
+    let fields = entries[0]["fields"].as_array().unwrap();
+    let lost = fields.iter().find(|f| f["name"] == "retype_lost").expect("the trace");
+    assert_eq!(lost["value"]["value"], "code = oops");
+}
+
 #[test]
 fn test_retype_converts_field_type() {
     let (repo, _root) = init_repo("retype");

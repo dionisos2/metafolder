@@ -697,7 +697,7 @@ describe('repos panel — watch sources', () => {
 
 describe('repos panel — field retype', () => {
   test('the command opens the form for the active repository and converts', async () => {
-    const { api, daemon, handlers, vars } = setup({ activeRepo: 'r1' });
+    const { api, daemon, handlers, vars, invoke } = setup({ activeRepo: 'r1' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     const shadow = shadowForRepos();
     await mount(shadow, api);
@@ -716,6 +716,12 @@ describe('repos panel — field retype', () => {
     const retype = daemon.calls.find((c) => c.path.endsWith('/retype'));
     expect(retype?.body).toEqual({ name: 'rating', to: 'string' });
     expect(form.classList.contains('hidden')).toBe(true);
+    // The lost values are traced, and the message says where (doc "Changing a
+    // field's type").
+    const texts = invoke.mock.calls
+      .filter(([c]) => c === 'post_status')
+      .map(([, a]) => String((a as { text?: string }).text));
+    expect(texts.some((t) => t.includes('lost a value') && t.includes('retype_lost'))).toBe(true);
     // Other panels are told the data changed.
     expect(vars.get('metarecords:dirty')).toEqual(expect.any(Number));
   });

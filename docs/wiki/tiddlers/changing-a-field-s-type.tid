@@ -1,7 +1,7 @@
 title: Changing a field's type
 tags: [[Data model]]
 kind: guide
-summary: mf retype converts every value of a field to another type, in one write you can roll back; a value that cannot convert is removed, and the command names its metarecords.
+summary: mf retype converts every value of a field to another type, in one write you can roll back; a value that cannot convert is removed and traced in retype_lost on its metarecord.
 
 A field name's type is fixed by its first write ([[One value type per field name]]).
 To change it, ''retype'' the field — every value of that name, in the whole
@@ -10,6 +10,8 @@ repository:
 ```
 mf -n music retype rating float
 retyped rating to float: 1204 value(s) converted, 0 metarecord(s) lost a value that did not convert
+mf -n music retype code int
+retyped code to int: 310 value(s) converted, 2 metarecord(s) lost a value that did not convert, traced in retype_lost
 ```
 
 Any type can be reached from any other: a mistyped field is never stuck. The
@@ -35,7 +37,27 @@ field converts, the field goes from it — it is then unknown, never `nothing`, 
 one that could not be converted ([[Nothing versus unknown]]). No default stands in for
 it: a `0` or a `""` made up would read as a real value. The command counts them;
 `POST /retype` also lists their metarecords (`fallback_uuids`), and `mf log undo` gives
-them back. A `tree_ref` that would break its forest ([[TreeRef forest]]) — a missing
+them back.
+
+!! Finding what a retype lost
+
+Each lost value leaves a trace on its metarecord: a `retype_lost` string,
+`<field> = <value>`, the value in the canonical text of ''To `string`'' above —
+`code = oops`, `cat = 8f3a…/leaf`. The field is multi-valued and kept across
+retypes, so a query finds them whenever it is asked:
+
+```
+mf -n music metarecord -q 'retype_lost IS PRESENT' get
+mf -n music metarecord -q 'retype_lost IS PRESENT' field unset retype_lost
+```
+
+It is a ''user'' field — no prefix, as `orphan` ([[Finding and clearing orphans]]):
+a trace to read, fix and clear, which takes no `--force`. It is written in the
+retype's own write, so `mf log undo` takes it back with the retype. A
+repository already using `retype_lost` with another type gets the ordinary
+type-lock error, and the retype is refused rather than losing a value without
+a trace. Retyping `retype_lost` itself traces nothing: its lost values would
+not be of its new type. A `tree_ref` that would break its forest ([[TreeRef forest]]) — a missing
 parent, a cycle, a second position — is removed too, so one bad path never blocks the
 rest. A `nothing` stays `nothing`: absence has no type to convert. Two values of one metarecord that the conversion
 makes equal become one row ([[No duplicate rows]]).

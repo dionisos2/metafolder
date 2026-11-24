@@ -9,14 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:
 
-- A trace of the values a retype loses (user decision, 20 November 2026, to do
-  later): with the store's table review, a value a retype cannot convert is
-  removed rather than turned into =nothing=, and the field goes when none
-  converts. The retype's summary says so and the log can undo it, but nothing
-  finds those metarecords afterwards. Proposed: a multi-valued user field, say
-  =retype_lost=, one text per lost value (=<field> = <original value>=), without a
-  prefix so that it is cleared without =--force=, as =orphan= is (doc "Orphans");
-  =mfr_retype_lost= was the alternative.
 - The bench's history is stale: =2c8bb168= measured on 23 November 2026 is 4 to 12 times slower
   than its own baseline of 9 November on every =query.*= scenario (=query.count=
   0.77 ms against 0.14), so the bench's verdicts against it mean nothing until a

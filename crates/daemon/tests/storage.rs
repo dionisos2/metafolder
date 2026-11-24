@@ -187,6 +187,107 @@ fn test_retype_field_removes_what_does_not_convert() {
     assert_eq!(conn.metarecord(half.uuid).unwrap().unwrap().get_all("code").len(), 2);
 }
 
+/// What a retype removes is traced on its metarecord, one `retype_lost` text
+/// per lost value, so a query finds them afterwards (doc "Changing a field's
+/// type"); the undo takes the trace back with the retype.
+#[test]
+fn test_retype_traces_the_values_it_loses() {
+    use metafolder_core::metarecord::FieldType;
+    let (mut conn, _dir) = test_conn();
+    let good = create(&mut conn, vec![Field::new("code", Value::String("42".into()))]);
+    let bad = create(&mut conn, vec![Field::new("code", Value::String("oops".into()))]);
+    let half = create(
+        &mut conn,
+        vec![
+            Field::new("code", Value::String("7".into())),
+            Field::new("code", Value::String("seven".into())),
+            Field::new("code", Value::String("eight".into())),
+        ],
+    );
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.retype_field("code", FieldType::Int).unwrap();
+    w.commit().unwrap();
+
+    let lost = |conn: &KvStore, uuid| {
+        let m = conn.metarecord(uuid).unwrap().unwrap();
+        let mut texts: Vec<Value> = m.get_all("retype_lost").into_iter().cloned().collect();
+        texts.sort_by_key(|v| format!("{v:?}"));
+        texts
+    };
+    let text = |s: &str| Value::String(s.into());
+    assert_eq!(lost(&conn, good.uuid), Vec::<Value>::new(), "nothing lost, nothing traced");
+    assert_eq!(lost(&conn, bad.uuid), vec![text("code = oops")]);
+    assert_eq!(lost(&conn, half.uuid), vec![text("code = eight"), text("code = seven")]);
+
+    revert_last_revision(&mut conn);
+    assert_eq!(lost(&conn, bad.uuid), Vec::<Value>::new(), "the undo takes the trace back");
+    assert_eq!(lost(&conn, half.uuid), Vec::<Value>::new());
+}
+
+/// A value of a positioned field lost by its retype is traced too, by the
+/// value's canonical text.
+#[test]
+fn test_retype_traces_a_lost_position() {
+    use metafolder_core::metarecord::FieldType;
+    let (mut conn, _dir) = test_conn();
+    let orphan = create(
+        &mut conn,
+        vec![Field::new("cat", Value::String("8f3a2b1c4d5e6f708192a3b4c5d6e7f8/leaf".into()))],
+    );
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.retype_field("cat", FieldType::TreeRef).unwrap();
+    w.commit().unwrap();
+    let m = conn.metarecord(orphan.uuid).unwrap().unwrap();
+    assert_eq!(
+        m.get_all("retype_lost"),
+        vec![&Value::String("cat = 8f3a2b1c4d5e6f708192a3b4c5d6e7f8/leaf".into())]
+    );
+}
+
+/// The trace accumulates across retypes, and a retype of `retype_lost`
+/// itself traces nothing: its lost values would not be of its new type.
+#[test]
+fn test_retype_of_the_trace_itself_traces_nothing() {
+    use metafolder_core::metarecord::FieldType;
+    let (mut conn, _dir) = test_conn();
+    let m = create(
+        &mut conn,
+        vec![
+            Field::new("a", Value::String("x".into())),
+            Field::new("b", Value::String("y".into())),
+        ],
+    );
+    for name in ["a", "b"] {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.retype_field(name, FieldType::Int).unwrap();
+        w.commit().unwrap();
+    }
+    assert_eq!(conn.metarecord(m.uuid).unwrap().unwrap().get_all("retype_lost").len(), 2);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let summary = w.retype_field("retype_lost", FieldType::Int).unwrap();
+    w.commit().unwrap();
+    assert_eq!(summary.fallback_uuids, vec![m.uuid]);
+    assert_eq!(conn.metarecord(m.uuid).unwrap().unwrap().get("retype_lost"), None);
+}
+
+/// A `retype_lost` the user typed otherwise cannot take the trace: the
+/// retype is refused rather than losing a value without one.
+#[test]
+fn test_retype_is_refused_when_the_trace_has_another_type() {
+    use metafolder_core::metarecord::FieldType;
+    let (mut conn, _dir) = test_conn();
+    create(&mut conn, vec![Field::new("retype_lost", Value::Int(1))]);
+    let m = create(&mut conn, vec![Field::new("code", Value::String("oops".into()))]);
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let err = w.retype_field("code", FieldType::Int).err().expect("refused");
+    drop(w);
+    assert!(format!("{err:#}").contains("retype_lost"), "{err:#}");
+    let g = conn.metarecord(m.uuid).unwrap().unwrap();
+    assert_eq!(g.get("code"), Some(&Value::String("oops".into())), "nothing written");
+}
+
 #[test]
 fn test_retype_string_to_reference_types() {
     use metafolder_core::metarecord::FieldType;

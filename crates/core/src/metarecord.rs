@@ -708,7 +708,7 @@ impl Value {
 
     /// The canonical, reversible textual form used by `→ String` retype (and
     /// parsed back by `String →`). For UUIDs this is the 32-char hex encoding.
-    fn display_form(&self) -> String {
+    pub fn display_form(&self) -> String {
         match self {
             Value::Nothing => String::new(),
             Value::String(s) => s.clone(),

@@ -290,11 +290,24 @@ pub fn log_context_subtree(log: &dyn Log, log_context: i64) -> Result<Vec<i64>> 
 const DECIDES_WATCHES: &[&str] = &["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED];
 
 /// Outcome of [`Writer::retype_field`]: how many rows were converted and the
-/// metarecords whose values could not be converted and fell back to the
-/// target's sentinel (deduped, sorted).
+/// metarecords that lost a value that could not be converted (deduped,
+/// sorted).
 pub struct RetypeSummary {
     pub converted: usize,
     pub fallback_uuids: Vec<Uuid>,
+}
+
+/// The user field a retype traces its lost values in, one text per value
+/// (doc "Changing a field's type"). Unprefixed, so that clearing it takes no
+/// `--force`, as `orphan` (doc "Orphans").
+pub const RETYPE_LOST: &str = "retype_lost";
+
+/// The lost values of a retype, by their trace text: the records that lost each.
+type Lost = std::collections::BTreeMap<String, RoaringBitmap>;
+
+/// The trace of `value` lost from `field`: `<field> = <canonical text>`.
+fn lost_text(field: &str, value: &Value) -> String {
+    format!("{field} = {}", value.display_form())
 }
 
 // ── Pruning (doc "Pruning the log") ────────────────────────────────────
@@ -1103,8 +1116,9 @@ impl<'c> Writer<'c> {
     /// rows are left untouched (explicit absence is preserved). A value that
     /// does not convert — or a `TreeRef` result that would violate the forest
     /// (missing parent, cycle, depth) — is removed rather than aborting the
-    /// whole retype, so one bad path never blocks the rest. Returns how many
-    /// rows converted and the metarecords that lost a value.
+    /// whole retype, so one bad path never blocks the rest; each lost value
+    /// is traced in [`RETYPE_LOST`] on its record. Returns how many rows
+    /// converted and the metarecords that lost a value.
     ///
     /// The values are read record by record, and each distinct one is then
     /// converted on all its holders at once — a mass remove and a mass add
@@ -1126,7 +1140,7 @@ impl<'c> Writer<'c> {
         for (uuid, id) in uuids.into_iter().zip(holders.iter()) {
             let rows = self.tx.rows_named(uuid, name)?;
             if to_placed || rows.iter().any(|r| r.value.position().is_some()) {
-                placed.push(uuid);
+                placed.push((uuid, id));
                 continue;
             }
             for row in rows {
@@ -1141,20 +1155,29 @@ impl<'c> Writer<'c> {
                     .insert(id);
             }
         }
-        for uuid in placed {
-            self.retype_record(uuid, name, to, &mut converted, &mut fallback)?;
+        let mut lost = Lost::default();
+        for (uuid, id) in placed {
+            self.retype_record(uuid, id, name, to, &mut converted, &mut fallback, &mut lost)?;
         }
         // The rows of the old type and of the new one stand side by side until
         // the last value is converted: the type check waits for the end of the
         // write, and only if it was waiting already — a retype leaves one type.
         let was_deferred = self.deferred_types.is_some();
         self.deferred_types.get_or_insert_with(Default::default);
-        let converting = self.retype_values(name, to, by_value, &mut converted, &mut fallback);
+        let converting =
+            self.retype_values(name, to, by_value, &mut converted, &mut fallback, &mut lost);
         if !was_deferred {
             self.deferred_types = None;
         }
         converting?;
         self.field_types.remove(name);
+        // The trace of the trace is not kept: its lost values would not be of
+        // its new type.
+        if name != RETYPE_LOST {
+            for (text, ids) in lost {
+                self.mass_add_ids(RETYPE_LOST, Value::String(text), &ids)?;
+            }
+        }
         Ok(RetypeSummary { converted, fallback_uuids: fallback.into_iter().collect() })
     }
 
@@ -1167,6 +1190,7 @@ impl<'c> Writer<'c> {
         by_value: std::collections::BTreeMap<String, (Value, RoaringBitmap)>,
         converted: &mut usize,
         fallback: &mut std::collections::BTreeSet<Uuid>,
+        lost: &mut Lost,
     ) -> Result<()> {
         for (_, (value, holding)) in by_value {
             let (new_value, fell_back) = value.convert_to(to);
@@ -1179,6 +1203,7 @@ impl<'c> Writer<'c> {
             let removed = self.mass_remove_ids(name, &value, &holding)?;
             if fell_back {
                 fallback.extend(self.tx.uuids_of(&removed)?);
+                *lost.entry(lost_text(name, &value)).or_default() |= removed;
                 continue;
             }
             // Two values the conversion made equal are one row afterwards
@@ -1191,13 +1216,16 @@ impl<'c> Writer<'c> {
 
     /// [`Self::retype_field`] on one record, row by row: a position is
     /// checked against its forest, a value that would break it removed.
+    #[allow(clippy::too_many_arguments)]
     fn retype_record(
         &mut self,
         uuid: Uuid,
+        id: u32,
         name: &str,
         to: FieldType,
         converted: &mut usize,
         fallback: &mut std::collections::BTreeSet<Uuid>,
+        lost: &mut Lost,
     ) -> Result<()> {
         for row in self.tx.rows_named(uuid, name)? {
             if matches!(row.value, Value::Nothing) {
@@ -1222,6 +1250,7 @@ impl<'c> Writer<'c> {
             let name = row.name.clone();
             if fell_back {
                 fallback.insert(uuid);
+                lost.entry(lost_text(&name, &row.value)).or_default().insert(id);
                 self.delete_field_rows(uuid, &name, vec![row])?;
                 continue;
             }

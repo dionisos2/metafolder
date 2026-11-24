@@ -865,9 +865,13 @@ export async function mount(root, metafolder) {
       toggleForm(retypeForm, false);
       const converted = resp.converted ?? 0;
       const fell = resp.fallback_count ?? 0;
+      // Each lost value is traced on its metarecord, save the trace's own
+      // (doc "Changing a field's type").
+      const traced = name === 'retype_lost' ? '' : ', traced in retype_lost';
       void statusBar.message(
         `Retyped "${name}" to ${to}: ${converted} value(s) converted` +
-          (fell > 0 ? `, ${fell} metarecord(s) lost a value that did not convert` : '') + '.',
+          (fell > 0 ? `, ${fell} metarecord(s) lost a value that did not convert${traced}` : '') +
+          '.',
         7000,
       );
       // Other panels reading this repo should refresh.
