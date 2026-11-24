@@ -22,14 +22,6 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   =retype_lost=, one text per lost value (=<field> = <original value>=), without a
   prefix so that it is cleared without =--force=, as =orphan= is (doc "Orphans");
   =mfr_retype_lost= was the alternative.
-- Strings of any bytes (user wish, to decide later): a string should be able to
-  hold whatever a =tree_ref= name holds, bytes that need not be UTF-8. The store
-  will be ready (the table review encodes a string as =varint len · bytes=), but
-  the model is not: =Value::String= is a Rust =String= (=core/metarecord.rs=), and
-  so are the wire, the queries and the trigrams; doc "Changing a field's type"
-  turns a name that is not UTF-8 into its displayed form (=%XX=). The wire would
-  carry such a string as paths are carried, ={text, bytes}= (doc "Tree
-  names").
 - The bench's history is stale: =2c8bb168= measured on 23 November 2026 is 4 to 12 times slower
   than its own baseline of 9 November on every =query.*= scenario (=query.count=
   0.77 ms against 0.14), so the bench's verdicts against it mean nothing until a
