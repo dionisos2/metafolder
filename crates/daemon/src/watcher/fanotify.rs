@@ -467,9 +467,11 @@ mod tests {
 
     impl FakeBroker {
         fn start(script: Vec<ServerMsg>) -> Self {
+            // A socket's path has a hundred-odd bytes at most (SUN_LEN): the
+            // container's TMPDIR, under the home, leaves little room.
             let socket = std::env::temp_dir()
                 .join("metafolder-tests")
-                .join(format!("mf_fake_watchd_{}.sock", Uuid::new_v4()));
+                .join(format!("watchd_{}.sock", Uuid::new_v4().as_simple()));
             std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
             let _ = std::fs::remove_file(&socket);
             let listener = UnixListener::bind(&socket).unwrap();
