@@ -9,9 +9,9 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:
 
-- Open questions, none decided (doc "Storage open questions"): replace and rename
-  not being mass writes, the marks a deleted record loses, compressing what the log
-  keeps of a deletion.
+- One open question left (doc "Storage open questions"): replace and rename not
+  being mass writes. Compressing the log's befores and the store's values is given
+  up (24 November 2026).
 - The =undo_redo_properties= suite takes 2 min 50 s on four cores (4 min 20 s
   before 23 November 2026: one query for a snapshot instead of a request per
   record, the log's head alone, the templates built once per run); what is left
@@ -63,5 +63,4 @@ doc "Platform open questions": Unicode normalisation of names, Windows long
 paths, what a port to macOS or Windows would take.
 
 ** Storage open questions
-doc "Storage open questions": replace and rename as ordinary operations, the marks a record keeps of mass writes, and
-compressing what the log keeps of a deletion.
+doc "Storage open questions": replace and rename as ordinary operations.
