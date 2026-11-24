@@ -337,6 +337,21 @@ pub fn repo_wear(ctx: &Ctx, json: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// What a kind's calibrated threshold means. When no size measured paid, the
+/// threshold is still the largest one (user decision, November 2026), and the
+/// line says the calibration did not find the right value.
+fn threshold_verdict(kind: &serde_json::Value) -> String {
+    let threshold = kind["threshold"].as_u64().unwrap_or(0);
+    if kind["reached"].as_bool().unwrap_or(false) {
+        format!("{threshold} (in bulk from {} records)", threshold + 1)
+    } else {
+        format!(
+            "{threshold} (not found: the bulk write never paid up to {threshold} records \
+             measured; in bulk beyond, unmeasured — run again with more --records)"
+        )
+    }
+}
+
 /// `mf repo calibrate-threshold`: the daemon's calibration task (`POST
 /// …/calibrate-threshold`, doc "Calibrating the mass-write thresholds"),
 /// waited for; each kind's threshold and the times measured.
@@ -362,14 +377,8 @@ pub fn calibrate_threshold(
     println!("measured on {records} records, cold, each write committed:");
     for kind in result["kinds"].as_array().into_iter().flatten() {
         let name = kind["kind"].as_str().unwrap_or("?");
-        let threshold = kind["threshold"].as_u64().unwrap_or(0);
         let samples = kind["samples"].as_array().cloned().unwrap_or_default();
-        let why = if kind["reached"].as_bool().unwrap_or(false) {
-            format!("in bulk from {} records", threshold + 1)
-        } else {
-            format!("never in bulk up to {threshold} records measured")
-        };
-        println!("{name}: {threshold} ({why})");
+        println!("{name}: {}", threshold_verdict(kind));
         println!("  {:>8}  {:>14}  {:>10}", "records", "one at a time", "in bulk");
         for s in samples {
             println!(
@@ -423,4 +432,23 @@ pub fn rename_repo(ctx: &Ctx, name: &str) -> Result<i32, CliError> {
     let resp = ctx.client.request("PATCH", &base, &[], Some(&json!({"name": name})))?;
     println!("{}", resp["repo_uuid"].as_str().unwrap_or_default());
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::threshold_verdict;
+    use serde_json::json;
+
+    #[test]
+    fn test_a_threshold_found_says_from_where_writes_go_in_bulk() {
+        let v = threshold_verdict(&json!({"threshold": 31, "reached": true}));
+        assert_eq!(v, "31 (in bulk from 32 records)");
+    }
+
+    #[test]
+    fn test_a_threshold_not_found_says_so() {
+        let v = threshold_verdict(&json!({"threshold": 4096, "reached": false}));
+        assert!(v.starts_with("4096 (not found:"), "{v}");
+        assert!(v.contains("--records"), "says how to measure further: {v}");
+    }
 }

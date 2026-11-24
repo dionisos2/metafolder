@@ -89,7 +89,7 @@ async fn a_calibration_measures_each_kind_and_leaves_nothing_behind() {
     for k in kinds {
         let samples = k["samples"].as_array().unwrap();
         assert!(!samples.is_empty(), "{k}");
-        assert_eq!(samples[0]["records"], 1, "the sweep starts at one record");
+        assert_eq!(samples[0]["records"], 4, "the sweep starts at four records");
         assert!(
             samples[0]["each_ms"].as_f64().is_some() && samples[0]["mass_ms"].as_f64().is_some()
         );

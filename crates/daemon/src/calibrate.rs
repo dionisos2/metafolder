@@ -88,21 +88,10 @@ pub struct KindResult {
     pub samples: Vec<Sample>,
 }
 
-/// The sizes measured, up to `max`: 1, 2, 5, 10, 20, 50…
+/// The sizes measured, up to `max`: 4, 8, 16, 32… — below four records the
+/// bulk write never pays, nothing to measure there.
 pub fn sizes(max: u64) -> Vec<u64> {
-    let mut out = Vec::new();
-    let mut decade = 1u64;
-    'outer: loop {
-        for step in [1, 2, 5] {
-            let n = step * decade;
-            if n > max {
-                break 'outer;
-            }
-            out.push(n);
-        }
-        decade *= 10;
-    }
-    out
+    std::iter::successors(Some(4u64), |n| n.checked_mul(2)).take_while(|&n| n <= max).collect()
 }
 
 /// Measures `sizes` in order until the bulk write pays: the threshold is then
@@ -334,10 +323,10 @@ mod tests {
     }
 
     #[test]
-    fn test_the_sizes_step_by_one_two_five() {
-        assert_eq!(sizes(60), vec![1, 2, 5, 10, 20, 50]);
-        assert_eq!(sizes(5000).last(), Some(&5000));
-        assert_eq!(sizes(0), Vec::<u64>::new());
+    fn test_the_sizes_start_at_four_and_double() {
+        assert_eq!(sizes(70), vec![4, 8, 16, 32, 64]);
+        assert_eq!(sizes(4096).last(), Some(&4096));
+        assert_eq!(sizes(3), Vec::<u64>::new());
     }
 
     #[test]
@@ -352,18 +341,18 @@ mod tests {
     fn test_the_threshold_is_one_less_than_the_first_size_that_pays() {
         let times = |n: u64| sample(n, n as f64 * 10.0, 20.0);
         let r = sweep(Kind::Add, &sizes(1000), |n| Ok(times(n))).unwrap();
-        // 50 records: 500 ms against 20 — the first size that pays.
-        assert_eq!(r.threshold, 49);
+        // 32 records: 320 ms against 20 — the first size that pays.
+        assert_eq!(r.threshold, 31);
         assert!(r.reached);
-        assert_eq!(r.samples.last().unwrap().records, 50, "the sweep stops there");
+        assert_eq!(r.samples.last().unwrap().records, 32, "the sweep stops there");
     }
 
     #[test]
     fn test_a_sweep_that_never_pays_keeps_the_largest_size() {
         let r = sweep(Kind::Set, &sizes(100), |n| Ok(sample(n, 1.0, 1.0))).unwrap();
-        assert_eq!(r.threshold, 100);
+        assert_eq!(r.threshold, 64);
         assert!(!r.reached);
-        assert_eq!(r.samples.len(), 7);
+        assert_eq!(r.samples.len(), 5);
     }
 
     #[test]

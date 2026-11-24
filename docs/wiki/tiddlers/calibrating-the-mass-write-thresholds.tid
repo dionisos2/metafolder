@@ -24,8 +24,8 @@ meanwhile; a write to it during the measure shares the disk, and so weighs on wh
 measured.
 
 For each kind of write — `add` (a value added), `remove` (a value removed), `set` (a
-field set; an unset goes with it), `delete` (records deleted) —, and N = 1, 2, 5, 10,
-20, 50… up to a twentieth of the store, a write to N records spread over the store is
+field set; an unset goes with it), `delete` (records deleted) —, and N = 4, 8, 16, 32…
+(below four records the bulk write never pays) up to a twentieth of the store, a write to N records spread over the store is
 timed one record at a time and in bulk, each three times, the median kept. Every write
 is measured ''cold'' — the store closed, its file dropped from the page cache, opened
 again — and ''committed'', its `fsync` included. What the bulk write leaves pending is
@@ -40,8 +40,10 @@ A write goes in bulk only where both hold (user decision, November 2026):
 
 The sweep of a kind stops at the first N where they do, and the threshold is N − 1:
 no size goes in bulk without having been seen to pay. When no size measured does, the
-threshold is the largest N measured, and the command says `never in bulk up to N
-records measured`: beyond it, a write still goes in bulk.
+calibration has not found the right value: the threshold is still the largest N
+measured (user decision, November 2026), and the command says `not found`. Beyond it,
+a write goes in bulk without having been seen to pay; a larger `--records` measures
+further.
 
 A repository held in memory ([[Holding a repository in memory]]) reads its store from
 memory: the cold measure overstates what a write one record at a time costs it.

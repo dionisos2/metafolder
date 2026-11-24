@@ -444,7 +444,7 @@ enum RepoCommand {
     ///
     /// On a throwaway store beside the repository's, removed afterwards, each
     /// kind of write (add, remove, set, delete) to N records is timed one
-    /// record at a time and in bulk, cold, for N = 1, 2, 5, 10…: a kind's
+    /// record at a time and in bulk, cold, for N = 4, 8, 16, 32…: a kind's
     /// threshold is the most records written one at a time before going in
     /// bulk is past 250 ms one at a time and three times quicker (doc
     /// "Calibrating the mass-write thresholds"). Takes minutes on a hard disk;
