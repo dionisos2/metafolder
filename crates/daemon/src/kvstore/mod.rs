@@ -277,6 +277,11 @@ pub struct KvStore {
     /// The entries of the log reads looked up, for the generation they were
     /// read at: what a record's history asks of each of its operations.
     entry_cache: std::sync::Mutex<entry::EntryCache>,
+    /// The chunks of `live_metarecords` reads looked up, for the generation
+    /// they were read at: a read of one record after another — the ancestors
+    /// of the nodes an `osm` path finds — opens a read each, and would read
+    /// the chunk again each time. Under a megabyte for 5 million ids.
+    live_cache: LiveCache,
     /// Where the copy is, shared with whoever reports it, so that reading it
     /// never waits on the store.
     resident: memory::ResidencyHandle,
@@ -668,6 +673,7 @@ impl KvStore {
             generation: Default::default(),
             last_targets: Default::default(),
             entry_cache: Default::default(),
+            live_cache: Default::default(),
             memory: None,
             resident: Default::default(),
             durable,
@@ -778,11 +784,18 @@ struct Read<'a> {
     /// applied ([`mass`]).
     writes_pending: bool,
     /// The universe's chunks read so far, when the read looks them up itself.
-    universe: RefCell<HashMap<u16, roaring::RoaringBitmap>>,
+    universe: RefCell<HashMap<u16, std::sync::Arc<roaring::RoaringBitmap>>>,
     /// The store's cache of the entries of the log it read, and the
     /// generation the read sees; `None` in a write transaction.
     entries: Option<(&'a std::sync::Mutex<entry::EntryCache>, u64)>,
+    /// The store's cache of the universe's chunks, and the generation the
+    /// read sees; `None` in a write transaction.
+    live_cache: Option<(&'a LiveCache, u64)>,
 }
+
+/// The chunks of `live_metarecords` the reads of the committed store looked
+/// up, and the generation of the store they were read at.
+type LiveCache = std::sync::Mutex<(u64, HashMap<u16, std::sync::Arc<roaring::RoaringBitmap>>)>;
 
 impl Read<'_> {
     fn meta(&self, key: State) -> Result<Option<i64>> {
@@ -809,11 +822,31 @@ impl Read<'_> {
         let chunk = (id >> 16) as u16;
         let mut seen = self.universe.borrow_mut();
         if let std::collections::hash_map::Entry::Vacant(slot) = seen.entry(chunk) {
-            self.count(1)?;
-            slot.insert(match self.t.live_metarecords.get(self.r, &chunk.to_be_bytes())? {
-                Some(bytes) => derived::decode_set(bytes)?,
-                None => roaring::RoaringBitmap::new(),
+            let kept = self.live_cache.and_then(|(cache, generation)| {
+                let cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+                (cache.0 == generation).then(|| cache.1.get(&chunk).cloned()).flatten()
             });
+            let set = match kept {
+                Some(set) => set,
+                None => {
+                    self.count(1)?;
+                    let set = std::sync::Arc::new(
+                        match self.t.live_metarecords.get(self.r, &chunk.to_be_bytes())? {
+                            Some(bytes) => derived::decode_set(bytes)?,
+                            None => roaring::RoaringBitmap::new(),
+                        },
+                    );
+                    if let Some((cache, generation)) = self.live_cache {
+                        let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+                        if cache.0 != generation {
+                            *cache = (generation, HashMap::new());
+                        }
+                        cache.1.insert(chunk, set.clone());
+                    }
+                    set
+                }
+            };
+            slot.insert(set);
         }
         Ok(seen[&chunk].contains(id))
     }
@@ -1592,6 +1625,10 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
         writes_pending: me.has_pending_writes(),
         universe: Default::default(),
         entries: Some((&me.entry_cache, me.generation.load(std::sync::atomic::Ordering::Relaxed))),
+        live_cache: Some((
+            &me.live_cache,
+            me.generation.load(std::sync::atomic::Ordering::Relaxed),
+        )),
     })
 });
 
@@ -1727,6 +1764,7 @@ impl KvTxn<'_> {
             writes_pending: self.has_pending_writes(),
             universe: Default::default(),
             entries: None,
+            live_cache: None,
         })
     }
 }
@@ -2595,6 +2633,7 @@ impl KvTxn<'_> {
                     writes_pending: false,
                     universe: Default::default(),
                     entries: None,
+                    live_cache: None,
                 };
                 let Some(meta) = self.t.log_contexts.get(&txn, &be(log_context))? else { break };
                 let meta = dec_log_context(meta)?;

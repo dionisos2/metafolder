@@ -1020,3 +1020,33 @@ fn names_written_after_a_fold_cost_a_key_per_trigram_and_no_check() {
     assert_eq!(found, 1_111);
     assert!(after <= before + 5, "a search reads {after} keys after 50 names, {before} before");
 }
+
+/// The positions of one node after another, read off the store as the
+/// resolution of an `osm` path reads its ancestors: two keys a node, its id
+/// and its record. Whether it exists is read once for 65 536 ids, and not
+/// again until a write — after which a node deleted has no position.
+#[test]
+fn the_positions_of_node_after_node_cost_two_keys_each() {
+    let (mut kv, _root) = short_names(2_000);
+    let forest = Forest::new(false);
+    let folders: Vec<Uuid> = (0..20)
+        .map(|i| {
+            forest.resolve_path(&kv, "loc", &format!("/d{}", i * 100)).unwrap().expect("a folder")
+        })
+        .collect();
+    let before = kv.reads();
+    for &f in &folders {
+        assert_eq!(kv.positions("loc", f).unwrap().len(), 1);
+    }
+    let read = kv.reads() - before;
+    assert!(read <= 2 * 20 + 1, "{read} keys for the positions of 20 nodes");
+
+    // A file, read once so that its chunk is known, then deleted.
+    let file = forest.resolve_path(&kv, "loc", "/d300/file300.txt").unwrap().expect("a file");
+    assert_eq!(kv.positions("loc", file).unwrap().len(), 1);
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    w.delete_metarecord(file).unwrap();
+    w.commit().unwrap();
+    assert!(kv.positions("loc", file).unwrap().is_empty(), "a deleted node has a position");
+    assert_eq!(kv.positions("loc", folders[4]).unwrap().len(), 1);
+}

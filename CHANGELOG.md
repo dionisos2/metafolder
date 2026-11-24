@@ -32,6 +32,10 @@ than breaking them.
   keys instead of 2 863 (doc "Text search in the store"). Each repository is
   reindexed once when it is first opened by this version.
 
+- **The search box reads a third fewer keys to resolve a path**: whether a
+  metarecord exists is read once per 65 536 ids until the next write, rather than
+  again for every folder whose path the search assembles.
+
 - **A range over a number of many distinct values is up to 7 times faster**: the
   postings of its values, a few ids each, are added id by id rather than united
   bitmap by bitmap — `mfr_size > 900000` over 100 000 files takes 1.9 ms instead of
