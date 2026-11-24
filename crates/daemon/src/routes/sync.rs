@@ -50,16 +50,14 @@ fn open_pair_db(
         sync::Located::Found(path) => {
             let host = if path.starts_with(&a_int) { a } else { b };
             let conn = sync::open(&path)?;
-            let ok = sync::read_meta(&conn, "repo_a")?.as_deref()
-                == Some(&a.as_simple().to_string())
-                && sync::read_meta(&conn, "repo_b")?.as_deref() == Some(&b.as_simple().to_string());
-            if !ok {
+            let named = sync::read_repositories(&conn)?;
+            if !named.is_some_and(|r| r.a == a && r.b == b) {
                 return Err(ApiError::conflict("sync database identity mismatch"));
             }
-            // Relocation is supported: keep meta.host in step with the file's
+            // Relocation is supported: keep the host in step with the file's
             // actual location.
-            if sync::read_meta(&conn, "host")?.as_deref() != Some(&host.as_simple().to_string()) {
-                sync::write_meta(&conn, a, b, host)?;
+            if named.is_some_and(|r| r.host != host) {
+                sync::write_repositories(&conn, sync::Repositories { a, b, host })?;
             }
             Ok(Some(PairDb { conn, host }))
         }
@@ -70,7 +68,7 @@ fn open_pair_db(
                 std::fs::create_dir_all(dir)
                     .map_err(|e| ApiError::internal(format!("create internal/: {e}")))?;
                 let conn = sync::open(&dir.join(sync::sync_db_filename(a, b)))?;
-                sync::write_meta(&conn, a, b, host)?;
+                sync::write_repositories(&conn, sync::Repositories { a, b, host })?;
                 Ok(Some(PairDb { conn, host }))
             }
         },

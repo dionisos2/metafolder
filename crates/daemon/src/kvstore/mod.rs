@@ -37,7 +37,7 @@ use crate::log::{OpRow, Retention};
 use crate::rows::{FieldRow, TreeRow};
 use crate::store::{Begin, Log, LogContextMeta, MassKind, NewOp, Rows, WriteTxn};
 
-mod codec;
+pub(crate) mod codec;
 mod derived;
 mod entry;
 mod mass;

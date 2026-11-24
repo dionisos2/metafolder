@@ -9,11 +9,6 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:
 
-- The sync store (=sync.rs=, one LMDB per pair of repositories: =meta=, =links=,
-  =by_a=, =by_b=, =snaps=) was left out of the review of the store's tables
-  (user decision, 20 November 2026): independent, with a migration of its own. To
-  go over later on the same principles: compact encoding, snapshot fields in the
-  record value format rather than JSON, the tables' names.
 - A trace of the values a retype loses (user decision, 20 November 2026, to do
   later): with the store's table review, a value a retype cannot convert is
   removed rather than turned into =nothing=, and the field goes when none

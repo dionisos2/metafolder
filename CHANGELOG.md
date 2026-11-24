@@ -14,6 +14,12 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **A pair's sync store has its own tables' review** (format 3): `meta` is split into
+  `version` and `repositories`, `by_a`/`by_b` become `links_by_record_a`/`_b`, and a
+  link's snapshot is one value in the store's compact encoding (`snapshots`) instead of
+  one JSON entry per field (`snaps`). A store of format 2 is converted when it is
+  opened, links and snapshots kept; a store of a newer format is refused.
+
 - **The log calls the rows an operation took off its `before`** (API 34): an operation
   of `GET /repos/:repo/log` and `GET /repos/:repo/log/contexts/:id` carries `before`
   (`snapshots_before` before), asked for with `include_before=true`
