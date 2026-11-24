@@ -1,0 +1,27 @@
+title: POST /repos/:repo/calibrate-threshold
+tags: [[HTTP endpoint]] Storage
+kind: reference
+audience: dev
+summary: Measures the mass-write threshold of each kind of write on a throwaway store, as a background task; sets them when asked.
+
+Asynchronous: `202 Accepted` with `{"task_id": "<32hex>"}`, `400` for a store of fewer
+than 100 records (refused before any task), `409 Conflict` when a calibration is
+already pending or running for this repository. Follow it through the [[Task endpoints]]; it is cancellable, and a cancelled one writes nothing.
+
+|!Key |!Default |!Meaning |
+|`records` |`100000` |the records of the throwaway store |
+|`write` |`false` |write the thresholds into `config.json`, in force at once |
+
+The task's result:
+
+```
+{"records": 100000, "written": false,
+ "thresholds": {"add": 49, "remove": 19, "set": 49, "delete": 9},
+ "kinds": [{"kind": "add", "threshold": 49, "reached": true,
+            "samples": [{"records": 1, "each_ms": 14.2, "mass_ms": 12.0}, …]}, …]}
+```
+
+`reached` is false when no size measured made the bulk write pay; the threshold is
+then the largest size measured ([[Calibrating the mass-write thresholds]]). The
+thresholds in force are in `GET /repos/:repo` (`mass_write_thresholds`). Additive on
+the wire: no `API_VERSION` bump.

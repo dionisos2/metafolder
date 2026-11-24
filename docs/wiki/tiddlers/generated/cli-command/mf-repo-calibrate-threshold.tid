@@ -1,0 +1,32 @@
+title: $:/mf/gen/CLI command/mf repo calibrate-threshold
+catalog: CLI command
+target: mf repo calibrate-threshold
+summary: Measure the mass-write thresholds of the selected repository's disk
+
+!! Reference
+
+```
+Measure the mass-write thresholds of the selected repository's disk
+
+On a throwaway store beside the repository's, removed afterwards, each kind of write (add, remove, set, delete) to N records is timed one record at a time and in bulk, cold, for N = 1, 2, 5, 10…: a kind's threshold is the most records written one at a time before going in bulk is past 250 ms one at a time and three times quicker (doc "Calibrating the mass-write thresholds"). Takes minutes on a hard disk; the repository stays usable meanwhile.
+
+Usage: mf repo calibrate-threshold [OPTIONS]
+
+Options:
+      --records <RECORDS>
+          Records of the throwaway store
+          
+          [default: 100000]
+
+      --write
+          Write the thresholds found into the repository's config.json, in force at once
+
+      --json
+          Print the daemon's answer as JSON
+
+      --poll-interval <MS>
+          Poll interval in ms while waiting
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

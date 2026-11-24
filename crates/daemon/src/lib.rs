@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod borrow;
+pub mod calibrate;
 pub mod config;
 pub mod daemon_config;
 pub mod diagnostics;

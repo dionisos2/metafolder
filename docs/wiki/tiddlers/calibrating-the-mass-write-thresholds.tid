@@ -1,0 +1,55 @@
+title: Calibrating the mass-write thresholds
+tags: Storage
+kind: guide
+summary: mf repo calibrate-threshold times each kind of write one record at a time and in bulk on a throwaway store beside the repository's; --write sets the thresholds found.
+
+A write to many records goes in bulk past its kind's threshold ([[Mass writes in the store]]). The right threshold depends on the disk: on a hard disk, writing records one
+at a time reads each of them, and a cold read is milliseconds; in the page cache, a
+write to two thousand records takes a few tens of milliseconds either way. The
+command measures it on the repository's own disk:
+
+```
+mf -n photos repo calibrate-threshold                 # measure, and print
+mf -n photos repo calibrate-threshold --write         # and set them in config.json
+mf -n photos repo calibrate-threshold --records 20000 # a smaller throwaway store
+```
+
+!! What it measures
+
+A throwaway store is created in `.metafolder/internal/`, on the same disk as the
+repository's, filled with `--records` records (100 000 by default, 100 at least) — files
+of a hundred per folder, a few tags each —, and removed at the end, or when the task is
+stopped. The repository itself is neither read nor written, and stays usable
+meanwhile; a write to it during the measure shares the disk, and so weighs on what is
+measured.
+
+For each kind of write — `add` (a value added), `remove` (a value removed), `set` (a
+field set; an unset goes with it), `delete` (records deleted) —, and N = 1, 2, 5, 10,
+20, 50… up to a twentieth of the store, a write to N records spread over the store is
+timed one record at a time and in bulk, each three times, the median kept. Every write
+is measured ''cold'' — the store closed, its file dropped from the page cache, opened
+again — and ''committed'', its `fsync` included. What the bulk write leaves pending is
+folded after each measure, untimed: the fold runs in idle time ([[Folding in idle time]]), so it is not counted.
+
+!! How a threshold is chosen
+
+A write goes in bulk only where both hold (user decision, November 2026):
+
+* one record at a time, it takes more than 250 ms;
+* in bulk, it is at least three times quicker.
+
+The sweep of a kind stops at the first N where they do, and the threshold is N − 1:
+no size goes in bulk without having been seen to pay. When no size measured does, the
+threshold is the largest N measured, and the command says `never in bulk up to N
+records measured`: beyond it, a write still goes in bulk.
+
+A repository held in memory ([[Holding a repository in memory]]) reads its store from
+memory: the cold measure overstates what a write one record at a time costs it.
+
+!! The result
+
+Each kind's threshold, with the times measured; `--json` prints the task's result as
+it is. `--write` writes the four into the repository's `config.json`
+(`mass_write_threshold`, [[Repository layout on disk]]), in force for the next write,
+without a reload. Without it nothing is written, and the daemon's
+`mass-write-threshold-<kind>` or what the `config.json` already says stay in force.

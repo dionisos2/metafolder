@@ -601,3 +601,72 @@ pub(super) async fn unload_repo(
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     Ok(Json(json!({"repo_uuid": hex(repo_uuid)})))
 }
+
+#[derive(Deserialize)]
+pub(super) struct CalibrateBody {
+    /// The records of the throwaway store.
+    #[serde(default)]
+    records: Option<u64>,
+    /// Write the thresholds found into `config.json`, in force at once.
+    #[serde(default)]
+    write: bool,
+}
+
+/// `POST /repos/:repo/calibrate-threshold`: measures each kind of write one
+/// record at a time and in bulk on a throwaway store beside the repository's,
+/// as a background task (doc "Calibrating the mass-write thresholds"). `202`
+/// with the task id; the thresholds and the times measured are read from
+/// `GET …/tasks/:id`. A store too small is refused at once (`400`), a second
+/// calibration with `409`.
+pub(super) async fn calibrate_threshold(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<CalibrateBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    use crate::calibrate;
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let records = body.records.unwrap_or(calibrate::DEFAULT_RECORDS);
+    if records < calibrate::MIN_RECORDS {
+        return Err(ApiError::bad_request(format!(
+            "the throwaway store needs at least {} records, not {records}",
+            calibrate::MIN_RECORDS
+        )));
+    }
+    let repo_state = state.ready_repo(repo_uuid)?;
+    if body.write {
+        repo_state.ensure_writable()?;
+    }
+    let task_id = repo_state.tasks.start_unique(TaskKind::Calibrate).ok_or_else(|| {
+        ApiError::conflict("a calibration is already in progress for this repository")
+    })?;
+    tokio::task::spawn_blocking(move || {
+        let _repo = crate::diagnostics::in_repo(repo_state.uuid());
+        repo_state.tasks.mark_running(task_id);
+        let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            repo_state.tasks.set_progress(task_id, phase, done, total);
+        };
+        let cancel = || repo_state.tasks.is_cancel_requested(task_id);
+        let outcome =
+            crate::tasks::logged(&repo_state.slowlog, TaskKind::Calibrate, task_id, || {
+                let reporter = crate::tasks::Reporter::new(&progress, &cancel);
+                let kinds = calibrate::calibrate(&repo_state.internal_dir(), records, &reporter)?;
+                let thresholds = calibrate::thresholds(&kinds);
+                if body.write {
+                    repo_state.set_mass_write_thresholds(thresholds)?;
+                }
+                anyhow::Ok(json!({
+                    "records": records,
+                    "kinds": kinds,
+                    "thresholds": thresholds,
+                    "written": body.write,
+                }))
+            });
+        match outcome {
+            Ok(value) => repo_state.tasks.finish(task_id, Some(value)),
+            Err(_) if cancel() => repo_state.tasks.mark_cancelled(task_id),
+            Err(e) => repo_state.tasks.fail(task_id, &format!("{e:#}")),
+        }
+    });
+    Ok((StatusCode::ACCEPTED, Json(json!({"task_id": hex(task_id)}))).into_response())
+}

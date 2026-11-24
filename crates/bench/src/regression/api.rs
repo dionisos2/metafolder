@@ -171,7 +171,12 @@ pub const SCENARIOS: &[Scenario] = &[
 
 /// Routes the sweep does not measure, and why (read by the coverage test).
 #[cfg_attr(not(test), allow(dead_code))]
-pub const NOT_MEASURED: &[(&str, &str, &str)] = &[];
+pub const NOT_MEASURED: &[(&str, &str, &str)] = &[(
+    "POST",
+    "/repos/:repo/calibrate-threshold",
+    "a measure itself, minutes long: its time says what the disk is worth, not the daemon \
+     (doc \"Calibrating the mass-write thresholds\")",
+)];
 
 /// Files whose metarecord the generated repository keeps but whose file it
 /// does not write: the orphans the `orphans.*` scenarios find.

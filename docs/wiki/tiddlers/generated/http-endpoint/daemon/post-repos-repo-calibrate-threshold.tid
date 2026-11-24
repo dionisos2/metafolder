@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/calibrate-threshold
+catalog: HTTP endpoint
+target: POST /repos/:repo/calibrate-threshold
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``calibrate_threshold`` |

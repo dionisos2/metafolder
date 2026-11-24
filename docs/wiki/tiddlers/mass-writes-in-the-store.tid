@@ -25,9 +25,9 @@ written one at a time, as a write to each alone would be — nothing is left pen
 and no read pays for it later. A deletion of many records is held to the same
 threshold ([[Mass operations in the log]]).
 
-The thresholds are starting values: a fixed number cannot be right for every disk
-(the costs measured are in `notes-performance-stockage.txt`, 0quater), and a way to
-derive them from the repository is to come. Until November 2026 one setting,
+The thresholds shipped are starting values: a fixed number cannot be right for every
+disk. `mf repo calibrate-threshold` measures them on the repository's own and, with
+`--write`, sets them ([[Calibrating the mass-write thresholds]]). Until November 2026 one setting,
 `mass-write-threshold`, held for every kind: a configuration still naming it loads,
 the setting ignored with a warning. A writer the
 repository did not configure (a test's, an init's) has a threshold of 0: every such

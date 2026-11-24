@@ -337,6 +337,57 @@ pub fn repo_wear(ctx: &Ctx, json: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf repo calibrate-threshold`: the daemon's calibration task (`POST
+/// …/calibrate-threshold`, doc "Calibrating the mass-write thresholds"),
+/// waited for; each kind's threshold and the times measured.
+pub fn calibrate_threshold(
+    ctx: &Ctx,
+    records: u64,
+    write: bool,
+    json: bool,
+    poll_interval_ms: u64,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let body = serde_json::json!({"records": records, "write": write});
+    let started = ctx.client.post(&format!("{base}/calibrate-threshold"), &body)?;
+    let task_id = started["task_id"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("calibrate: daemon did not return a task id".into()))?
+        .to_string();
+    let result = super::tags::poll_task(ctx, &base, &task_id, "calibrate", poll_interval_ms)?;
+    if json {
+        println!("{result}");
+        return Ok(0);
+    }
+    println!("measured on {records} records, cold, each write committed:");
+    for kind in result["kinds"].as_array().into_iter().flatten() {
+        let name = kind["kind"].as_str().unwrap_or("?");
+        let threshold = kind["threshold"].as_u64().unwrap_or(0);
+        let samples = kind["samples"].as_array().cloned().unwrap_or_default();
+        let why = if kind["reached"].as_bool().unwrap_or(false) {
+            format!("in bulk from {} records", threshold + 1)
+        } else {
+            format!("never in bulk up to {threshold} records measured")
+        };
+        println!("{name}: {threshold} ({why})");
+        println!("  {:>8}  {:>14}  {:>10}", "records", "one at a time", "in bulk");
+        for s in samples {
+            println!(
+                "  {:>8}  {:>11.1} ms  {:>7.1} ms",
+                s["records"].as_u64().unwrap_or(0),
+                s["each_ms"].as_f64().unwrap_or(0.0),
+                s["mass_ms"].as_f64().unwrap_or(0.0)
+            );
+        }
+    }
+    if result["written"].as_bool().unwrap_or(false) {
+        println!("written into the repository's config.json, in force now");
+    } else {
+        println!("not written: run again with --write to set them");
+    }
+    Ok(0)
+}
+
 /// `mf repo unload`: unloads the repository from the daemon (`POST …/unload`),
 /// printing its UUID. A repository not loaded (404) or in a coordinated revert
 /// (409) is reported as an error.

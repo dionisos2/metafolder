@@ -57,6 +57,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/init", post(init_repo))
         .route("/repos/{repo}/check", post(check_repo))
         .route("/repos/{repo}/backup", post(backup_repo))
+        .route("/repos/{repo}/calibrate-threshold", post(calibrate_threshold))
         .route("/repos/{repo}/restore", post(restore_loaded_repo))
         .route("/repos/restore", post(restore_repo))
         .route("/repos/{repo}/reindex", post(reindex_repo))

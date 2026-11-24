@@ -1,0 +1,10 @@
+title: mf repo calibrate-threshold
+tags: [[CLI command]]
+kind: reference
+summary: Measure the mass-write thresholds of the selected repository's disk
+
+Runs the daemon's calibration task and waits for it: each kind of write timed one
+record at a time and in bulk on a throwaway store, the threshold each gets, and the
+times measured; `--write` sets them in the repository's `config.json`
+([[Calibrating the mass-write thresholds]]). Stopped like any task
+([[Cancelling a task]]), it leaves nothing behind.

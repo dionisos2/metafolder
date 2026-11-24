@@ -14,9 +14,6 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   0.77 ms against 0.14), so the bench's verdicts against it mean nothing until a
   new baseline is recorded on a neutral machine (doc "The timed regression
   suite"; ask before).
-- The mass-write threshold (=mass-write-threshold=, 20 to start) is one number for
-  every operation: a way to derive better values from the repository is to come
-  (doc "Mass writes in the store").
 
 * To discuss
 Every deferred or proposed note, to be gone through one by one: build it, keep

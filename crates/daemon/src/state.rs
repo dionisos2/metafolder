@@ -132,7 +132,11 @@ pub struct RepoState {
     log_retention: crate::log::Retention,
     /// The most records a write of each kind changes one at a time
     /// (`mass-write-threshold-*`, doc "Mass writes in the store").
-    mass_write_threshold: crate::log::MassThresholds,
+    /// Set again by a calibration asked to write ([`Self::set_mass_write_thresholds`]).
+    mass_write_threshold: Mutex<crate::log::MassThresholds>,
+    /// Held while `config.json` is read back, changed and written, so that
+    /// two such writes never lose each other's change.
+    config_write: Mutex<()>,
     /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
     /// the executor before applying a cascade.
     pub orphan_cascade_limit: usize,
@@ -268,7 +272,8 @@ impl RepoState {
             watch_rules: Mutex::new(RulesSlot::default()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
-            mass_write_threshold,
+            mass_write_threshold: Mutex::new(mass_write_threshold),
+            config_write: Mutex::new(()),
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
             held_paths: Mutex::new(std::collections::BTreeSet::new()),
             slowlog,
@@ -367,7 +372,7 @@ impl RepoState {
             .into());
         }
         let mut writer = crate::log::Writer::begin_in(conn, context, self.log_retention)?;
-        writer.set_mass_thresholds(self.mass_write_threshold);
+        writer.set_mass_thresholds(self.mass_write_thresholds());
         Ok(writer)
     }
 
@@ -379,7 +384,7 @@ impl RepoState {
         context: crate::log::WriteContext,
     ) -> anyhow::Result<crate::log::Writer<'c>> {
         let mut writer = crate::log::Writer::begin_in(conn, context, self.log_retention)?;
-        writer.set_mass_thresholds(self.mass_write_threshold);
+        writer.set_mass_thresholds(self.mass_write_thresholds());
         Ok(writer)
     }
 
@@ -413,6 +418,7 @@ impl RepoState {
             in_memory: self.residency.get().and_then(|handle| handle.get()),
             ready: self.is_ready(),
             borrowed_from: self.config.borrowed.as_ref().map(|b| b.metafolder.clone()),
+            mass_write_thresholds: self.mass_write_thresholds(),
         }
     }
 
@@ -420,9 +426,30 @@ impl RepoState {
     /// swaps the in-memory name. Uniqueness is enforced by the caller
     /// ([`AppState::rename_repo`]).
     pub fn rename(&self, new_name: String) -> anyhow::Result<()> {
-        let cfg = RepoConfig { name: new_name.clone(), ..self.config.clone() };
-        cfg.write(&self.metafolder_dir)?;
+        self.update_config(|cfg| cfg.name = new_name.clone())?;
         *self.name.lock_recover() = new_name;
+        Ok(())
+    }
+
+    /// Changes `config.json` as it is on disk now — not as it was loaded: a
+    /// change written since the load (a calibration's thresholds) stays.
+    fn update_config(&self, change: impl FnOnce(&mut RepoConfig)) -> anyhow::Result<()> {
+        let _held = self.config_write.lock_recover();
+        let mut cfg = RepoConfig::read(&self.metafolder_dir)?;
+        change(&mut cfg);
+        cfg.write(&self.metafolder_dir)
+    }
+
+    /// The most records a write of each kind changes one at a time.
+    pub fn mass_write_thresholds(&self) -> crate::log::MassThresholds {
+        *self.mass_write_threshold.lock_recover()
+    }
+
+    /// Sets this repository's thresholds in `config.json`, and in force for
+    /// the next writes (doc "Calibrating the mass-write thresholds").
+    pub fn set_mass_write_thresholds(&self, t: crate::log::MassThresholds) -> anyhow::Result<()> {
+        self.update_config(|cfg| cfg.set_mass_write_thresholds(t))?;
+        *self.mass_write_threshold.lock_recover() = t;
         Ok(())
     }
     /// The rule index, current as of the connection's HEAD: re-read when a
@@ -1353,6 +1380,9 @@ pub struct RepoInfo {
     /// For a borrowed copy, the remote `.metafolder/` it is given back to
     /// (doc "Cross-machine sync"); `null` otherwise.
     pub borrowed_from: Option<PathBuf>,
+    /// The most records a write of each kind changes one at a time (doc
+    /// "Mass writes in the store").
+    pub mass_write_thresholds: crate::log::MassThresholds,
 }
 
 /// A repository unloaded because its root went away: what is still said about

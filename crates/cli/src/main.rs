@@ -440,6 +440,30 @@ enum RepoCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Measure the mass-write thresholds of the selected repository's disk
+    ///
+    /// On a throwaway store beside the repository's, removed afterwards, each
+    /// kind of write (add, remove, set, delete) to N records is timed one
+    /// record at a time and in bulk, cold, for N = 1, 2, 5, 10…: a kind's
+    /// threshold is the most records written one at a time before going in
+    /// bulk is past 250 ms one at a time and three times quicker (doc
+    /// "Calibrating the mass-write thresholds"). Takes minutes on a hard disk;
+    /// the repository stays usable meanwhile.
+    CalibrateThreshold {
+        /// Records of the throwaway store
+        #[arg(long, default_value_t = 100_000)]
+        records: u64,
+        /// Write the thresholds found into the repository's config.json, in
+        /// force at once
+        #[arg(long)]
+        write: bool,
+        /// Print the daemon's answer as JSON
+        #[arg(long)]
+        json: bool,
+        /// Poll interval in ms while waiting
+        #[arg(long = "poll-interval", value_name = "MS")]
+        poll_interval: Option<u64>,
+    },
     /// Take a backup of the selected repository and print where it went
     ///
     /// A consistent copy of its store (taken while the daemon runs) with its
@@ -1567,6 +1591,15 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Compact => commands::compact_repo(ctx),
             RepoCommand::Wear { json } => commands::repo_wear(ctx, json),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),
+            RepoCommand::CalibrateThreshold { records, write, json, poll_interval } => {
+                commands::calibrate_threshold(
+                    ctx,
+                    records,
+                    write,
+                    json,
+                    poll_interval.unwrap_or(ctx.reconcile_poll_interval_ms),
+                )
+            }
             RepoCommand::Borrow { root, to, metafolder, name, force } => commands::borrow_repo(
                 ctx,
                 &root,

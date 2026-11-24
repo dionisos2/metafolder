@@ -118,6 +118,10 @@ pub enum TaskKind {
     /// because its copy holds the connection lock, so the task bar says why
     /// everything else waits. Not cancellable: the copy is one LMDB call.
     Backup,
+    /// Measuring the mass-write thresholds on a throwaway store
+    /// (`mf repo calibrate-threshold`, doc "Calibrating the mass-write
+    /// thresholds"). Cancellable: the throwaway store goes, nothing is written.
+    Calibrate,
 }
 
 impl TaskKind {
@@ -133,6 +137,7 @@ impl TaskKind {
             TaskKind::Relink => "relink",
             TaskKind::Prune => "prune",
             TaskKind::Backup => "backup",
+            TaskKind::Calibrate => "calibrate",
         }
     }
 

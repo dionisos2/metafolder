@@ -532,3 +532,32 @@ fn test_repo_borrow_and_give_back() {
     assert_ok(&out);
     assert_eq!(out.stdout.lines().count(), 2, "{}", out.stdout);
 }
+
+/// `mf repo calibrate-threshold` measures each kind of write on a throwaway
+/// store and, with `--write`, sets the repository's thresholds (doc
+/// "Calibrating the mass-write thresholds"). What they are depends on the
+/// machine: only their shape is held.
+#[test]
+fn test_calibrate_threshold_measures_and_writes_the_thresholds() {
+    let (repo, root) = init_repo("calibrate");
+    let out = mf(&["-u", &repo, "repo", "calibrate-threshold", "--records", "200"]);
+    assert_ok(&out);
+    for kind in ["add", "remove", "set", "delete"] {
+        assert!(out.stdout.contains(&format!("{kind}: ")), "{}", out.stdout);
+    }
+    assert!(out.stdout.contains("--write"), "says how to keep them: {}", out.stdout);
+    let config = || -> serde_json::Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(root.join(".metafolder/config.json")).unwrap(),
+        )
+        .unwrap()
+    };
+    assert!(config().get("mass_write_threshold").is_none());
+
+    let out =
+        mf(&["-u", &repo, "repo", "calibrate-threshold", "--records", "200", "--write", "--json"]);
+    assert_ok(&out);
+    let result: serde_json::Value = serde_json::from_str(out.stdout.trim()).unwrap();
+    assert_eq!(result["written"], true);
+    assert_eq!(config()["mass_write_threshold"], result["thresholds"]);
+}
