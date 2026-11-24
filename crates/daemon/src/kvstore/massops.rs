@@ -16,7 +16,7 @@ use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 use super::derived::{
-    count_prefix, decode_set, dense, parent_holders_prefix, set_prefix, Bitmaps, IndexSet,
+    add_set, count_prefix, decode_set, dense, parent_holders_prefix, set_prefix, Bitmaps, IndexSet,
     COUNT_BITS, NO_TARGET,
 };
 use super::entry::{self, Effect, Entry, FileAction, Header, Params};
@@ -526,7 +526,10 @@ impl KvTxn<'_> {
                 for e in Bitmaps::ParentHolders.db(&self.t).prefix_iter(&txn, &prefix)? {
                     let (k, v) = e?;
                     if k.len() == prefix.len() + 6 {
-                        *groups.entry(dense(&k[prefix.len()..])).or_default() |= decode_set(v)?;
+                        add_set(
+                            groups.entry(dense(&k[prefix.len()..])).or_default(),
+                            decode_set(v)?,
+                        );
                     }
                 }
             }

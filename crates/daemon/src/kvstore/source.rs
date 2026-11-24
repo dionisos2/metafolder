@@ -409,7 +409,7 @@ impl KvSource<'_> {
                     self.read_keys(1)?;
                     let k = [prefix, &chunk.to_be_bytes()].concat();
                     if let Some(v) = self.t.index_trigram_holders.get(&self.r, &k)? {
-                        out |= derived::decode_set(v)?;
+                        derived::add_encoded(&mut out, v)?;
                     }
                 }
                 out &= r;
@@ -419,7 +419,7 @@ impl KvSource<'_> {
                     let (k, v) = entry?;
                     self.read_keys(1)?;
                     if k.len() == prefix.len() + 2 {
-                        out |= derived::decode_set(v)?;
+                        derived::add_encoded(&mut out, v)?;
                     }
                 }
             }
@@ -454,7 +454,7 @@ impl KvSource<'_> {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
-                    out |= derived::decode_set(v)?;
+                    derived::add_encoded(&mut out, v)?;
                 }
             }
             Ok(out)
@@ -703,7 +703,7 @@ impl KvSource<'_> {
                 let key = &k[prefix.len()..k.len() - 2];
                 // `nothing` is no value a comparison or a scan reads.
                 if key != [derived::NOTHING_TAG] && keep(key) {
-                    out |= derived::decode_set(v)?;
+                    derived::add_encoded(&mut out, v)?;
                 }
             }
             Ok(out)
@@ -720,7 +720,10 @@ impl KvSource<'_> {
                 let (k, v) = entry?;
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
-                    *out.get_or_insert_with(RoaringBitmap::new) |= derived::decode_set(v)?;
+                    derived::add_set(
+                        out.get_or_insert_with(RoaringBitmap::new),
+                        derived::decode_set(v)?,
+                    );
                 }
             }
             Ok(out)
@@ -1019,7 +1022,7 @@ impl KvSource<'_> {
             for entry in self.t.index_parent_holders.prefix_iter(&self.r, &prefix)? {
                 let (_, v) = entry?;
                 self.read_keys(1)?;
-                out |= derived::decode_set(v)?;
+                derived::add_encoded(&mut out, v)?;
             }
             Ok(out)
         };
@@ -1636,7 +1639,7 @@ impl Source for KvSource<'_> {
                 self.read_keys(1)?;
                 if k.len() == prefix.len() + 6 && except.as_deref() != Some(&k[prefix.len()..][..4])
                 {
-                    out |= derived::decode_set(v)?;
+                    derived::add_encoded(&mut out, v)?;
                 }
             }
             Ok(out)
@@ -1665,7 +1668,7 @@ impl Source for KvSource<'_> {
                     let (k, v) = entry?;
                     self.read_keys(1)?;
                     if k.len() == prefix.len() + 2 {
-                        out |= derived::decode_set(v)?;
+                        derived::add_encoded(&mut out, v)?;
                     }
                 }
             }

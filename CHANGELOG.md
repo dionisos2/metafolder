@@ -32,6 +32,11 @@ than breaking them.
   keys instead of 2 863 (doc "Text search in the store"). Each repository is
   reindexed once when it is first opened by this version.
 
+- **A range over a number of many distinct values is up to 7 times faster**: the
+  postings of its values, a few ids each, are added id by id rather than united
+  bitmap by bitmap — `mfr_size > 900000` over 100 000 files takes 1.9 ms instead of
+  13.
+
 - **A text search no longer slows down after files are written, until the next
   fold**: a write keeps the trigrams of its texts exact at once — its ids in their
   bitmaps, and a trigram whose list grows past its limit turned there and then —
