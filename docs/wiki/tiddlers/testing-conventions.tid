@@ -102,7 +102,9 @@ The syncs were most of the time the write-heavy suites took: `undo_redo_properti
 some 30 000 requests, went from 148 s to 79 s with the test directories on the
 container's `fuse-overlayfs` `/tmp`, and from 40 s to 31 s on ext4 (24 November 2026,
 four cores). The filesystem under `$TMPDIR` weighs as much: FUSE makes every write and
-every page of the mapped store a round trip to a user process, even unsynced.
+every page of the mapped store a round trip to a user process, even unsynced. The
+development container therefore points `TMPDIR` at its home, a plain ext4
+(`~/.cache/container-tmp`, set in `~/.bashrc` when `/run/.containerenv` exists): 25 s.
 
 !! The watcher in tests
 
