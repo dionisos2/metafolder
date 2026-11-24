@@ -372,37 +372,48 @@ async fn test_a_reserved_name_needs_force() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// In bulk, a replacement or a rename over many records is a few entries of
-/// the log, not one or two per record.
-#[tokio::test]
-async fn test_in_bulk_the_log_holds_a_few_entries_not_one_per_record() {
-    let (app, repo, _root) = setup("bulk_log", Some(0)).await;
-    for i in 0..30 {
-        let tag = if i % 2 == 0 { "jazz" } else { "rock" };
-        create(&app, &repo, json!([row("tag", s(tag))])).await;
-    }
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query/fields/replace"),
-        Some(json!({"query": present("tag"), "name": "tag",
-                    "value": s("jazz"), "to": s("blues")})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "replace failed: {body}");
-    assert_eq!(body, json!({"updated": 15}));
-    let (_, ops) = log_state(&app, &repo).await;
-    assert!(ops <= 2, "a replacement in bulk is a remove and an add, not {ops} entries");
+/// The writes that wait for their fold, one per write to many records and
+/// part of the ids (doc "Mass writes in the store"): what tells a write in
+/// bulk from one record at a time, which leaves none.
+async fn pending_writes(app: &Router, repo: &str) -> u64 {
+    let (status, wear) = request(app, "GET", &format!("/repos/{repo}/wear"), None).await;
+    assert_eq!(status, StatusCode::OK, "{wear}");
+    wear["pending_writes"].as_u64().unwrap()
+}
 
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query/fields/rename"),
-        Some(json!({"query": present("tag"), "name": "tag", "to": "genre"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "rename failed: {body}");
-    assert_eq!(body, json!({"updated": 30}));
-    let (_, ops) = log_state(&app, &repo).await;
-    assert!(ops <= 3, "a rename in bulk is an add per value and an unset, not {ops} entries");
+/// In bulk, a replacement or a rename over many records is a few mass
+/// writes, not one or two writes per record.
+#[tokio::test]
+async fn test_in_bulk_a_few_mass_writes_not_one_per_record() {
+    for (threshold, bulk) in [(Some(0), true), (Some(1000), false)] {
+        let (app, repo, _root) = setup("bulk_log", threshold).await;
+        for i in 0..30 {
+            let tag = if i % 2 == 0 { "jazz" } else { "rock" };
+            create(&app, &repo, json!([row("tag", s(tag))])).await;
+        }
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/query/fields/replace"),
+            Some(json!({"query": present("tag"), "name": "tag",
+                        "value": s("jazz"), "to": s("blues")})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "replace failed: {body}");
+        assert_eq!(body, json!({"updated": 15}));
+        // A remove and an add.
+        assert_eq!(pending_writes(&app, &repo).await, if bulk { 2 } else { 0 });
+
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/query/fields/rename"),
+            Some(json!({"query": present("tag"), "name": "tag", "to": "genre"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "rename failed: {body}");
+        assert_eq!(body, json!({"updated": 30}));
+        // An add per value, two, and an unset.
+        assert_eq!(pending_writes(&app, &repo).await, if bulk { 5 } else { 0 });
+    }
 }

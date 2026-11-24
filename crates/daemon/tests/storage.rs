@@ -1486,3 +1486,32 @@ fn test_set_record_returns_the_version_it_leaves() {
     w.commit().unwrap();
     assert_eq!(Some(returned), conn.version(uuid).unwrap());
 }
+
+/// A retype over many records is a few mass writes — a remove and an add per
+/// distinct value — not two operations per value converted (doc "Changing a
+/// field's type").
+#[test]
+fn test_retype_in_bulk_is_a_few_entries_of_the_log() {
+    use metafolder_core::metarecord::FieldType;
+    let (mut conn, _dir) = test_conn();
+    let mut made = Vec::new();
+    for i in 0..30 {
+        made.push(create(&mut conn, vec![Field::new("rating", Value::Int(i % 2))]).uuid);
+    }
+    // The log is counted by entry, a mass write being one (doc "Log
+    // storage"), however many operations it reads as.
+    let (entries_before, _) = conn.counts().unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let summary = w.retype_field("rating", FieldType::String).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(summary.converted, 30);
+    let ops = conn.counts().unwrap().0 - entries_before;
+    assert!(ops <= 4, "two values, a remove and an add each, not {ops} entries");
+    for (i, uuid) in made.iter().enumerate() {
+        let want = Value::String((i % 2).to_string());
+        assert_eq!(values_of(&conn, *uuid, "rating"), vec![want]);
+    }
+    revert_last_revision(&mut conn);
+    assert_eq!(values_of(&conn, made[1], "rating"), vec![Value::Int(1)]);
+}

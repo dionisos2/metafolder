@@ -1105,59 +1105,140 @@ impl<'c> Writer<'c> {
     /// (missing parent, cycle, depth) — is removed rather than aborting the
     /// whole retype, so one bad path never blocks the rest. Returns how many
     /// rows converted and the metarecords that lost a value.
+    ///
+    /// The values are read record by record, and each distinct one is then
+    /// converted on all its holders at once — a mass remove and a mass add
+    /// (doc "Mass writes in the store"). A record holding a position, or a
+    /// retype to a positioned type, is converted alone, its forest checked.
     pub fn retype_field(&mut self, name: &str, to: FieldType) -> Result<RetypeSummary> {
         // The field's established type changes here; drop any cached entry so a
         // later checked write in this write re-probes.
         self.field_types.remove(name);
         let mut converted = 0usize;
         let mut fallback: std::collections::BTreeSet<Uuid> = Default::default();
-        for uuid in self.tx.holders(name)? {
-            for row in self.tx.rows_named(uuid, name)? {
+        let holders = crate::store::Rows::holder_ids(&*self.tx, name)?;
+        let uuids = self.tx.uuids_of(&holders)?;
+        let to_placed = metafolder_core::metarecord::is_position_type(to.as_str());
+        // Keyed by their JSON form: a `Value` is not `Ord`.
+        let mut by_value: std::collections::BTreeMap<String, (Value, RoaringBitmap)> =
+            Default::default();
+        let mut placed = Vec::new();
+        for (uuid, id) in uuids.into_iter().zip(holders.iter()) {
+            let rows = self.tx.rows_named(uuid, name)?;
+            if to_placed || rows.iter().any(|r| r.value.position().is_some()) {
+                placed.push(uuid);
+                continue;
+            }
+            for row in rows {
                 if matches!(row.value, Value::Nothing) {
                     continue;
                 }
-                let (new_value, mut fell_back) = row.value.convert_to(to);
-                // A converted TreeRef must satisfy the forest invariants like any
-                // other write; a violating value is removed (and reported) so
-                // the retype as a whole still succeeds.
-                if !fell_back && new_value.position().is_some() {
-                    let valid = self
-                        .validate_one_position(uuid, &row.name, &new_value, Some(&row.value))
-                        .and_then(|()| self.validate_tree_ref(uuid, &row.name, &new_value));
-                    if let Err(e) = valid {
-                        if e.downcast_ref::<DomainError>().is_some() {
-                            fell_back = true;
-                        } else {
-                            return Err(e); // a genuine DB error, not a forest violation
-                        }
-                    }
-                }
-                let name = row.name.clone();
-                // A value that does not convert is removed, never replaced by
-                // a default or by Nothing: the field goes when none converts
-                // (doc "Changing a field's type").
-                if fell_back {
-                    fallback.insert(uuid);
-                    self.delete_field_rows(uuid, &name, vec![row])?;
-                    continue;
-                }
-                if new_value == row.value {
-                    continue; // already the target type
-                }
-                // Two values the conversion made equal are one row afterwards,
-                // not a duplicate (doc "No duplicate rows"). The
-                // probe reads the transaction's own state, so rows converted
-                // earlier in this pass count as siblings.
-                let twin = self.tx.rows_named(uuid, &name)?.iter().any(|r| r.value == new_value);
-                if twin {
-                    self.delete_field_rows(uuid, &name, vec![row])?;
-                } else {
-                    self.replace_owned_row(uuid, row, &name, new_value)?;
-                }
-                converted += 1;
+                let key = serde_json::to_string(&row.value)?;
+                by_value
+                    .entry(key)
+                    .or_insert_with(|| (row.value, RoaringBitmap::new()))
+                    .1
+                    .insert(id);
             }
         }
+        for uuid in placed {
+            self.retype_record(uuid, name, to, &mut converted, &mut fallback)?;
+        }
+        // The rows of the old type and of the new one stand side by side until
+        // the last value is converted: the type check waits for the end of the
+        // write, and only if it was waiting already — a retype leaves one type.
+        let was_deferred = self.deferred_types.is_some();
+        self.deferred_types.get_or_insert_with(Default::default);
+        let converting = self.retype_values(name, to, by_value, &mut converted, &mut fallback);
+        if !was_deferred {
+            self.deferred_types = None;
+        }
+        converting?;
+        self.field_types.remove(name);
         Ok(RetypeSummary { converted, fallback_uuids: fallback.into_iter().collect() })
+    }
+
+    /// [`Self::retype_field`] for the values no position is involved in:
+    /// each converted on all its holders at once.
+    fn retype_values(
+        &mut self,
+        name: &str,
+        to: FieldType,
+        by_value: std::collections::BTreeMap<String, (Value, RoaringBitmap)>,
+        converted: &mut usize,
+        fallback: &mut std::collections::BTreeSet<Uuid>,
+    ) -> Result<()> {
+        for (_, (value, holding)) in by_value {
+            let (new_value, fell_back) = value.convert_to(to);
+            if !fell_back && new_value == value {
+                continue; // already the target type
+            }
+            // A value that does not convert is removed, never replaced by a
+            // default or by Nothing: the field goes when none converts (doc
+            // "Changing a field's type").
+            let removed = self.mass_remove_ids(name, &value, &holding)?;
+            if fell_back {
+                fallback.extend(self.tx.uuids_of(&removed)?);
+                continue;
+            }
+            // Two values the conversion made equal are one row afterwards
+            // (doc "No duplicate rows"): the add skips a record holding it.
+            self.mass_add_ids(name, new_value, &removed)?;
+            *converted += removed.len() as usize;
+        }
+        Ok(())
+    }
+
+    /// [`Self::retype_field`] on one record, row by row: a position is
+    /// checked against its forest, a value that would break it removed.
+    fn retype_record(
+        &mut self,
+        uuid: Uuid,
+        name: &str,
+        to: FieldType,
+        converted: &mut usize,
+        fallback: &mut std::collections::BTreeSet<Uuid>,
+    ) -> Result<()> {
+        for row in self.tx.rows_named(uuid, name)? {
+            if matches!(row.value, Value::Nothing) {
+                continue;
+            }
+            let (new_value, mut fell_back) = row.value.convert_to(to);
+            // A converted TreeRef must satisfy the forest invariants like any
+            // other write; a violating value is removed (and reported) so
+            // the retype as a whole still succeeds.
+            if !fell_back && new_value.position().is_some() {
+                let valid = self
+                    .validate_one_position(uuid, &row.name, &new_value, Some(&row.value))
+                    .and_then(|()| self.validate_tree_ref(uuid, &row.name, &new_value));
+                if let Err(e) = valid {
+                    if e.downcast_ref::<DomainError>().is_some() {
+                        fell_back = true;
+                    } else {
+                        return Err(e); // a genuine DB error, not a forest violation
+                    }
+                }
+            }
+            let name = row.name.clone();
+            if fell_back {
+                fallback.insert(uuid);
+                self.delete_field_rows(uuid, &name, vec![row])?;
+                continue;
+            }
+            if new_value == row.value {
+                continue; // already the target type
+            }
+            // The probe reads the transaction's own state, so rows converted
+            // earlier in this pass count as siblings.
+            let twin = self.tx.rows_named(uuid, &name)?.iter().any(|r| r.value == new_value);
+            if twin {
+                self.delete_field_rows(uuid, &name, vec![row])?;
+            } else {
+                self.replace_owned_row(uuid, row, &name, new_value)?;
+            }
+            *converted += 1;
+        }
+        Ok(())
     }
 
     /// Deletes the given rows of `(uuid, name)` and logs them as *one*
