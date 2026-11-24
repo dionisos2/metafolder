@@ -113,6 +113,44 @@ describe('metarecord:bulk', () => {
     expect(quiet.metafolder.trash.trashQuery).not.toHaveBeenCalled();
   });
 
+  test('replaces a value over the selection, both read as the catalogue type', async () => {
+    const { bulk, calls, dirty } = setup({ selected_metarecords: ['u1', 'u2'] });
+    await bulk.handler('selection', 'replace', 'rating', '4', '5');
+    const post = calls.find((c) => c.path === '/repos/r/query/fields/replace');
+    expect(post?.body).toEqual({
+      query: { type: 'uuid_in', uuids: ['u1', 'u2'] },
+      name: 'rating',
+      value: { type: 'int', value: 4 },
+      to: { type: 'int', value: 5 },
+    });
+    expect(dirty).toHaveBeenCalled();
+  });
+
+  test('replaces a value of a type the invocation names', async () => {
+    const { bulk, calls } = setup({ selected_metarecords: ['u1'] });
+    await bulk.handler('selection', 'replace', 'genre', 'string', 'jaz', 'jazz');
+    const post = calls.find((c) => c.path === '/repos/r/query/fields/replace');
+    expect(post?.body).toMatchObject({
+      name: 'genre',
+      value: { type: 'string', value: 'jaz' },
+      to: { type: 'string', value: 'jazz' },
+    });
+  });
+
+  test('renames a field over the query the list shows', async () => {
+    const effective = { type: 'eq', field: 'genre' };
+    const { bulk, calls, dirty } = setup({ 'metarecord-list:effective-query': effective });
+    await bulk.handler('query', 'rename', 'rating', 'score');
+    const post = calls.find((c) => c.path === '/repos/r/query/fields/rename');
+    expect(post?.body).toEqual({ query: effective, name: 'rating', to: 'score' });
+    expect(dirty).toHaveBeenCalled();
+  });
+
+  test('a rename onto a reserved name goes through the force the panel grants', async () => {
+    const { bulk } = setup({ selected_metarecords: ['u1'] });
+    await expect(bulk.handler('selection', 'rename', 'rating', 'mfr_x')).rejects.toThrow('reserved');
+  });
+
   test('refuses a target it does not know', async () => {
     const { bulk } = setup();
     await expect(bulk.handler('everything', 'set')).rejects.toThrow(/unknown target/);

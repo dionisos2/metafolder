@@ -1,4 +1,4 @@
-// The metarecord-list's bulk form: set/add/remove/unset a field, delete the
+// The metarecord-list's bulk form: set/add/remove/replace/rename/unset a field, delete the
 // metarecords, or trash their files — over the checked selection or over the
 // query the list shows (doc "Editing metarecords in the GUI"). It owns the
 // form's elements; what it needs from the panel arrives through `ctx`:
@@ -16,15 +16,19 @@ import { createSelect } from '/__select.js';
 
 // Each operation maps to its batch endpoint and a confirmation verb.
 // `valueless` ops (unset) act on the field name alone — no value widget.
+// `replace` takes a second value, the one put in place of the first; `rename`
+// takes a field name instead of a value.
 // `noField` ops (delete) act on the matched metarecords themselves — no field
 // name, no value; the response counts `deleted` rather than `updated`.
 // `trash` sends their files to the trash (the metarecords with them) through
 // the GUI, not a daemon route — hence no `path`.
-/** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean, noField?: boolean}>} */
+/** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean, noField?: boolean, replacing?: boolean, renaming?: boolean}>} */
 const BULK_OPS = {
   set: { path: 'query/fields/set', verb: 'Set', prep: 'on' },
   add: { path: 'query/fields/add', verb: 'Add', prep: 'to' },
   remove: { path: 'query/fields/remove', verb: 'Remove', prep: 'from' },
+  replace: { path: 'query/fields/replace', verb: 'Replace a value of', prep: 'on', replacing: true },
+  rename: { path: 'query/fields/rename', verb: 'Rename', prep: 'on', valueless: true, renaming: true },
   unset: { path: 'query/fields/unset', verb: 'Unset', prep: 'from', valueless: true },
   delete: { path: 'query/delete', verb: 'Delete', prep: '', valueless: true, noField: true },
   trash: { path: '', verb: 'Trash', prep: '', valueless: true, noField: true },
@@ -49,6 +53,8 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
       { value: 'set', label: 'Set (replace all rows)' },
       { value: 'add', label: 'Add (append a row)' },
       { value: 'remove', label: 'Remove (delete matching rows)' },
+      { value: 'replace', label: 'Replace (one value by another)' },
+      { value: 'rename', label: 'Rename (the field)' },
       { value: 'unset', label: 'Unset (remove the field)' },
       { value: 'delete', label: 'Delete metarecords' },
       { value: 'trash', label: 'Trash files' },
@@ -68,11 +74,16 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
   });
   const bulkName = byId(root, 'bulk-name', HTMLInputElement);
   const bulkValueSlot = byId(root, 'bulk-value');
+  const bulkToSlot = byId(root, 'bulk-to');
+  const bulkToRow = byId(root, 'bulk-to-row');
+  const bulkRenameTo = byId(root, 'bulk-rename-to', HTMLInputElement);
   const bulkForce = byId(root, 'bulk-force', HTMLInputElement);
   const bulkError = byId(root, 'bulk-error');
 
   /** @type {Widget|null} the value editor following the picked type */
   let bulkWidget = null;
+  /** @type {Widget|null} the replacement's editor (`replace`), same type */
+  let bulkToWidget = null;
 
   // Value picker (doc "Value picker") for the bulk-set value widget.
   const pickRunner = createPickRunner(metafolder);
@@ -86,6 +97,8 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
   function setBulkWidget(type) {
     bulkWidget = widgetFor(type, undefined, bulkPickOpts);
     bulkValueSlot.replaceChildren(bulkWidget.element);
+    bulkToWidget = widgetFor(type, undefined, bulkPickOpts);
+    bulkToSlot.replaceChildren(bulkToWidget.element);
   }
   const bulkTypePicker = createTypePicker(byId(root, 'bulk-type'), 'string', setBulkWidget);
   setBulkWidget(bulkTypePicker.get());
@@ -102,6 +115,8 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
     bulkTypeBtn.hidden = op.valueless === true || noField;
     bulkName.hidden = noField;
     bulkForceLabel.hidden = noField;
+    bulkToRow.hidden = op.replacing !== true;
+    bulkRenameTo.hidden = op.renaming !== true;
   }
   syncBulkOpUi();
 
@@ -205,19 +220,30 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
       if (!name) throw new Error('field name is required');
       // A reserved field is written only when the user says so (doc "Reserved
       // fields"): naming it is not the acknowledgement, the box is.
-      const reserved = name.startsWith('mfr_');
+      const to = op.renaming ? bulkRenameTo.value.trim() : '';
+      if (op.renaming && !to) throw new Error('the new field name is required');
+      const written = op.renaming ? [name, to] : [name];
+      const reserved = written.some((n) => n.startsWith('mfr_'));
       if (reserved && !bulkForce.checked) {
-        throw new Error(`"${name}" is a reserved field (mfr_*) — check Force to write it`);
+        const which = written.find((n) => n.startsWith('mfr_'));
+        throw new Error(`"${which}" is a reserved field (mfr_*) — check Force to write it`);
       }
       const force = reserved && bulkForce.checked;
-      if (!confirm(`${op.verb} "${name}" ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
+      const onto = op.renaming ? ` to "${to}"` : '';
+      if (!confirm(`${op.verb} "${name}"${onto} ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`))
+        return;
       // Value-less ops (unset) act on the name alone.
       const widget = bulkWidget;
       if (!op.valueless && !widget) throw new Error('no value widget');
-      const body =
-        op.valueless || !widget
+      const body = op.renaming
+        ? { query: effQ ?? MATCH_ALL, name, to, ...(force ? { force: true } : {}) }
+        : op.valueless || !widget
           ? { query: effQ ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
           : bulkSetBody(effQ, name, await widget.read(), force);
+      if (op.replacing) {
+        if (!bulkToWidget) throw new Error('no value widget');
+        Object.assign(body, { to: await bulkToWidget.read() });
+      }
       const resp = /** @type {{updated?: number}} */ (
         await daemon.call('POST', `/repos/${repo}/${op.path}`, body)
       );
@@ -244,5 +270,10 @@ export function createBulkEdit({ root, metafolder, getRepo, effectiveQuery, stat
     if (event.key === 'Enter') void applyBulkEdit();
   });
 
-  return { toggle: toggleBulkForm, apply: applyBulkEdit };
+  return {
+    toggle: toggleBulkForm,
+    apply: applyBulkEdit,
+    /** Picks the operation, as the form's menu does. @param {string} op */
+    setOp: (op) => bulkOp.set(op),
+  };
 }

@@ -393,12 +393,17 @@
     <div id="bulk-form">
       <div class="editor-row">
         <button id="bulk-target" type="button" title="What the operation acts on: the checked selection, or every metarecord matching the query the list shows"></button>
-        <button id="bulk-op" type="button" title="set: replace all rows · add: append a row · remove: delete rows equal to this value · unset: remove the field entirely · delete: remove the whole metarecords · trash: send their files to the trash, the metarecords with them"></button>
+        <button id="bulk-op" type="button" title="set: replace all rows · add: append a row · remove: delete rows equal to this value · replace: one value by another, the others staying · rename: move every value to another field name · unset: remove the field entirely · delete: remove the whole metarecords · trash: send their files to the trash, the metarecords with them"></button>
         <input id="bulk-name" placeholder="field name, e.g. rating" />
         <button id="bulk-type" type="button">string ▾</button>
+        <input id="bulk-rename-to" placeholder="new field name" hidden />
       </div>
       <div class="editor-row" id="bulk-value-row">
         <span id="bulk-value"></span>
+      </div>
+      <div class="editor-row" id="bulk-to-row" hidden>
+        <span>by</span>
+        <span id="bulk-to"></span>
       </div>
       <div class="editor-row">
         <label id="bulk-force-label" class="check-label" title="Required to write reserved mfr_* fields">
@@ -411,7 +416,7 @@
     </div>
     <div id="footer">
       <div id="status-line"></div>
-      <button id="bulk-open" type="button" title="Set, add, remove, or unset a field — or delete the whole metarecords — over the checked selection or every metarecord matching the current query">Edit / delete…</button>
+      <button id="bulk-open" type="button" title="Set, add, remove, replace, rename or unset a field — or delete the whole metarecords — over the checked selection or every metarecord matching the current query">Edit / delete…</button>
     </div>
   </body>
 </html>

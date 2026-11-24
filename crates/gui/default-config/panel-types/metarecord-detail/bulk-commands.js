@@ -225,11 +225,16 @@ export function registerBulkCommand({
    * @property {string} [fieldPrompt] the second argument (absent for `delete`)
    * @property {boolean} [typed] whether the operation writes a value, and so
    *   needs a type — asked as an argument when the catalogue settles none
+   * @property {(prior: string[]) => string} [fromPrompt]
+   *   the value replaced, asked before the value (`replace` alone)
    * @property {(prior: string[]) => string} [valuePrompt]
    *   the third argument (absent for `unset` and `delete`)
+   * @property {boolean} [named] whether the value is a field name rather than
+   *   a value (`rename`): no value views
    * @property {(field: string) => string} [confirm] what the confirmation says
    * @property {(mf: MetafolderApi, target: BulkTarget, field: string, raw: string,
-   *             type: string|null) => Promise<void>} run `mf`: the command's run
+   *             type: string|null, from: string|null) => Promise<void>} run `mf`: the
+   *   command's run; `from` is the value replaced, for `replace`
    */
 
   /** Bulk operations, keyed by the second argument of `metarecord:bulk`.
@@ -277,6 +282,43 @@ export function registerBulkCommand({
         const n = await bulkCall(mf, t, 'remove', { name: field, value }, field);
         void statusBar.message(
           `Value removed from "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+      },
+    },
+
+    replace: {
+      // One value by another on every metarecord of the target holding it,
+      // the other values staying: the set-layer mirror of `metarecord:field
+      // edit`. The daemon refuses the whole write when it would put `nothing`
+      // beside other values (doc "Query endpoints").
+      typed: true,
+      fieldPrompt: 'Field to replace a value of?',
+      fromPrompt: (p) => `Value of "${p[2]}" to replace?`,
+      valuePrompt: () => 'Replace it by?',
+      confirm: (field) => `Replace a value of "${field}"`,
+      run: async (mf, t, field, raw, type, from) => {
+        const value = await bulkValue(t, field, from ?? '', type);
+        const to = await bulkValue(t, field, raw, type);
+        const n = await bulkCall(mf, t, 'replace', { name: field, value, to }, field);
+        void statusBar.message(
+          `Value of "${field}" replaced on ${n} metarecord${n === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+      },
+    },
+
+    rename: {
+      // Every value moves to the new name; the daemon refuses the whole write
+      // when a metarecord of the target already has that name.
+      fieldPrompt: 'Field to rename?',
+      valuePrompt: (p) => `Rename "${p[2]}" to?`,
+      named: true,
+      confirm: (field) => `Rename "${field}"`,
+      run: async (mf, t, field, to) => {
+        const n = await bulkCall(mf, t, 'rename', { name: field, to }, field, to);
+        void statusBar.message(
+          `"${field}" renamed to "${to}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
           statusMessageMs,
         );
       },
@@ -370,9 +412,9 @@ export function registerBulkCommand({
   /** One set-layer call over the target, returning the number of metarecords
    *  the daemon reports changed (falling back to the target count).
    *  @param {MetafolderApi} mf @param {BulkTarget} t @param {string} route
-   *  @param {object} body @param {string} field */
-  async function bulkCall(mf, t, route, body, field) {
-    const force = forceFor(field);
+   *  @param {object} body @param {string[]} fields the names it writes */
+  async function bulkCall(mf, t, route, body, ...fields) {
+    const force = forceFor(...fields);
     const resp = /** @type {{updated?: number}} */ (
       await daemon.call('POST', `/repos/${t.repo}/query/fields/${route}`, {
         query: t.query,
@@ -429,10 +471,22 @@ export function registerBulkCommand({
         complete: () => CONCRETE_TYPES,
       },
       {
+        name: 'from',
+        when: (p) => BULK_OPS[p[1]]?.fromPrompt !== undefined,
+        prompt: (p) => BULK_OPS[p[1]]?.fromPrompt?.(p) ?? 'Value?',
+        views: (p) => bulkValueViews(p[2], p.length > 3 ? p[3] : null),
+      },
+      {
         name: 'value',
         when: (p) => BULK_OPS[p[1]]?.valuePrompt !== undefined,
         prompt: (p) => BULK_OPS[p[1]]?.valuePrompt?.(p) ?? 'Value?',
-        views: (p) => bulkValueViews(p[2], p.length > 3 ? p[3] : null),
+        views: (p) => {
+          const op = BULK_OPS[p[1]];
+          if (op?.named) return [];
+          // A replacement's type sits before the value replaced, when asked.
+          const typed = op?.fromPrompt !== undefined ? p.length > 4 : p.length > 3;
+          return bulkValueViews(p[2], typed ? p[3] : null);
+        },
       },
     ],
     handler: async (mf, target, op, ...rest) => {
@@ -444,10 +498,14 @@ export function registerBulkCommand({
       const spec = BULK_OPS[op];
       if (!spec) throw new Error(`unknown bulk operation: "${op}"`);
       const field = rest.shift() ?? '';
-      const { type, value } = splitTypeValue(rest);
+      // A replacement holds the value replaced before the new one.
+      const from = spec.fromPrompt !== undefined ? (rest.splice(-2, 1)[0] ?? null) : null;
+      const { type, value } = spec.named
+        ? { type: null, value: rest.pop() ?? '' }
+        : splitTypeValue(rest);
       const t = await bulkTarget(mf, target);
       if (spec.confirm && !(await confirmBulk(t, spec.confirm(field)))) return;
-      await spec.run(mf, t, field, value, type);
+      await spec.run(mf, t, field, value, type, from);
     },
   });
 }

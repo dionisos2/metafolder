@@ -74,6 +74,73 @@ describe('createBulkEdit', () => {
     expect(shadow.getElementById('bulk-form')!.classList.contains('open')).toBe(false);
   });
 
+  test('replaces a value by another over the query', async () => {
+    const shadow = shadowFor();
+    const calls: Call[] = [];
+    const bulk = createBulkEdit({
+      root: shadow,
+      metafolder: stubMetafolder(calls) as never,
+      getRepo: () => 'r',
+      effectiveQuery: () => ({ dsl: 'year = 1999' }),
+      statusMessageMs: 10,
+    });
+    bulk.toggle();
+    const op = shadow.getElementById('bulk-op') as HTMLElement;
+    bulk.setOp('replace');
+    expect(op.textContent).toContain('Replace');
+    expect(shadow.getElementById('bulk-to-row')!.hidden).toBe(false);
+    (shadow.getElementById('bulk-name') as HTMLInputElement).value = 'genre';
+    (shadow.querySelector('#bulk-value input') as HTMLInputElement).value = 'jaz';
+    (shadow.querySelector('#bulk-to input') as HTMLInputElement).value = 'jazz';
+    await bulk.apply();
+    const post = calls.find((c) => c.path === '/repos/r/query/fields/replace');
+    expect(post?.body).toEqual({
+      query: { dsl: 'year = 1999' },
+      name: 'genre',
+      value: { type: 'string', value: 'jaz' },
+      to: { type: 'string', value: 'jazz' },
+    });
+  });
+
+  test('renames a field over the query', async () => {
+    const shadow = shadowFor();
+    const calls: Call[] = [];
+    const bulk = createBulkEdit({
+      root: shadow,
+      metafolder: stubMetafolder(calls) as never,
+      getRepo: () => 'r',
+      effectiveQuery: () => ({ dsl: 'year = 1999' }),
+      statusMessageMs: 10,
+    });
+    bulk.toggle();
+    bulk.setOp('rename');
+    expect(shadow.getElementById('bulk-value-row')!.hidden).toBe(true);
+    expect(shadow.getElementById('bulk-rename-to')!.hidden).toBe(false);
+    (shadow.getElementById('bulk-name') as HTMLInputElement).value = 'genre';
+    (shadow.getElementById('bulk-rename-to') as HTMLInputElement).value = 'style';
+    await bulk.apply();
+    const post = calls.find((c) => c.path === '/repos/r/query/fields/rename');
+    expect(post?.body).toEqual({ query: { dsl: 'year = 1999' }, name: 'genre', to: 'style' });
+  });
+
+  test('a rename onto a reserved name needs Force', async () => {
+    const shadow = shadowFor();
+    const calls: Call[] = [];
+    const bulk = createBulkEdit({
+      root: shadow,
+      metafolder: stubMetafolder(calls) as never,
+      getRepo: () => 'r',
+      effectiveQuery: () => null,
+      statusMessageMs: 10,
+    });
+    bulk.setOp('rename');
+    (shadow.getElementById('bulk-name') as HTMLInputElement).value = 'genre';
+    (shadow.getElementById('bulk-rename-to') as HTMLInputElement).value = 'mfr_genre';
+    await bulk.apply();
+    expect(calls.filter((c) => c.path.includes('/query/fields/'))).toEqual([]);
+    expect(shadow.getElementById('bulk-error')!.textContent).toContain('reserved');
+  });
+
   test('refuses to run without a repository', async () => {
     const shadow = shadowFor();
     const calls: Call[] = [];

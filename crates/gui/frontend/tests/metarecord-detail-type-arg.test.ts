@@ -310,6 +310,48 @@ describe('metarecord:bulk — the target is the first argument', () => {
     expect(args).toEqual(['selection', 'unset', 'rating']);
   });
 
+  test('replace asks the value replaced, then the one put in its place', async () => {
+    const { specs } = await mountPanel([], { rating: 'int' });
+    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['selection', 'replace'], [
+      'rating',
+      '4',
+      '5',
+    ]);
+    expect(prompts).toEqual([
+      'Field to replace a value of?',
+      'Value of "rating" to replace?',
+      'Replace it by?',
+    ]);
+    expect(args).toEqual(['selection', 'replace', 'rating', '4', '5']);
+  });
+
+  test('replace asks an unsettled type before both values', async () => {
+    const { specs } = await mountPanel([]);
+    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['selection', 'replace'], [
+      'rating',
+      'int',
+      '4',
+      '5',
+    ]);
+    expect(prompts).toEqual([
+      'Field to replace a value of?',
+      'Type for "rating"?',
+      'Value of "rating" to replace?',
+      'Replace it by?',
+    ]);
+    expect(args).toEqual(['selection', 'replace', 'rating', 'int', '4', '5']);
+  });
+
+  test('rename asks the new name, never a type', async () => {
+    const { specs } = await mountPanel([]);
+    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['selection', 'rename'], [
+      'rating',
+      'score',
+    ]);
+    expect(prompts).toEqual(['Field to rename?', 'Rename "rating" to?']);
+    expect(args).toEqual(['selection', 'rename', 'rating', 'score']);
+  });
+
   test('delete takes no field at all', async () => {
     const { specs } = await mountPanel([]);
     const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['query', 'delete'], []);
@@ -330,7 +372,7 @@ describe('metarecord:bulk — the target is the first argument', () => {
     // default, now a visible, editable answer instead of a silent fallback.
     expect(initials[0]).toBe('query');
     expect(prompts.slice(1)).toEqual([
-      'Operation? (set / add / remove / unset / delete / trash)',
+      'Operation? (set / add / remove / replace / rename / unset / delete / trash)',
       'Field to set?',
       'Value for "rating"?',
     ]);
