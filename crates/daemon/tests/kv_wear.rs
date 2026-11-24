@@ -26,7 +26,7 @@ fn the_wear_counts_what_is_pending_and_the_ids_nobody_holds() {
     let dir = TempDir::new("kv-wear");
     let mut store = KvStore::open_unsynced(dir.path()).unwrap();
     let clean = store.wear().unwrap();
-    assert_eq!((clean.pending_writes, clean.index_writes, clean.trigrams_pending), (0, 0, 0));
+    assert_eq!((clean.pending_writes, clean.index_writes), (0, 0));
     assert_eq!(clean.pending_bytes(), 0);
     assert_eq!(clean.dead_ids(), 0);
 

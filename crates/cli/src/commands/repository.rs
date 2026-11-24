@@ -332,7 +332,6 @@ pub fn repo_wear(ctx: &Ctx, json: bool) -> Result<i32, CliError> {
         n("event_fields"),
         size("event_bytes")
     );
-    println!("  trigrams:      {} turning", n("trigrams_pending"));
     let percent = wear["dead_fraction"].as_f64().unwrap_or(0.0) * 100.0;
     println!("dead ids: {} of {} ({percent:.1}%)", n("dead_ids"), n("ids_allocated"));
     Ok(0)

@@ -346,8 +346,7 @@ impl KvSource<'_> {
     /// a key or a few per trigram: the texts listed under every trigram kept
     /// by value — a list holds at most [`derived::GRAM_TEXTS_MAX`] texts, so
     /// this side is short — and the ids under every trigram kept by
-    /// metarecord, within `restrict`. A trigram turning
-    /// narrows neither side; one no text holds empties the ids side.
+    /// metarecord, within `restrict`. One no text holds empties the ids side.
     fn gram_lookup(
         &self,
         field: &str,
@@ -377,7 +376,7 @@ impl KvSource<'_> {
                             }
                         });
                     }
-                    Some(_) => {}
+                    Some((mode, _)) => anyhow::bail!("a trigram list of mode {mode}"),
                     None => {
                         if ids.as_ref().is_some_and(RoaringBitmap::is_empty) {
                             continue;

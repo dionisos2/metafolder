@@ -2,7 +2,7 @@ title: Text search in the store
 tags: Storage
 kind: reference
 audience: dev
-summary: Trigrams give a text search its candidates — each trigram by value while few texts hold it, by metarecord once many do, a write filing its ids at once — and a page without a count checks the text only where the sort looks.
+summary: Trigrams give a text search its candidates — each trigram by value while few texts hold it, by metarecord once many do, every write keeping both exact at once, no fold — and a page without a count checks the text only where the sort looks.
 
 A `matches` (regex) or `osm` leaf on a field with many distinct values — file names —
 cannot scan them all at each keystroke. Each field's texts (strings, `tree_ref`
@@ -31,8 +31,8 @@ each removal the same twenty again.
 Each trigram of a field is kept one of two ways ([[Store tables]]): by value, its
 list in `index_trigram_texts`, or by metarecord, its bitmap in
 `index_trigram_holders`. The field's state in `index_trigram_state` says whether
-any of its trigrams is by metarecord and which are turning; the ids of a text too
-long to split are in `index_long_texts`.
+any of its trigrams is by metarecord; the ids of a text too long to split are in
+`index_long_texts`. Nothing of it waits for a fold.
 
 ''By value'' — how every trigram starts. Its key (field · trigram · 0) holds the
 ''list of the distinct texts'' holding it (their value keys — a position's name
@@ -66,29 +66,27 @@ A search with trigrams in both modes takes the texts side: a text matching the
 pattern holds every trigram, so it is in every list, and those lists are short. Its
 trigrams by metarecord only answer a search none of whose trigrams is by value.
 
-''Turning.'' A list growing past 64 texts is frozen (field · trigram · 2) and its
-trigram added to the field's turning ones; from then on the writes file their ids in
-its bitmap, as for a trigram by metarecord. A trigram turning narrows nothing. The
-next fold, the index writes folded first so that the postings are exact — a write to
-many records leaves them pending, which is why the turn waits for a fold — gives its
-bitmap the holders of the frozen list's texts and drops the list. A trigram never turns back. The mode
+''Turning.'' The write that grows a list past 64 texts turns its trigram by
+metarecord there and then: the bitmap gets the holders of each of the 65 texts as
+the transaction sees them — a posting, with the field's pending index writes
+replayed ([[Mass writes in the store]]) — and the write's own ids, whose posting may
+wait behind those; the list goes. A read per text, once in the trigram's life. A
+trigram never turns back. Until November 2026 the list was frozen instead, for the
+next fold to turn — the postings not being exact behind pending index writes — and a
+trigram turning narrowed nothing meanwhile: a repository written in one go, as the
+bench generates it, had hundreds of trigrams turning and its searches scanned the
+names until an idle fold (16 ms instead of 6.4 for `query.subtree_range_text` on
+20 000 files). The mode
 being a trigram's, a field of file names keeps its rare trigrams — the digits of
 `file12.txt` — by value: before November 2026 the mode was the field's, chosen on
 the mean number of texts per trigram, and file names short enough stayed by value
 whole, every search among them joining lists of a thousand texts.
 
-!! The fold
-
-`KvStore::fold` turns the trigrams turning, and a reindex ends with one, so a
-reindexed repository — one converted from the former format included — has none.
-Otherwise the daemon folds once the repository is quiet, one field's turning
-trigrams per step ([[Folding in idle time]]), and `mf repo fold` at once: until then,
-a search whose trigrams are all turning is answered by a scan of the field's values.
+!! Checking
 
 `mf repo check` cannot hold the trigrams to a rebuild entry by entry, since stale
 ones are allowed: it verifies that no text lacks one — by value, the text in each of
-its trigrams' lists; turning, the text in the frozen list or its id in the bitmap;
-by metarecord, the id in each trigram's bitmap.
+its trigrams' lists; by metarecord, the id in each trigram's bitmap.
 
 ''A page without a count checks text lazily.'' A text leaf, or the text conjuncts of
 an `and`, are split off the filter: what is evaluated is the candidate bitmap, and the

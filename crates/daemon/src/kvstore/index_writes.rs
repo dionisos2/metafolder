@@ -729,8 +729,8 @@ impl KvTxn<'_> {
     }
 
     /// Folds the biggest list pending (see `KvStore::fold_step`): size is the
-    /// bytes of a part's entries or of a field's index writes, the ids pending of a
-    /// field's trigrams. Returns whether any list was.
+    /// bytes of a part's entries or of a field's index writes. Returns whether
+    /// any list was.
     pub(in super::super) fn fold_biggest(&self) -> Result<bool> {
         // A deletion first, whatever the size of the others: its records are
         // read with the entries of their parts still applied.
@@ -740,7 +740,6 @@ impl KvTxn<'_> {
         enum List {
             Part(u32),
             IndexWrites(String, u16),
-            Grams(String),
         }
         let mut best: Option<(u64, List)> = None;
         let mut consider = |size: u64, list: List| {
@@ -770,9 +769,6 @@ impl KvTxn<'_> {
         for ((field, chunk), size) in chunks {
             consider(size, List::IndexWrites(field, chunk));
         }
-        for field in self.gram_fields()? {
-            consider(self.gram_fold_size(&field)?, List::Grams(field));
-        }
         match best {
             // Last, the history of the records, which the writes leave to the
             // fold (doc "Log storage").
@@ -781,7 +777,6 @@ impl KvTxn<'_> {
             Some((_, List::IndexWrites(field, chunk))) => {
                 self.fold_index_writes_chunk(&field, chunk).map(|()| true)
             }
-            Some((_, List::Grams(field))) => self.fold_gram_field(&field).map(|()| true),
         }
     }
 }

@@ -131,9 +131,9 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 |`index_raw_holder` |F · parent's dense id · name |the child's dense id |a child by name: path lookup, a folder by name |
 |`index_descendants` |F · node's dense id · chunk |bitmap |every id below a node, itself excluded |
 |`index_parents` |F · chunk |bitmap |the nodes with a live child: leaves set aside |
-|`index_trigram_texts` |F · trigram · mode (0 by value, 2 turning) |the texts holding the trigram: per text, its partition, length, key |a trigram kept by value, or frozen until a fold turns it ([[Text search in the store]]) |
+|`index_trigram_texts` |F · trigram · 0 |the texts holding the trigram: per text, its partition, length, key |a trigram kept by value ([[Text search in the store]]) |
 |`index_trigram_holders` |F · trigram · chunk |bitmap |the ids holding a trigram kept by metarecord |
-|`index_trigram_state` |F |by_ids · trigrams turning |whether a trigram of the field is by metarecord, the ones turning |
+|`index_trigram_state` |F |by_ids |whether a trigram of the field is by metarecord |
 |`index_long_texts` |F · chunk |bitmap |the ids whose text is too long for trigrams |
 |`index_histogram_rows` |F · bucket |rows (count) |the planner's estimate of a range ([[Query planner]]) |
 |`index_histogram_keys` |F · bucket |posting keys (count) |the cost of walking it |

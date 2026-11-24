@@ -42,8 +42,7 @@ of the set of those that exist ([[Deleting a metarecord in the store]]) —, so 
 deleting much of a repository, a reindex is what makes its queries scan less, and
 what lets a compact give the room back.
 
-It also folds everything the writes left pending — the name trigrams among them
-([[Text search in the store]]) —, which the idle fold would otherwise do a list at a
+It also folds everything the writes left pending, which the idle fold would otherwise do a list at a
 time once the repository is quiet ([[Folding in idle time]]); `mf repo fold` does it
 without renumbering anything.
 

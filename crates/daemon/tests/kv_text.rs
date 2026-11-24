@@ -1,8 +1,9 @@
 //! The trigram index's two modes (doc "Text search in the store"): a trigram
 //! starts *by value* — a list of the distinct values holding it, written only
 //! when a value is new — and turns *by metarecord* once its values are too
-//! many — frozen until a fold builds its bitmap from the postings — after
-//! which a write files its ids in the bitmap itself. What a write puts in
+//! many — its bitmap built from the postings by the write that grew its
+//! list past the limit — after which a write files its ids in the bitmap
+//! itself. What a write puts in
 //! `grams` is counted, and every answer is held to the oracle and to a
 //! rebuild.
 
@@ -149,20 +150,22 @@ fn a_text_in_a_field_of_many_values_files_its_id_in_its_trigrams() {
 }
 
 #[test]
-fn a_fold_turns_the_trigrams_that_outgrew_their_lists() {
+fn a_trigram_outgrowing_its_list_turns_at_once() {
     let (mut store, _dir) = open();
     let all = codes(&mut store, 600);
     let pattern = format!("^{}$", code(77));
-    let turning = search_cost(&store, "code", &pattern);
-
-    store.fold().unwrap();
     check(&store);
     assert_eq!(search(&store, "code", &pattern), vec![all[77]]);
     let folded = search_cost(&store, "code", &pattern);
-    assert!(
-        folded * 4 < turning,
-        "a search reads {folded} keys once folded, {turning} with every trigram turning"
-    );
+    // Every trigram of the field has turned, by the write that grew its
+    // list past the limit: a fold has nothing to build, and the search
+    // reads what it read.
+    store.fold().unwrap();
+    assert_eq!(written(&store, "grams"), 0, "{:?}", store.last_write_keys());
+    assert_eq!(search_cost(&store, "code", &pattern), folded);
+    // Its candidates only: what the codes' bitmaps intersect to, a few
+    // dozen of 600.
+    assert!(folded < 150, "a search reads {folded} keys among 600 codes");
 
     // A write after the fold files its id in the bitmaps of its two
     // trigrams: found, and the other searches read no more.
@@ -172,6 +175,40 @@ fn a_fold_turns_the_trigrams_that_outgrew_their_lists() {
     assert_eq!(search(&store, "code", "babababababab"), vec![late]);
     assert_eq!(search(&store, "code", &pattern), vec![all[77]]);
     assert!(search_cost(&store, "code", &pattern) <= folded + 2);
+    check(&store);
+}
+
+/// A list turning in a write to many records, while the field has index
+/// writes pending from an earlier one: the bitmap it turns into holds the
+/// holders of each of its texts as the transaction sees them, the pending
+/// index writes replayed, and the write's own ids.
+#[test]
+fn a_list_turning_in_a_mass_write_holds_every_holder() {
+    let (mut store, _dir) = open();
+    // 64 tags sharing `zzz`: its list is full.
+    let tagged: Vec<Uuid> =
+        (0..64).map(|i| add(&mut store, vec![text("tag", &format!("zzz{i:02}"))])).collect();
+    let others: Vec<Uuid> =
+        (0..600).map(|i| add(&mut store, vec![text("other", &format!("o{i}"))])).collect();
+    // A tag the field holds, set on 300 more records: a replacement, whose
+    // index write waits for a fold.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.mass_set("tag", vec![Value::String("zzz05".into())], &others[..300]).unwrap();
+    w.commit().unwrap();
+    assert!(store.pending_index_writes("tag").unwrap() > 0, "the mass write left no index write");
+    // A new tag to 300 others — behind the pending write, its own posting
+    // waits too: the 65th text, `zzz` turns.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.mass_add("tag", Value::String("zzzq".into()), &others[300..]).unwrap();
+    w.commit().unwrap();
+    assert!(written(&store, "index_trigram_holders") > 0, "{:?}", store.last_write_keys());
+
+    let mut expected: Vec<Uuid> = tagged.iter().chain(&others).copied().collect();
+    expected.sort();
+    assert_eq!(search(&store, "tag", "zzz"), expected);
+    check(&store);
+    store.fold().unwrap();
+    assert_eq!(search(&store, "tag", "zzz"), expected);
     check(&store);
 }
 
@@ -343,9 +380,9 @@ fn the_common_trigrams_of_a_field_turn_and_the_rare_ones_stay() {
         }
         check(store);
     };
-    all(&store, &names, "with the common trigrams turning");
+    all(&store, &names, "with the common trigrams turned");
 
-    // A new name: its common trigrams turning, its id goes in their bitmaps,
+    // A new name: its common trigrams turned, its id goes in their bitmaps,
     // and only its rare trigrams write their lists.
     let late = add(&mut store, vec![text("name", "file9999.txt")]);
     let bitmaps = written(&store, "index_trigram_holders");

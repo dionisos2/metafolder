@@ -72,8 +72,8 @@ in order.
 What cannot wait is kept exact at once, by set operations whatever the number of
 records: the holders of `nothing`, the count of values of each record (an increment on a set of ids is a carry
 from bit to bit, [[Store tables]]), `live_metarecords`, the long-text sets, the
-trigrams ([[Text search in the store]]: a new text's entries by value, or the ids
-pending by metarecord), and the histograms for a value added or removed.
+trigrams ([[Text search in the store]]: a new text's entries by value, the ids
+in the bitmaps by metarecord), and the histograms for a value added or removed.
 
 !! What reads do
 

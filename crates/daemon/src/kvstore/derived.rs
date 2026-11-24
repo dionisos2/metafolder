@@ -46,8 +46,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending index writes; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`; 26: a mode per trigram, not per field — a list of texts by value, a bitmap of ids by metarecord; 27: a write files its ids in the bitmaps of its trigrams by metarecord, and no pending ids (`index_trigram_pending` goes).
-pub(super) const DERIVED_VERSION: i64 = 27;
+/// sets; 10: the fields' pending index writes; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`; 26: a mode per trigram, not per field — a list of texts by value, a bitmap of ids by metarecord; 27: a write files its ids in the bitmaps of its trigrams by metarecord, and no pending ids (`index_trigram_pending` goes); 28: a trigram turns by metarecord in the write that grows its list past the limit, and no list frozen for a fold (no mode 2, no trigrams turning in the state).
+pub(super) const DERIVED_VERSION: i64 = 28;
 
 /// The sets of the index, by what they hold (doc "Store tables"): each is in
 /// a table ([`IndexSet::table`]) under a key of its own ([`set_key`]). Their
@@ -357,7 +357,8 @@ pub(crate) fn search_text(value: &Value) -> Option<String> {
 /// under it a new text adds itself to the trigram's list (one key, rewritten),
 /// and a search reads no metarecord; over it the trigram is in most of the
 /// field's texts — `fil` among file names — and its holders are a bitmap of
-/// ids, built by a fold. A starting point, to be measured.
+/// ids, built by the write that grows the list past it. A starting point, to
+/// be measured.
 pub(crate) const GRAM_TEXTS_MAX: usize = 64;
 
 /// The key of a trigram's bitmap of ids, without its chunk.
@@ -366,9 +367,9 @@ pub(super) fn gram_prefix(field: &str, gram: &[u8; 3]) -> Vec<u8> {
 }
 
 /// The mode byte after a trigram's key in `index_trigram_texts`: its list of
-/// texts, by value, or that list frozen while it turns by metarecord.
+/// texts, by value (format 26 and 27 also had 2, a list frozen until a fold
+/// turned it).
 pub(super) const GRAM_BY_VALUE: u8 = 0;
-pub(super) const GRAM_TURNING: u8 = 2;
 
 /// The key of a trigram's list of texts in `index_trigram_texts`.
 pub(super) fn gram_list_key(field: &str, gram: &[u8; 3], mode: u8) -> Vec<u8> {
@@ -406,9 +407,6 @@ pub(super) fn decode_gram_texts(mut bytes: &[u8]) -> Result<Vec<GramText>> {
 pub(super) enum GramMode {
     /// The texts holding it, read from its list.
     ByValue(Vec<GramText>),
-    /// Its list frozen, its bitmap to be built by the next fold: it narrows
-    /// nothing meanwhile.
-    Turning(Vec<GramText>),
     /// Its holders, a bitmap of ids.
     ByIds,
     /// No text of the field holds it.
@@ -421,7 +419,6 @@ pub(super) enum GramMode {
 pub(super) fn gram_mode_of(list: Option<(u8, &[u8])>, has_ids: bool) -> Result<GramMode> {
     Ok(match list {
         Some((GRAM_BY_VALUE, v)) => GramMode::ByValue(decode_gram_texts(v)?),
-        Some((GRAM_TURNING, v)) => GramMode::Turning(decode_gram_texts(v)?),
         Some((mode, _)) => anyhow::bail!("a trigram list of mode {mode}"),
         None if has_ids => GramMode::ByIds,
         None => GramMode::Absent,
@@ -436,33 +433,20 @@ pub(super) fn gram_state_key(field: &str) -> Vec<u8> {
 /// A field's trigram state.
 #[derive(Clone, Default, PartialEq, Debug)]
 pub(super) struct GramState {
-    /// Some trigram of the field is kept by metarecord, or turning: an id
-    /// gaining a text, new to the field or not, is filed in their bitmaps.
+    /// Some trigram of the field is kept by metarecord: an id gaining a
+    /// text, new to the field or not, is filed in their bitmaps.
     pub(super) by_ids: bool,
-    /// The trigrams whose list is frozen, for the next fold to turn.
-    pub(super) turning: Vec<[u8; 3]>,
 }
 
 impl GramState {
     pub(super) fn decode(bytes: Option<&[u8]>) -> Result<GramState> {
         let Some(b) = bytes else { return Ok(GramState::default()) };
-        anyhow::ensure!(
-            !b.is_empty() && (b.len() - 1) % 3 == 0,
-            "a trigram state of {} bytes",
-            b.len()
-        );
-        Ok(GramState {
-            by_ids: b[0] != 0,
-            turning: b[1..].chunks(3).map(|g| [g[0], g[1], g[2]]).collect(),
-        })
+        anyhow::ensure!(b.len() == 1, "a trigram state of {} bytes", b.len());
+        Ok(GramState { by_ids: b[0] != 0 })
     }
 
     fn encode(&self) -> Vec<u8> {
-        let mut out = vec![self.by_ids as u8];
-        for g in &self.turning {
-            out.extend_from_slice(g);
-        }
-        out
+        vec![self.by_ids as u8]
     }
 }
 
@@ -1417,10 +1401,10 @@ impl KvTxn<'_> {
 
     /// The trigrams of a text `ids` gained in `field` (doc "Text search in
     /// the store"). A text new to the field joins the lists of its trigrams
-    /// kept by value; a list growing past [`GRAM_TEXTS_MAX`] is frozen, its
-    /// trigram turning by metarecord at the next fold. The ids join the
-    /// bitmaps of its trigrams turning or by metarecord, at once: a write to
-    /// many records files them chunk by chunk.
+    /// kept by value; a list growing past [`GRAM_TEXTS_MAX`] turns by
+    /// metarecord ([`Self::turn_gram`]). The ids join the bitmaps of its
+    /// trigrams by metarecord, at once: a write to many records files them
+    /// chunk by chunk.
     fn file_grams(
         &self,
         field: &str,
@@ -1439,7 +1423,7 @@ impl KvTxn<'_> {
             let mut list = match self.gram_mode(field, &gram)? {
                 GramMode::ByValue(list) => list,
                 GramMode::Absent => Vec::new(),
-                GramMode::Turning(_) | GramMode::ByIds => {
+                GramMode::ByIds => {
                     self.chunk_apply(
                         Bitmaps::TrigramHolders,
                         &gram_prefix(field, &gram),
@@ -1452,21 +1436,12 @@ impl KvTxn<'_> {
             let Some(new) = new else { continue };
             let Err(at) = list.binary_search(new) else { continue };
             list.insert(at, new.clone());
-            let mut w = self.txn.borrow_mut();
             if list.len() > GRAM_TEXTS_MAX {
-                self.t
-                    .index_trigram_texts
-                    .delete(&mut w, &gram_list_key(field, &gram, GRAM_BY_VALUE))?;
-                self.t.index_trigram_texts.put(
-                    &mut w,
-                    &gram_list_key(field, &gram, GRAM_TURNING),
-                    &encode_gram_texts(&list),
-                )?;
-                state.turning.push(gram);
+                self.turn_gram(field, &gram, &list, ids)?;
                 state.by_ids = true;
             } else {
                 self.t.index_trigram_texts.put(
-                    &mut w,
+                    &mut self.txn.borrow_mut(),
                     &gram_list_key(field, &gram, GRAM_BY_VALUE),
                     &encode_gram_texts(&list),
                 )?;
@@ -1478,63 +1453,38 @@ impl KvTxn<'_> {
         Ok(())
     }
 
-    /// Turns the trigrams whose list outgrew [`GRAM_TEXTS_MAX`] (doc "Text
-    /// search in the store"): each gets a bitmap of the holders of its
-    /// frozen list's texts. What a text that changed or left wrote before
-    /// stays — a candidate too many, never one too few.
-    pub(super) fn fold_grams(&self) -> Result<()> {
-        for field in self.gram_fields()? {
-            self.fold_gram_field(&field)?;
-        }
-        Ok(())
-    }
-
-    /// The fields that have trigram state.
-    pub(super) fn gram_fields(&self) -> Result<Vec<String>> {
-        let mut fields: Vec<String> = Vec::new();
-        for entry in self.t.index_trigram_state.iter(&self.txn.borrow())? {
-            let (name, _) = unesc(entry?.0)?;
-            fields.push(String::from_utf8(name).context("a field name")?);
-        }
-        fields.extend(self.grams_changed.borrow().iter().cloned());
-        fields.sort();
-        fields.dedup();
-        Ok(fields)
-    }
-
-    /// What [`Self::fold_gram_field`] has to do for `field`, as a size to
-    /// rank it by: the trigrams turning.
-    pub(super) fn gram_fold_size(&self, field: &str) -> Result<u64> {
-        Ok(self.gram_state(field)?.turning.len() as u64)
-    }
-
-    /// [`Self::fold_grams`] for one field: each trigram turning gets the
-    /// holders of its frozen list's texts — exact here, the index writes
-    /// being folded first — and its list goes. The ids written while it
-    /// turned are in its bitmap already.
-    pub(super) fn fold_gram_field(&self, field: &str) -> Result<()> {
-        let t = self.t;
-        let mut state = self.gram_state(field)?;
-        if state.turning.is_empty() {
-            return Ok(());
-        }
-        for gram in std::mem::take(&mut state.turning) {
-            let key = gram_list_key(field, &gram, GRAM_TURNING);
-            let texts = match t.index_trigram_texts.get(&self.txn.borrow(), &key)? {
-                Some(v) => decode_gram_texts(v)?,
-                None => continue,
+    /// A trigram of `field` whose list, `texts`, grew past
+    /// [`GRAM_TEXTS_MAX`] turns by metarecord: its bitmap gets the holders of
+    /// each text as the transaction sees them — a posting with the field's
+    /// pending index writes replayed (doc "Mass writes in the store") — and
+    /// the ids of the write, whose own posting may wait behind them; its list
+    /// goes. A read per text, once in a trigram's life.
+    fn turn_gram(
+        &self,
+        field: &str,
+        gram: &[u8; 3],
+        texts: &[GramText],
+        ids: &RoaringBitmap,
+    ) -> Result<()> {
+        let pending = if self.eventful(field)? > 0 {
+            index_writes::read_index_writes(&self.t, &self.txn.borrow(), field)?
+        } else {
+            Vec::new()
+        };
+        let mut holders = ids.clone();
+        for (part, key) in texts {
+            let stored =
+                self.read_chunked(Bitmaps::ValueHolders, &part_posting_prefix(field, *part, key))?;
+            holders |= if *part == VALUE && !pending.is_empty() {
+                index_writes::replay(&pending, key, stored)
+            } else {
+                stored
             };
-            let mut holders = RoaringBitmap::new();
-            for (part, text) in &texts {
-                holders |= self.read_chunked(
-                    Bitmaps::ValueHolders,
-                    &part_posting_prefix(field, *part, text),
-                )?;
-            }
-            self.chunk_apply(Bitmaps::TrigramHolders, &gram_prefix(field, &gram), &holders, true)?;
-            t.index_trigram_texts.delete(&mut self.txn.borrow_mut(), &key)?;
         }
-        self.set_gram_state(field, state);
+        self.chunk_apply(Bitmaps::TrigramHolders, &gram_prefix(field, gram), &holders, true)?;
+        self.t
+            .index_trigram_texts
+            .delete(&mut self.txn.borrow_mut(), &gram_list_key(field, gram, GRAM_BY_VALUE))?;
         Ok(())
     }
 
@@ -1949,7 +1899,6 @@ impl KvStore {
                 txn.derive_row(uuid, &row.name, &row.value, 1, 0)?;
             }
         }
-        txn.fold_grams()?;
         txn.meta_put(super::State::DerivedVersion, DERIVED_VERSION)?;
         txn.finish()?;
         self.writes_pending.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1998,9 +1947,6 @@ impl KvStore {
             fields.insert(unesc(k)?.0);
         }
         wear.index_write_fields = fields.len();
-        for entry in self.t.index_trigram_state.iter(&r)? {
-            wear.trigrams_pending += GramState::decode(Some(entry?.1))?.turning.len() as u64;
-        }
         // The counter holds the next id to hand out; the first is 1.
         wear.ids_allocated =
             (super::State::NextMetarecordId.get(&self.t, &r)?.unwrap_or(1) - 1).max(0) as u64;
@@ -2012,7 +1958,6 @@ impl KvStore {
         let txn = KvTxn::new(self)?;
         txn.fold_all_mass()?;
         txn.fold_all_index_writes()?;
-        txn.fold_grams()?;
         while txn.index_log_step(super::entry::INDEX_BUDGET)? {}
         txn.finish()?;
         self.writes_pending.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -2629,8 +2574,7 @@ impl Group {
 /// are not compared entry by entry as the other key spaces are: a text that
 /// changed or went leaves its trigrams, so the tables hold more than the rows
 /// derive. What must hold is that no text lacks one: a trigram by value lists
-/// the text, one turning lists it or has the id in its bitmap, one by
-/// metarecord has the id in its bitmap.
+/// the text, one by metarecord has the id in its bitmap.
 #[derive(Default)]
 struct GramCheck {
     /// The trigrams' modes last read, by field and trigram.
@@ -2684,7 +2628,6 @@ impl GramCheck {
             };
             let found = match &self.modes[&at] {
                 GramMode::ByValue(list) => list.binary_search(text).is_ok(),
-                GramMode::Turning(list) => list.binary_search(text).is_ok() || in_bitmap()?,
                 GramMode::ByIds => in_bitmap()?,
                 GramMode::Absent => false,
             };
@@ -3135,8 +3078,6 @@ pub struct Wear {
     pub index_writes: usize,
     pub index_write_fields: usize,
     pub index_write_bytes: u64,
-    /// Trigrams turning, whose bitmap a fold has still to build.
-    pub trigrams_pending: u64,
     /// Dense ids ever handed out, and those of metarecords that exist.
     pub ids_allocated: u64,
     pub ids_live: u64,
@@ -3145,7 +3086,7 @@ pub struct Wear {
 impl Wear {
     /// The bytes a fold would write in.
     pub fn pending_bytes(&self) -> u64 {
-        self.pending_write_bytes + self.index_write_bytes + self.trigrams_pending
+        self.pending_write_bytes + self.index_write_bytes
     }
 
     /// Ids no live metarecord holds (deleted ones, reserved ones).
