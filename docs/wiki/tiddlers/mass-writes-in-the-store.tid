@@ -13,9 +13,11 @@ not: that value has to be known, so every record is read first.
 !! Past a threshold only
 
 A write to many records goes in bulk only when it would change more records than the
-repository's ''mass-write threshold'' — `[settings] mass-write-threshold` in the
-daemon's configuration (20 shipped), overridden by `mass_write_threshold` in the
-repository's `config.json` ([[Repository layout on disk]]). The records it would
+repository's ''mass-write threshold'' of its kind — an add, a removal, a set (an unset
+too) or a deletion each have theirs: `[settings] mass-write-threshold-add`, `-remove`,
+`-set` and `-delete` in the daemon's configuration (20 each shipped), overridden by
+`mass_write_threshold` in the repository's `config.json` ([[Repository layout on disk]]). A replace of a value over many records is a removal and an add, a rename
+adds and an unset, each held to its own. The records it would
 change are known before anything is written, from the postings and the counters: an
 add counts the records lacking the value, a remove those holding it, an unset those
 holding the field, a set every record. At or under the threshold, those records are
@@ -23,9 +25,11 @@ written one at a time, as a write to each alone would be — nothing is left pen
 and no read pays for it later. A deletion of many records is held to the same
 threshold ([[Mass operations in the log]]).
 
-The threshold is a starting value: one fixed number cannot be right for every
-operation and every disk (the costs measured are in `notes-performance-stockage.txt`,
-0quater), and a way to derive it from the repository is to come. A writer the
+The thresholds are starting values: a fixed number cannot be right for every disk
+(the costs measured are in `notes-performance-stockage.txt`, 0quater), and a way to
+derive them from the repository is to come. Until November 2026 one setting,
+`mass-write-threshold`, held for every kind: a configuration still naming it loads,
+the setting ignored with a warning. A writer the
 repository did not configure (a test's, an init's) has a threshold of 0: every such
 write in bulk.
 

@@ -63,11 +63,11 @@ pub struct RepoConfig {
     /// `[settings] log-retention-user-entries`.
     #[serde(default, alias = "log_retention_user_ops", skip_serializing_if = "Option::is_none")]
     pub log_retention_user_entries: Option<u64>,
-    /// The most metarecords a write to many of them changes one record at a
-    /// time, overriding the daemon's `[settings] mass-write-threshold`
+    /// The most metarecords a write of each kind changes one record at a
+    /// time, overriding the daemon's `[settings] mass-write-threshold-*`
     /// (doc "Mass writes in the store").
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mass_write_threshold: Option<u64>,
+    pub mass_write_threshold: Option<MassThresholdOverride>,
     /// A daemon-internal repository (e.g. a cross-repo sync plan repo,
     /// doc "The sync plan"): loaded and usable like any repo, but hidden from
     /// `GET /repos` unless `?all=true`.
@@ -82,6 +82,25 @@ pub struct RepoConfig {
     /// sync"): where it came from, to give it back. Absent for any other.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub borrowed: Option<Borrowed>,
+}
+
+/// `config.json`'s `mass_write_threshold`: one number for every kind of
+/// write, as written before November 2026, or one per kind, each left out
+/// deferring to the daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MassThresholdOverride {
+    All(u64),
+    PerKind {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        add: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remove: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delete: Option<u64>,
+    },
 }
 
 /// Where a borrowed copy came from (`config.json`'s `borrowed`).
@@ -174,10 +193,33 @@ impl RepoConfig {
         }
     }
 
-    /// This repository's mass-write threshold: its own where set, the
+    /// This repository's mass-write thresholds: its own where set, the
     /// daemon's otherwise.
-    pub fn mass_write_threshold(&self, daemon: u64) -> u64 {
-        self.mass_write_threshold.unwrap_or(daemon)
+    pub fn mass_write_thresholds(
+        &self,
+        daemon: crate::log::MassThresholds,
+    ) -> crate::log::MassThresholds {
+        use crate::log::MassThresholds;
+        match self.mass_write_threshold {
+            None => daemon,
+            Some(MassThresholdOverride::All(n)) => MassThresholds::all(n),
+            Some(MassThresholdOverride::PerKind { add, remove, set, delete }) => MassThresholds {
+                add: add.unwrap_or(daemon.add),
+                remove: remove.unwrap_or(daemon.remove),
+                set: set.unwrap_or(daemon.set),
+                delete: delete.unwrap_or(daemon.delete),
+            },
+        }
+    }
+
+    /// Sets this repository's own threshold for every kind of write.
+    pub fn set_mass_write_thresholds(&mut self, t: crate::log::MassThresholds) {
+        self.mass_write_threshold = Some(MassThresholdOverride::PerKind {
+            add: Some(t.add),
+            remove: Some(t.remove),
+            set: Some(t.set),
+            delete: Some(t.delete),
+        });
     }
 
     /// True when a repository is already initialised in this directory.
@@ -306,7 +348,7 @@ mod tests {
         assert_eq!(config.log_retention_watcher_entries, None);
         assert_eq!(config.log_retention_user_entries, None);
         assert_eq!(config.mass_write_threshold, None);
-        assert_eq!(config.mass_write_threshold(20), 20);
+        assert_eq!(config.mass_write_thresholds(all(20)), all(20));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -317,7 +359,42 @@ mod tests {
                        "version":1,"root":"/r","created_at":0,"mass_write_threshold":5}"#;
         std::fs::write(dir.join("config.json"), json).unwrap();
         let config = RepoConfig::read(&dir).unwrap();
-        assert_eq!(config.mass_write_threshold(20), 5);
+        // A number, as written before November 2026: one for every operation.
+        assert_eq!(config.mass_write_thresholds(all(20)), all(5));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn all(n: u64) -> crate::log::MassThresholds {
+        crate::log::MassThresholds { add: n, remove: n, set: n, delete: n }
+    }
+
+    #[test]
+    fn test_a_repository_overrides_the_threshold_of_each_operation() {
+        // One per operation, those it leaves out deferring to the daemon.
+        let dir = temp_dir();
+        let json = r#"{"repo_uuid":"00000000-0000-4000-8000-000000000001","name":"r",
+                       "version":1,"root":"/r","created_at":0,
+                       "mass_write_threshold":{"add":5,"delete":300}}"#;
+        std::fs::write(dir.join("config.json"), json).unwrap();
+        let config = RepoConfig::read(&dir).unwrap();
+        let t = config.mass_write_thresholds(all(20));
+        assert_eq!(t, crate::log::MassThresholds { add: 5, remove: 20, set: 20, delete: 300 });
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_the_thresholds_are_written_one_per_operation() {
+        let mut config = RepoConfig::new("/r".into(), "r".into());
+        config.set_mass_write_thresholds(crate::log::MassThresholds {
+            add: 1,
+            remove: 2,
+            set: 3,
+            delete: 4,
+        });
+        let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+        assert_eq!(
+            written["mass_write_threshold"],
+            serde_json::json!({"add": 1, "remove": 2, "set": 3, "delete": 4})
+        );
     }
 }

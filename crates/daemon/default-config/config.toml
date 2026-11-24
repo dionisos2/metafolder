@@ -69,14 +69,18 @@ watchd-socket = "/run/metafolder/watchd.sock"
 # re-checks every path against the disk). 0 disables the check. Default: 10000.
 orphan-cascade-limit = 10000
 
-# The most metarecords a write to many of them (a field set, added, removed or
-# unset on the matches of a query, a deletion) changes one record at a time.
-# Past it, the write is one entry for all of them, written into the records
-# later, when the repository is idle: quick to write, but every read of those
-# records pays for the entries until then. Below it, each record is written at
-# once. A repository may override it in its config.json
-# (mass_write_threshold). Default: 20.
-mass-write-threshold = 20
+# The most metarecords a write to many of them changes one record at a time,
+# for each kind of write: a value added, a value removed, a field set or unset,
+# metarecords deleted (on the matches of a query, or a selection). Past it, the
+# write is one entry for all of them, written into the records later, when the
+# repository is idle: quick to write, but every read of those records pays for
+# the entries until then. Below it, each record is written at once. A
+# repository may override them in its config.json (mass_write_threshold).
+# Default: 20 each.
+mass-write-threshold-add = 20
+mass-write-threshold-remove = 20
+mass-write-threshold-set = 20
+mass-write-threshold-delete = 20
 
 # How many operations of the watcher the event log keeps. Every change the
 # watcher sees under a watched tree is recorded, so a repository under an active

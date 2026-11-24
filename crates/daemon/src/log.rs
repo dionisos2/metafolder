@@ -297,6 +297,36 @@ pub struct RetypeSummary {
     pub fallback_uuids: Vec<Uuid>,
 }
 
+/// The most records a write of each kind changes one record at a time; past
+/// it, the store writes them in bulk (doc "Mass writes in the store").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MassThresholds {
+    /// A value added to records.
+    pub add: u64,
+    /// A value removed from records.
+    pub remove: u64,
+    /// A field set to values, or unset, on records.
+    pub set: u64,
+    /// Records deleted.
+    pub delete: u64,
+}
+
+impl MassThresholds {
+    /// The same threshold for every kind.
+    pub const fn all(n: u64) -> Self {
+        Self { add: n, remove: n, set: n, delete: n }
+    }
+
+    /// The threshold of a write of `kind`.
+    pub fn of(&self, kind: crate::store::MassKind) -> u64 {
+        match kind {
+            crate::store::MassKind::Add => self.add,
+            crate::store::MassKind::Remove => self.remove,
+            crate::store::MassKind::Replace => self.set,
+        }
+    }
+}
+
 /// The user field a retype traces its lost values in, one text per value
 /// (doc "Changing a field's type"). Unprefixed, so that clearing it takes no
 /// `--force`, as `orphan` (doc "Orphans").
@@ -490,11 +520,11 @@ pub struct Writer<'c> {
     deferred_trees: Option<std::cell::RefCell<Vec<(Uuid, String, Value)>>>,
     /// How much history to keep behind HEAD; applied on commit.
     retention: Retention,
-    /// The most records a write to many of them changes one at a time; past
+    /// The most records a write of each kind changes one at a time; past
     /// it, the store writes them in bulk (doc "Mass writes in the store").
     /// `0` for a writer the repository did not configure: every such write
     /// in bulk.
-    mass_threshold: u64,
+    mass_threshold: MassThresholds,
     /// What this write will oblige its caller to refresh, accumulated as the
     /// operations are recorded rather than read back off `pending` — which the
     /// flush above empties, so a long write used to forget its early writes.
@@ -604,7 +634,7 @@ impl<'c> Writer<'c> {
             deferred_types: None,
             deferred_trees: None,
             retention,
-            mass_threshold: 0,
+            mass_threshold: MassThresholds::all(0),
             effects: WriteEffects { base_head: head, ..WriteEffects::default() },
             tree_lost: Vec::new(),
             tree_lost_seen: HashMap::new(),
@@ -638,11 +668,16 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
-    /// Writes to no more than `n` records one record at a time, as the
-    /// repository's `mass-write-threshold` says (doc "Mass writes in the
-    /// store").
+    /// Writes of every kind to no more than `n` records one record at a time.
     pub fn set_mass_threshold(&mut self, n: u64) {
-        self.mass_threshold = n;
+        self.mass_threshold = MassThresholds::all(n);
+    }
+
+    /// Writes of each kind to no more records than its threshold one record
+    /// at a time, as the repository's `mass-write-threshold-*` say (doc "Mass
+    /// writes in the store").
+    pub fn set_mass_thresholds(&mut self, thresholds: MassThresholds) {
+        self.mass_threshold = thresholds;
     }
 
     /// Read access to the transaction, for lookups that must observe the
@@ -1734,7 +1769,7 @@ impl<'c> Writer<'c> {
     pub fn mass_delete_ids(&mut self, ids: &RoaringBitmap) -> Result<RoaringBitmap> {
         // A revert writes what it undoes one operation at a time, and so is
         // a deletion of few records.
-        if self.reverting.is_none() && ids.len() > self.mass_threshold {
+        if self.reverting.is_none() && ids.len() > self.mass_threshold.delete {
             // The ids of this write's operations come first.
             self.flush_pending()?;
             let origin = self.origin.clone();
@@ -1857,7 +1892,7 @@ impl<'c> Writer<'c> {
         let Some(ids) = ids else { return Ok(Mass::Each(None)) };
         if self.reverting.is_none() {
             if let Some(would) = self.would_change(kind, name, values, ids)? {
-                if would.len() <= self.mass_threshold {
+                if would.len() <= self.mass_threshold.of(kind) {
                     return Ok(Mass::Each(Some(would)));
                 }
             }

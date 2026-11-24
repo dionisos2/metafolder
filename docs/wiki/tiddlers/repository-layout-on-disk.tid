@@ -40,7 +40,7 @@ says which daemon ([[The repository lock]]).
 |`created_at` |integer |creation time, Unix seconds |
 |`log_retention_watcher_entries` |integer |optional: how many of the watcher's entries the log keeps, overriding the daemon's setting (`0`: all) ([[Automatic retention]]); `log_retention_watcher_ops` before November 2026, read under the new name |
 |`log_retention_user_entries` |integer |optional: how many of every other entry the log keeps, overriding the daemon's setting (`0`: all); `log_retention_user_ops` before November 2026, read under the new name |
-|`mass_write_threshold` |integer |optional: the most metarecords a write to many of them changes one at a time, overriding the daemon's `mass-write-threshold` ([[Mass writes in the store]]) |
+|`mass_write_threshold` |object |optional: the most metarecords a write of each kind changes one at a time — `add`, `remove`, `set` (an unset too), `delete`, each optional —, overriding the daemon's `mass-write-threshold-<kind>` ([[Mass writes in the store]]). A number, as written before November 2026, is the threshold of every kind; it is read as such, never rewritten |
 |`system` |bool |a repository the daemon uses internally (a sync plan repository): hidden from `GET /repos` unless `?all=true` |
 |`borrowed` |object |optional: a borrowed copy of a repository of another machine — `{"metafolder"}`, the remote `.metafolder/` through this machine's mount, where `mf repo give-back` sends it ([[Cross-machine sync]]) |
 |`storage` |string |the store holding the data: the key-value store. Absent means a SQLite repository from before September 2026, which is refused at load ([[How the storage backend was built]]) |

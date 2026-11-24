@@ -63,12 +63,23 @@ pub struct DaemonSettings {
     /// would null thousands of paths is a filesystem going away, not a
     /// deletion the user asked for. `0` disables the check.
     pub orphan_cascade_limit: usize,
-    /// The most metarecords a write to many of them — a field set, added,
-    /// removed or unset on a query's matches, a deletion — changes one record
-    /// at a time; past it, the store writes them in bulk, one entry for all
-    /// (doc "Mass writes in the store"). A repository may override it in its
-    /// own `config.json`.
-    pub mass_write_threshold: u64,
+    /// The most metarecords a write to many of them changes one record at a
+    /// time, for each kind of write: a value added, a value removed, a field
+    /// set or unset, metarecords deleted. Past it, the store writes them in
+    /// bulk, one entry for all (doc "Mass writes in the store"). A repository
+    /// may override them in its own `config.json`.
+    pub mass_write_threshold_add: u64,
+    /// See `mass_write_threshold_add`.
+    pub mass_write_threshold_remove: u64,
+    /// See `mass_write_threshold_add`.
+    pub mass_write_threshold_set: u64,
+    /// See `mass_write_threshold_add`.
+    pub mass_write_threshold_delete: u64,
+    /// The one threshold for every kind before November 2026, split: read so
+    /// an edited config still loads, ignored with a warning
+    /// ([`DaemonSettings::obsolete`]).
+    #[serde(default)]
+    pub mass_write_threshold: Option<toml::Value>,
     /// How long an operation must take before it is written to the
     /// repository's slow-operation log (doc "Slow log"). `0` turns the log off.
     pub slow_operation_threshold_ms: u64,
@@ -96,6 +107,24 @@ impl DaemonSettings {
         Duration::from_millis(self.watch_quiet_period_ms)
     }
 
+    /// The mass-write thresholds these settings describe.
+    pub fn mass_write_thresholds(&self) -> crate::log::MassThresholds {
+        crate::log::MassThresholds {
+            add: self.mass_write_threshold_add,
+            remove: self.mass_write_threshold_remove,
+            set: self.mass_write_threshold_set,
+            delete: self.mass_write_threshold_delete,
+        }
+    }
+
+    /// Sets the mass-write threshold of every kind of write.
+    pub fn set_mass_write_thresholds(&mut self, t: crate::log::MassThresholds) {
+        self.mass_write_threshold_add = t.add;
+        self.mass_write_threshold_remove = t.remove;
+        self.mass_write_threshold_set = t.set;
+        self.mass_write_threshold_delete = t.delete;
+    }
+
     /// The log-retention policy these settings describe.
     pub fn log_retention(&self) -> crate::log::Retention {
         crate::log::Retention {
@@ -109,6 +138,14 @@ impl DaemonSettings {
     /// shipped, and a config the user edited keeps them.
     pub fn obsolete(&self) -> Vec<String> {
         let mut out = Vec::new();
+        if self.mass_write_threshold.is_some() {
+            out.push(
+                "the setting 'mass-write-threshold' is ignored: there is one per kind of write \
+                 now (mass-write-threshold-add, -remove, -set, -delete; doc \"Mass writes in \
+                 the store\")"
+                    .to_string(),
+            );
+        }
         for (key, set) in [
             ("log-retention-revisions", self.log_retention_revisions.is_some()),
             ("log-retention-keep-labels", self.log_retention_keep_labels.is_some()),
@@ -436,7 +473,10 @@ mod tests {
         assert_eq!(s.watch_quiet_period(), Duration::from_millis(2000));
         assert_eq!(s.watch_budget_share, 50);
         assert_eq!(s.orphan_cascade_limit, 10_000);
-        assert_eq!(s.mass_write_threshold, 20);
+        assert_eq!(
+            s.mass_write_thresholds(),
+            crate::log::MassThresholds { add: 20, remove: 20, set: 20, delete: 20 }
+        );
         assert_eq!(s.watchd_socket, PathBuf::from("/run/metafolder/watchd.sock"));
         assert_eq!(s.slow_operation_threshold_ms, 1500);
         assert_eq!(s.slow_read_threshold_ms, 500);
@@ -447,6 +487,19 @@ mod tests {
             crate::log::Retention { watcher_entries: 50_000, user_entries: 1_000_000 },
             "history is bounded out of the box, the user's far longer than the watcher's"
         );
+    }
+
+    #[test]
+    fn test_the_single_mass_write_threshold_is_read_and_ignored() {
+        // One number for every operation until November 2026, one per
+        // operation since: a config still naming it loads, with a warning
+        // naming the new keys.
+        let src = shipped_with("mass-write-threshold", "7");
+        let s = read_config(&write_config(&src)).unwrap().settings;
+        assert_eq!(s.mass_write_thresholds(), shipped_settings().mass_write_thresholds());
+        let warnings = s.obsolete();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("mass-write-threshold-add"), "{warnings:?}");
     }
 
     #[test]

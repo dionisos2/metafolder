@@ -49,7 +49,7 @@ async fn request(
 async fn setup(prefix: &str, threshold: Option<u64>) -> (Router, String, TempDir) {
     let mut settings = common::settings();
     if let Some(t) = threshold {
-        settings.mass_write_threshold = t;
+        settings.set_mass_write_thresholds(metafolder_daemon::log::MassThresholds::all(t));
     }
     let app = routes::build(std::sync::Arc::new(AppState::new(settings)));
     let root = TempDir::new(&format!("qrr_{prefix}"));

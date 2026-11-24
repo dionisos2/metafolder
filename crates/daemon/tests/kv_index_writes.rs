@@ -399,6 +399,52 @@ fn a_write_to_few_records_is_written_into_them() {
     check(&store);
 }
 
+/// Each kind of write is held to its own threshold (doc "Mass writes in the
+/// store"): an add to thirty records under an add threshold of 50 is written
+/// into them, a removal of the same thirty under a remove threshold of 10
+/// goes in bulk; so for a set (an unset too) and a deletion.
+#[test]
+fn each_kind_of_write_has_its_threshold() {
+    use metafolder_daemon::log::MassThresholds;
+    let (mut store, _root) = open();
+    let uuids = records(&mut store, 120);
+    store.fold().unwrap();
+    let thresholds = MassThresholds { add: 50, remove: 10, set: 50, delete: 10 };
+    let ids = |store: &KvStore, r: std::ops::Range<usize>| store.dense_ids(&uuids[r]).unwrap();
+    let pending = |store: &KvStore| store.pending_writes().unwrap();
+
+    let some = ids(&store, 0..30);
+    write(&mut store, |w| {
+        w.set_mass_thresholds(thresholds);
+        w.mass_add_ids("tag", s("t"), &some).unwrap()
+    });
+    assert_eq!(pending(&store), 0, "thirty adds are under the add threshold");
+    write(&mut store, |w| {
+        w.set_mass_thresholds(thresholds);
+        w.mass_remove_ids("tag", &s("t"), &some).unwrap()
+    });
+    assert_eq!(pending(&store), 1, "thirty removals are past the remove threshold");
+    store.fold().unwrap();
+
+    write(&mut store, |w| {
+        w.set_mass_thresholds(thresholds);
+        w.mass_set_ids("rank", vec![Value::Int(7)], &some).unwrap()
+    });
+    write(&mut store, |w| {
+        w.set_mass_thresholds(thresholds);
+        w.mass_unset_ids("rank", &some).unwrap()
+    });
+    assert_eq!(pending(&store), 0, "a set and an unset are under the set threshold");
+
+    let doomed = ids(&store, 60..90);
+    write(&mut store, |w| {
+        w.set_mass_thresholds(thresholds);
+        w.mass_delete_ids(&doomed).unwrap()
+    });
+    assert_eq!(pending(&store), 1, "thirty deletions are past the delete threshold");
+    check(&store);
+}
+
 /// A `Nothing` and a long text go in bulk too (doc "Mass writes in the
 /// store"): a `Nothing` is the field's `absent` set, a text past its key's
 /// length is a posting under a hashed key. Only the removal of a text too

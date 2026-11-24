@@ -130,9 +130,9 @@ pub struct RepoState {
     /// `config.json` override where set, the daemon's `[settings]` otherwise.
     /// Applied by every writer built through [`Self::writer`].
     log_retention: crate::log::Retention,
-    /// The most records a write to many of them changes one at a time
-    /// (`mass-write-threshold`, doc "Mass writes in the store").
-    mass_write_threshold: u64,
+    /// The most records a write of each kind changes one at a time
+    /// (`mass-write-threshold-*`, doc "Mass writes in the store").
+    mass_write_threshold: crate::log::MassThresholds,
     /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
     /// the executor before applying a cascade.
     pub orphan_cascade_limit: usize,
@@ -224,7 +224,7 @@ impl RepoState {
         let name = Mutex::new(opened.config.name.clone());
         let log_retention = opened.config.log_retention(settings.log_retention());
         let mass_write_threshold =
-            opened.config.mass_write_threshold(settings.mass_write_threshold);
+            opened.config.mass_write_thresholds(settings.mass_write_thresholds());
         let root_identity = root_identity_of(&opened.config.root);
         let slow_dir =
             metafolder_core::slowlog::slow_dir(&opened.metafolder_dir.join(repo::INTERNAL_DIR));
@@ -367,7 +367,7 @@ impl RepoState {
             .into());
         }
         let mut writer = crate::log::Writer::begin_in(conn, context, self.log_retention)?;
-        writer.set_mass_threshold(self.mass_write_threshold);
+        writer.set_mass_thresholds(self.mass_write_threshold);
         Ok(writer)
     }
 
@@ -379,7 +379,7 @@ impl RepoState {
         context: crate::log::WriteContext,
     ) -> anyhow::Result<crate::log::Writer<'c>> {
         let mut writer = crate::log::Writer::begin_in(conn, context, self.log_retention)?;
-        writer.set_mass_threshold(self.mass_write_threshold);
+        writer.set_mass_thresholds(self.mass_write_threshold);
         Ok(writer)
     }
 

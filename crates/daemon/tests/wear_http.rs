@@ -16,10 +16,9 @@ use common::TempDir;
 /// tests look at is what a mass write leaves pending, on a handful of records
 /// (doc "Mass writes in the store").
 fn mass_settings() -> metafolder_daemon::daemon_config::DaemonSettings {
-    metafolder_daemon::daemon_config::DaemonSettings {
-        mass_write_threshold: 0,
-        ..common::settings()
-    }
+    let mut settings = common::settings();
+    settings.set_mass_write_thresholds(metafolder_daemon::log::MassThresholds::all(0));
+    settings
 }
 
 async fn request(
