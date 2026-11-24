@@ -597,6 +597,18 @@ fn page_multiple(n: usize) -> usize {
 
 // ── Opening ─────────────────────────────────────────────────────────────────
 
+/// Set by [`open_every_store_unsynced`].
+static UNSYNCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// From now on, every store this process opens commits without an `fsync`,
+/// as [`KvStore::open_unsynced`] does: for a test binary, whose stores nobody
+/// needs back after a crash, and where the syncs were most of the time the
+/// tests took (doc "Testing conventions"). Never called by the daemon, nor by
+/// the benchmarks, which measure the commits as they are.
+pub fn open_every_store_unsynced() {
+    UNSYNCED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl KvStore {
     /// Opens (creating it if needed) the store in `dir`, and takes the
     /// repository's lock: a second daemon opening it fails.
@@ -620,7 +632,14 @@ impl KvStore {
         KvStore::open_with(dir, INITIAL_MAP, false)
     }
 
+    /// Whether each commit is synced to the disk.
+    pub fn durable(&self) -> bool {
+        self.durable
+    }
+
     fn open_with(dir: &Path, map_size: usize, durable: bool) -> Result<KvStore> {
+        let durable =
+            durable && !cfg!(test) && !UNSYNCED.load(std::sync::atomic::Ordering::Relaxed);
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let lock = File::create(dir.join("daemon.lock"))?;
         {

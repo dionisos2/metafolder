@@ -324,7 +324,12 @@ use uuid::Uuid;
 
 /// The single parent of every test directory, so whatever a crashed run leaves
 /// behind is one `rm -rf "$TMPDIR/metafolder-tests"` away.
+///
+/// Every store opened under it is a test's: the process opens its stores
+/// without an `fsync` per commit from the first call on (doc "Testing
+/// conventions").
 pub fn tests_root() -> PathBuf {
+    metafolder_daemon::kvstore::open_every_store_unsynced();
     std::env::temp_dir().join("metafolder-tests")
 }
 

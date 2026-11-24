@@ -434,3 +434,13 @@ fn test_a_stale_absolute_root_is_corrected_to_the_relative_one() {
     assert_eq!(loaded.config.root, root.canonicalize().unwrap());
     assert_eq!(root_on_disk(&meta), ".");
 }
+
+/// A test's store commits without an `fsync` (doc "Testing conventions"):
+/// nobody needs it back after a crash, and the syncs were most of the time
+/// the daemon's tests took. `tests_root` turns it on for the whole process.
+#[test]
+fn a_store_a_test_opens_commits_without_fsync() {
+    let dir = temp_dir("unsynced");
+    let store = metafolder_daemon::kvstore::KvStore::open(&dir).unwrap();
+    assert!(!store.durable(), "a test's store syncs each commit");
+}

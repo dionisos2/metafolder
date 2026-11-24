@@ -3,7 +3,7 @@ tags: Development
 kind: reference
 audience: dev
 aliases: tests tdd
-summary: Test first; where each kind of test lives; disposable directories under one parent, removed by guards; oracles rather than expected values; no assertion on a duration.
+summary: Test first; where each kind of test lives; disposable directories under one parent, removed by guards; stores without an fsync; oracles rather than expected values; no assertion on a duration.
 
 !! Test first
 
@@ -86,6 +86,23 @@ failed or was interrupted — 31 000 directories and 12 GB over a few hundred ru
 until the disk was full, the store answered "database or disk is full" and the
 watcher's flush failed on it. When a daemon behaves strangely, look at `df -h`
 before the code.
+
+!! Stores without an `fsync`
+
+A test's store commits without an `fsync`: nobody needs it back after a crash. The
+first call of `tests_root()` — which every guard above goes through — calls
+`kvstore::open_every_store_unsynced()`, and from then on every store the test binary
+opens, by whatever path (`KvStore::open`, `init_repository`, an `AppState`), is opened
+as `KvStore::open_unsynced` opens one; the unit tests in `src/` get the same from
+`cfg!(test)`. A commit is then a write to the page cache, which the daemon reads back
+exactly as after a sync. The benchmarks never call it: they measure the commits as
+they are ([[Performance testing]]).
+
+The syncs were most of the time the write-heavy suites took: `undo_redo_properties`,
+some 30 000 requests, went from 148 s to 79 s with the test directories on the
+container's `fuse-overlayfs` `/tmp`, and from 40 s to 31 s on ext4 (24 November 2026,
+four cores). The filesystem under `$TMPDIR` weighs as much: FUSE makes every write and
+every page of the mapped store a round trip to a user process, even unsynced.
 
 !! The watcher in tests
 
