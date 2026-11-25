@@ -21,7 +21,7 @@ had used and whether the world had moved since. Found while verifying the sessio
 
 * ''Redo lost after a rollback and a watcher write.'' Undo rolls back; the watcher's next flush (in the session: the GUI's input history file, written by the list's search) lands as a new child of HEAD; redo finds no continuation, steps over the watcher's revision and answers "Nothing to redo." The change is left on an abandoned branch, reachable only by a rollback that would unrecord the watcher's write. That was the run whose redo read 20 000 keys instead of 700 000.
 * ''Redo stops at the first undo it already redid'' (`core::undo::plan_redo`, `rev.left.is_empty()` returns `Nothing` instead of stepping over it): two undos forced into reverts, then two redos — the second answers "Nothing to redo."
-* ''The tagging scripts' going back'' (`mf_log_back_to` in `scripts/shipped/lib/mf-gui.sh`) rolls back to the head noted before an answer — over any watcher revision written meanwhile, which it unrecords.
+* ''The tagging scripts' going back'' (`mf_log_back_to` in `scripts/shipped/lib/mf-gui.sh`, since replaced by `mf_log_context_back`, which reverts) rolled back to the head noted before an answer — over any watcher revision written meanwhile, which it unrecorded.
 
 Each could be patched — a fourth redo case re-applying an abandoned branch at HEAD, a
 mechanism the daemon refuses on purpose. The rules were growing faster than the cases.

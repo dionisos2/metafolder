@@ -25,7 +25,7 @@ the executor and the API already serialise writes.
 
 Within one write transaction nothing else writes, so what the transaction holds in
 memory is no cache: there is nothing to invalidate. A record ([[Store tables]]) is
-read and decoded the first time the transaction needs it (`KvTxn::stored_record`);
+read and decoded the first time the transaction needs it (`KvTxn::hold_record`);
 every operation of the transaction — and every read it makes, through `Read`'s
 `record` hook — works on that decoded form; each record changed is encoded and put
 once, at the commit (`flush_records`, `commit.records` in the slow log). Before,

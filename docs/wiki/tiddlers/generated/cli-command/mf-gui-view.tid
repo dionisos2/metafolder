@@ -19,7 +19,7 @@ Arguments:
 
 Options:
       --path <PATH>
-          File path (file panel type)
+          File path (viewer panel type)
 
   -h, --help
           Print help

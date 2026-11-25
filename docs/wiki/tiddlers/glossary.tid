@@ -8,7 +8,7 @@ summary: Every term of metafolder in one line, with the note that defines it.
 
 * ''Metarecord'' — the unit of metadata: a uuid, a version and fields, about one subject — a file, a tag, a collection ([[Metarecord]]).
 * ''Field'' — a name and a typed value on a metarecord; several fields may share a name, never the same value twice ([[Fields and values]], [[No duplicate rows]]).
-* ''Value type'' — one of ten: `nothing`, `string`, `int`, `float`, `bool`, `datetime`, `ref`, `tree_ref`, `ref_base`, `external_ref` ([[Value types]]); a field name has one in the whole repository ([[One value type per field name]]).
+* ''Value type'' — one of eleven: `nothing`, `string`, `int`, `float`, `bool`, `datetime`, `ref`, `tree_ref`, `hierarchy_ref`, `refbase`, `externalref` ([[Value types]]); a field name has one in the whole repository ([[One value type per field name]]).
 * ''Nothing'' — a value saying "this field does not apply"; ''unknown'' is the field not being there at all ([[Nothing versus unknown]]).
 * ''Field spec'' — `name:type=value`, a field as written on the command line ([[Field specifications]]).
 * ''Reference'' (`ref`) — a value pointing at another metarecord ([[Following references]]).

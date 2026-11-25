@@ -1,7 +1,7 @@
 title: Value types
 tags: [[Data model]]
 kind: reference
-summary: The ten value types, what each holds, and their JSON form.
+summary: The eleven value types, what each holds, and their JSON form.
 
 |!Type |!Holds |!JSON `value` |
 |`nothing` |an explicit absence: "this field does not apply" |none (`{"type": "nothing"}`) |
@@ -28,8 +28,8 @@ repository under different field names — `mfr_path` for the filesystem, `path`
 the tag hierarchy — each a forest of its own. A name has a displayed form and its
 exact bytes, which identify the node (a file name need not be valid UTF-8).
 
-The four reference types are ''distinct'' types, not one family: a field is `ref`,
-or `refbase`, or `externalref`, or `tree_ref`, never a mix. A link that is sometimes
+The five reference types are ''distinct'' types, not one family: a field is `ref`,
+or `refbase`, or `externalref`, or `tree_ref`, or `hierarchy_ref`, never a mix. A link that is sometimes
 local and sometimes cross-repository is modelled as `externalref` throughout.
 
 On the command line a value is written as a field specification, `name:type=value`

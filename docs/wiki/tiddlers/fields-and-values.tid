@@ -10,7 +10,7 @@ has no identity beyond the two: a row is named by its metarecord, its name and i
 value, and the order of a metarecord's fields in a response is unspecified — it may
 differ from one read to the next.
 
-A value has one of ten types ([[Value types]]), and a field name has one type across
+A value has one of eleven types ([[Value types]]), and a field name has one type across
 the whole repository ([[One value type per field name]]).
 
 Two states look alike and are not ([[Nothing versus unknown]]):

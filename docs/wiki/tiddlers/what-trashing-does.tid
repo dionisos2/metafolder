@@ -24,7 +24,7 @@ nothing.
 * ''A reference from outside.'' When a metarecord ''outside'' the trashed set points at one inside it (a `ref` or `tree_ref` value), deleting it would leave the reference dangling: the daemon refuses and names the referrers, and nothing is written. `mf trash -f --force` overrides it; the GUI does not. References ''inside'' the set do not count: they travel with it and come back together.
 * ''The repository root'', always, `--force` or not — and since the metadata goes first, before a single byte has moved.
 
-An inbound `external_ref` or `ref_base` value is not detected: those do not feed
+An inbound `externalref` or `refbase` value is not detected: those do not feed
 the reverse maps the check reads. The gap is accepted, and named here.
 
 Each deleted metarecord also leaves its duplicate group, as an orphaned one does

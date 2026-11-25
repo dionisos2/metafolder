@@ -23,5 +23,5 @@ the thing it is for.
 
 The reference check is served from the index's reverse maps, one bitmap lookup per
 reference-typed field name: proportional to the number of `ref`/`tree_ref`
-fields, never a scan of the values. `external_ref` and `ref_base` values are not
+fields, never a scan of the values. `externalref` and `refbase` values are not
 in those maps and so not detected.

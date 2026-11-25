@@ -1317,7 +1317,7 @@ enum GuiCommand {
         slot: String,
         /// Panel type to set (omit to print the current one)
         panel_type: Option<String>,
-        /// File path (file panel type)
+        /// File path (viewer panel type)
         #[arg(long)]
         path: Option<String>,
     },
