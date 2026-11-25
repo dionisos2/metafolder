@@ -264,7 +264,8 @@ fn a_reindex_removes_what_the_deletions_left_behind() {
     // One position each: the root, the folder and the two files left.
     assert_eq!(entries(dir.path(), "index_raw_holder"), 4);
     assert_eq!(entries(dir.path(), "ids"), 4);
-    assert_eq!(entries(dir.path(), "uuids"), 4);
+    // Their uuids, one range of 4096 ids (doc "Store tables").
+    assert_eq!(entries(dir.path(), "uuids"), 1);
 
     // And the store opens whole again.
     let store = KvStore::open(dir.path()).unwrap();

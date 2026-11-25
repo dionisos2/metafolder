@@ -46,8 +46,8 @@ use crate::store::Rows;
 /// histograms; 7: the trigrams in two modes (doc "Text search in the store");
 /// 8: what points at a metarecord filed under its dense id, and no target
 /// partition; 9: the count of values in place of the `present` and `multi`
-/// sets; 10: the fields' pending index writes; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`; 26: a mode per trigram, not per field — a list of texts by value, a bitmap of ids by metarecord; 27: a write files its ids in the bitmaps of its trigrams by metarecord, and no pending ids (`index_trigram_pending` goes); 28: a trigram turns by metarecord in the write that grows its list past the limit, and no list frozen for a fold (no mode 2, no trigrams turning in the state).
-pub(super) const DERIVED_VERSION: i64 = 28;
+/// sets; 10: the fields' pending index writes; 11: every value a posting, and no value partition; 12: a position's name a posting too, and no `parts`; 13: a position's value no posting (the forest holds it); 14: the histograms count the posting keys of each bucket; 15: the record of a deleted metarecord stays until a reindex; 16: values in the compact encoding; 17: the universe and the reserved ids out of `sets` (the numbering primary), `field_types` an index of one-byte types; 18: a table per kind of set (doc "Store tables"); 19: the forest an index, `index_raw_holder` (field · parent id · name → id), and no `kids`; 23: the trigrams, the histograms and the pending index writes in tables of their own; 24: a pending index write filed by chunk (field · chunk · write number); 22: `nothing` a key among the holders of a field's values, and no `absent` set; 21: a position's name among the holders of its field's values; 20: the referrers of a position in `index_parent_holders`, a `ref`'s the holders of its value (none filed, no id reserved); 25: no byte of a former kind at the head of an index key, and no `FF` before a bucket in `index_histogram_keys`; 26: a mode per trigram, not per field — a list of texts by value, a bitmap of ids by metarecord; 27: a write files its ids in the bitmaps of its trigrams by metarecord, and no pending ids (`index_trigram_pending` goes); 28: a trigram turns by metarecord in the write that grows its list past the limit, and no list frozen for a fold (no mode 2, no trigrams turning in the state); 29: `uuids` holds the uuids of 4096 consecutive dense ids under one key (doc "Store tables").
+pub(super) const DERIVED_VERSION: i64 = 29;
 
 /// The sets of the index, by what they hold (doc "Store tables"): each is in
 /// a table ([`IndexSet::table`]) under a key of its own ([`set_key`]). Their
@@ -1018,9 +1018,8 @@ impl KvTxn<'_> {
     fn new_id(&self, uuid: &[u8; 16]) -> Result<u32> {
         let id = u32::try_from(self.next(super::State::NextMetarecordId)?)
             .context("dense ids exhausted")?;
-        let mut w = self.txn.borrow_mut();
-        self.t.ids.put(&mut w, uuid, &id.to_be_bytes())?;
-        self.t.uuids.put(&mut w, &id.to_be_bytes(), uuid)?;
+        self.put_uuid(id, uuid)?;
+        self.t.ids.put(&mut self.txn.borrow_mut(), uuid, &id.to_be_bytes())?;
         Ok(id)
     }
 
@@ -1629,9 +1628,8 @@ impl KvTxn<'_> {
             if !seen.insert(id) {
                 continue;
             }
-            let uuid =
-                self.t.uuids.get(&r, &id.to_be_bytes())?.context("a child without a uuid")?;
-            out.push((uuid_of(uuid), id));
+            let uuid = self.uuid_now(id)?.context("a child without a uuid")?;
+            out.push((uuid, id));
         }
         Ok(out)
     }
@@ -1678,6 +1676,7 @@ impl KvTxn<'_> {
         self.grams.borrow_mut().clear();
         self.grams_changed.borrow_mut().clear();
         self.index_writes.borrow_mut().clear();
+        self.forget_uuid_ranges();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
         // The numbering (`ids`, `live_metarecords`) is primary: a reindex
@@ -2083,7 +2082,7 @@ impl KvStore {
         let live = read_live(t, r)?;
         let metarecords = live.len();
         for id in &live {
-            if t.uuids.get(r, &id.to_be_bytes())?.is_none() {
+            if super::uuid_at(t, r, id)?.is_none() {
                 diff.push(format!("uuids: the live dense id {id} names no metarecord"));
             }
         }
@@ -2091,14 +2090,9 @@ impl KvStore {
         for entry in t.ids.iter(r)? {
             let (k, v) = entry?;
             mapped += 1;
-            let back = t.uuids.get(r, &v[..4])?;
-            if back.map(|u| &u[..16]) != Some(&k[..16]) {
-                diff.push(format!(
-                    "ids: {} -> {}, but uuids says {:?}",
-                    uuid_of(k),
-                    dense(v),
-                    back.map(uuid_of)
-                ));
+            let back = super::uuid_at(t, r, dense(v))?;
+            if back != Some(uuid_of(k)) {
+                diff.push(format!("ids: {} -> {}, but uuids says {back:?}", uuid_of(k), dense(v)));
             }
         }
         // An id never given names nothing, deleted or not: it is held to
@@ -2121,8 +2115,7 @@ impl KvStore {
         let pending = self.has_pending_writes();
         let mut parts = super::mass::Parts::default();
         for record_id in super::mass::record_ids(t, r, pending)? {
-            let k = record_id.to_be_bytes();
-            let Some(named) = t.uuids.get(r, &k)? else {
+            let Some(named) = super::uuid_at(t, r, record_id)? else {
                 diff.push(format!("records: dense id {record_id} names no metarecord"));
                 continue;
             };
@@ -2130,7 +2123,7 @@ impl KvStore {
             if !live.contains(record_id) {
                 continue;
             }
-            let uuid: [u8; 16] = named.try_into().expect("a 16-byte uuid");
+            let uuid: [u8; 16] = *named.as_bytes();
             let id = Some(record_id);
             if id_of(t, r, &uuid)? != id {
                 diff.push(format!(
@@ -2531,8 +2524,8 @@ impl<'a> Entry<'a> {
 
     /// The entry as a line names it, its id resolved to the metarecord.
     fn show(&self, t: &Tables, r: &RoTxn<'_>) -> Result<String> {
-        let who = match t.uuids.get(r, &self.id.to_be_bytes())? {
-            Some(uuid) => uuid_of(uuid).to_string(),
+        let who = match super::uuid_at(t, r, self.id)? {
+            Some(uuid) => uuid.to_string(),
             None => format!("dense id {} (no metarecord)", self.id),
         };
         let field = self.field;
@@ -2540,9 +2533,9 @@ impl<'a> Entry<'a> {
         // target's dense id.
         let target = || -> Result<String> {
             let id = dense(self.key);
-            Ok(match t.uuids.get(r, &self.key[..4])? {
+            Ok(match super::uuid_at(t, r, id)? {
                 _ if id == NO_TARGET => "no parent".to_string(),
-                Some(uuid) => uuid_of(uuid).to_string(),
+                Some(uuid) => uuid.to_string(),
                 None => format!("dense id {id} (no uuid)"),
             })
         };

@@ -135,3 +135,73 @@ fn a_reindex_renumbers_and_drops_the_deleted() {
     let r = env.read_txn().unwrap();
     assert_eq!(metarecords.len(&r).unwrap(), 5, "its record too");
 }
+
+/// `uuids` holds the uuids of 4096 consecutive dense ids under one key: a
+/// write creating a few thousand metarecords writes one key or two of it, at
+/// its commit, not one per metarecord (doc "Store tables").
+#[test]
+fn the_uuids_of_consecutive_ids_are_one_key() {
+    let dir = TempDir::new("kv-numbering-ranges");
+    let mut kv = KvStore::open_unsynced(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let uuids: Vec<Uuid> = (0..3000)
+        .map(|i| w.create_metarecord(vec![Field::new("n", Value::Int(i))]).unwrap().uuid)
+        .collect();
+    w.commit().unwrap();
+    let written = kv.last_write_keys().get("uuids").copied().unwrap_or(0);
+    assert!(written <= 2, "{written} keys of uuids for 3000 metarecords");
+    // Each id is its uuid's, and back.
+    let ids = kv.dense_ids(&uuids).unwrap();
+    assert_eq!(kv.uuids_of(&ids).unwrap().len(), 3000);
+    let back: std::collections::BTreeSet<Uuid> = kv.uuids_of(&ids).unwrap().into_iter().collect();
+    assert_eq!(back, uuids.iter().copied().collect());
+    assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
+    drop(kv);
+    let env = raw_env(dir.path());
+    let table = open_raw(&env, "uuids");
+    let r = env.read_txn().unwrap();
+    assert_eq!(table.len(&r).unwrap(), 1, "ids 1 to 3001: one range");
+}
+
+/// A store of the former `uuids`, one key per dense id (derived 28), is
+/// derived again when it opens.
+#[test]
+fn a_store_of_one_uuid_per_key_is_derived_again() {
+    let dir = TempDir::new("kv-numbering-old-uuids");
+    let uuids = store(&dir);
+    let before = state(&KvStore::open_unsynced(dir.path()).unwrap());
+    {
+        let env = raw_env(dir.path());
+        let ids = open_raw(&env, "ids");
+        let table = open_raw(&env, "uuids");
+        let version = open_raw(&env, "version");
+        let mut w = env.write_txn().unwrap();
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = ids
+            .iter(&w)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .map(|(k, v)| (k.to_vec(), v.to_vec()))
+            .collect();
+        table.clear(&mut w).unwrap();
+        for (uuid, id) in pairs {
+            table.put(&mut w, &id, &uuid).unwrap();
+        }
+        version.put(&mut w, b"derived_version", &28i64.to_be_bytes()).unwrap();
+        w.commit().unwrap();
+    }
+    let kv = KvStore::open_unsynced(dir.path()).unwrap();
+    assert_eq!(state(&kv), before);
+    assert_eq!(kv.check_derived().unwrap(), Vec::<String>::new());
+    let live: Vec<Uuid> = uuids.iter().copied().filter(|&u| u != uuids[2]).collect();
+    assert_eq!(kv.uuids_of(&kv.dense_ids(&live).unwrap()).unwrap().len(), live.len());
+}
+
+/// The nil uuid marks an id with no metarecord in a range of `uuids`: no
+/// metarecord may have it.
+#[test]
+fn no_metarecord_has_the_nil_uuid() {
+    let dir = TempDir::new("kv-numbering-nil");
+    let mut kv = KvStore::open_unsynced(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    assert!(w.create_metarecord_with_uuid(Uuid::nil(), vec![]).is_err());
+}

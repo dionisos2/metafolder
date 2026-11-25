@@ -123,7 +123,7 @@ Computed from the primary tables, read by the query evaluator through `KvSource`
 
 |!Table |!Key |!Value |!Serves |
 |`global_derived_state` |a name |a number: `next_metarecord_id` (the largest id of `ids` plus one), `log_entries_by_metarecord_indexed_up_to` |the next dense id; how far the log is indexed by metarecord |
-|`uuids` |dense id |uuid |the inverse of `ids` |
+|`uuids` |dense id ÷ 4096 |the uuids of those 4096 ids, 16 bytes each — the nil uuid for an id with none —, 64 KiB always |the inverse of `ids`: one key for 4096 consecutive ids. A query's answer, a write one record at a time, the log's chunks by dense id read their uuids range by range, and a write puts each range it changed once, at its commit. Cold, on 400 000 records, the uuids of 4096 ids spread over the store took ~90 ms against ~400 ms one key per id, one uuid alone 0.9 ms against 1.6 and 110 ns against 620 warm; a creation alone, committed, ~1 ms more for its range (November 2026, `tests/probe_uuid_reads.rs`). So no metarecord has the nil uuid |
 |`field_types` |F · type |how many rows of that type (`nothing` not counted) |a field's type ([[One value type per field name]]); a key goes at 0 |
 |`index_value_holders` |F · value key · chunk |bitmap |the holders of a value — every value has its own, `nothing` included; a position's value is its name; a `ref`'s holders are its referrers ([[Sorting and postings]]) |
 |`index_value_counts` |F · bit · chunk |bitmap |how many values (not `nothing`) each id holds, one set per bit (below) |

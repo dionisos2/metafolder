@@ -346,6 +346,31 @@ fn uuid_of(b: &[u8]) -> Uuid {
     Uuid::from_slice(&b[..16]).expect("a 16-byte uuid")
 }
 
+/// The dense ids whose uuids one key of `uuids` holds (doc "Store tables").
+pub(super) const UUID_RANGE: u32 = 4096;
+
+/// The bytes of a range of `uuids`: always the whole of it, an id with no
+/// metarecord holding the nil uuid — so that a range rewritten keeps its size
+/// and its pages.
+const UUID_RANGE_BYTES: usize = UUID_RANGE as usize * 16;
+
+/// The uuid of `id` in its range of `uuids`, `None` when it has none.
+fn uuid_in_range(range: &[u8], id: u32) -> Option<Uuid> {
+    let at = (id % UUID_RANGE) as usize * 16;
+    let bytes = range.get(at..at + 16)?;
+    bytes.iter().any(|&b| b != 0).then(|| uuid_of(bytes))
+}
+
+/// The uuid of `id` as `r` has it: one key of `uuids`.
+fn uuid_at(t: &Tables, r: &RoTxn<'_>, id: u32) -> Result<Option<Uuid>> {
+    let range = t.uuids.get(r, &(id / UUID_RANGE).to_be_bytes())?;
+    Ok(range.and_then(|range| uuid_in_range(range, id)))
+}
+
+/// The ranges of `uuids` a write transaction changed, whole: put at its
+/// commit, one key each, and read before the table by its reads.
+type UuidRanges = RefCell<HashMap<u32, Vec<u8>>>;
+
 fn key(parts: &[&[u8]]) -> Vec<u8> {
     parts.concat()
 }
@@ -810,6 +835,9 @@ struct Read<'a> {
     /// The store's cache of the universe's chunks, and the generation the
     /// read sees; `None` in a write transaction.
     live_cache: Option<(&'a LiveCache, u64)>,
+    /// The ranges of `uuids` a write transaction changed; `None` for a read
+    /// of the committed store.
+    uuid_ranges: Option<&'a UuidRanges>,
 }
 
 /// The chunks of `live_metarecords` the reads of the committed store looked
@@ -995,9 +1023,34 @@ impl Read<'_> {
 
     /// The uuid of a dense id.
     fn uuid_of_id(&self, id: u32) -> Result<Uuid> {
-        self.count(1)?;
-        let uuid = self.t.uuids.get(self.r, &id.to_be_bytes())?;
-        Ok(uuid_of(uuid.with_context(|| format!("dense id {id} names no metarecord"))?))
+        let mut out = self.uuids_of_ids_iter(&mut std::iter::once(id))?;
+        Ok(out.pop().expect("one id, one uuid"))
+    }
+
+    /// The uuids of `ids`, in their order: each range of `uuids` read once
+    /// while the ids stay in it — one key for 4096 consecutive ids.
+    fn uuids_of_ids_iter(&self, ids: &mut dyn Iterator<Item = u32>) -> Result<Vec<Uuid>> {
+        let mut out = Vec::new();
+        let mut range: Option<(u32, Option<Vec<u8>>)> = None;
+        let dirty = self.uuid_ranges.map(|r| r.borrow());
+        for id in ids {
+            let key = id / UUID_RANGE;
+            if range.as_ref().map(|(k, _)| *k) != Some(key) {
+                let held = dirty.as_ref().and_then(|d| d.get(&key).cloned());
+                let bytes = match held {
+                    Some(b) => Some(b),
+                    None => {
+                        self.count(1)?;
+                        self.t.uuids.get(self.r, &key.to_be_bytes())?.map(<[u8]>::to_vec)
+                    }
+                };
+                range = Some((key, bytes));
+            }
+            let bytes = range.as_ref().and_then(|(_, b)| b.as_deref());
+            let uuid = bytes.and_then(|b| uuid_in_range(b, id));
+            out.push(uuid.with_context(|| format!("dense id {id} names no metarecord"))?);
+        }
+        Ok(out)
     }
 
     /// The metarecords holding a row of `name`, in id order.
@@ -1648,6 +1701,7 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
             &me.live_cache,
             me.generation.load(std::sync::atomic::Ordering::Relaxed),
         )),
+        uuid_ranges: None,
     })
 });
 
@@ -1701,8 +1755,7 @@ impl KvStore {
         let r = self.env.read_txn()?;
         let mut out = Vec::new();
         for id in ids {
-            let uuid = self.t.uuids.get(&r, &id.to_be_bytes())?.context("a dense id of no uuid")?;
-            out.push(uuid_of(uuid));
+            out.push(uuid_at(&self.t, &r, id)?.context("a dense id of no uuid")?);
         }
         Ok(out)
     }
@@ -1750,6 +1803,53 @@ impl KvStore {
 }
 
 impl KvTxn<'_> {
+    /// The uuid of `id` as the transaction has it: the range it changed, else
+    /// the table's.
+    pub(super) fn uuid_now(&self, id: u32) -> Result<Option<Uuid>> {
+        if let Some(range) = self.uuid_ranges.borrow().get(&(id / UUID_RANGE)) {
+            return Ok(uuid_in_range(range, id));
+        }
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        uuid_at(&self.t, &self.txn.borrow(), id)
+    }
+
+    /// Gives `id` to `uuid` in `uuids`: its range changed, put at the commit.
+    pub(super) fn put_uuid(&self, id: u32, uuid: &[u8; 16]) -> Result<()> {
+        anyhow::ensure!(uuid.iter().any(|&b| b != 0), "the nil uuid names no metarecord");
+        let key = id / UUID_RANGE;
+        let mut ranges = self.uuid_ranges.borrow_mut();
+        let range = match ranges.entry(key) {
+            std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                let txn = self.txn.borrow();
+                let stored = self.t.uuids.get(&txn, &key.to_be_bytes())?;
+                let mut range = stored.map(<[u8]>::to_vec).unwrap_or_default();
+                drop(txn);
+                range.resize(UUID_RANGE_BYTES, 0);
+                v.insert(range)
+            }
+        };
+        let at = (id % UUID_RANGE) as usize * 16;
+        range[at..at + 16].copy_from_slice(uuid);
+        Ok(())
+    }
+
+    /// Puts the ranges of `uuids` the transaction changed.
+    fn flush_uuid_ranges(&self) -> Result<()> {
+        let ranges = std::mem::take(&mut *self.uuid_ranges.borrow_mut());
+        let mut w = self.txn.borrow_mut();
+        for (key, range) in ranges {
+            self.t.uuids.put(&mut w, &key.to_be_bytes(), &range)?;
+        }
+        Ok(())
+    }
+
+    /// Forgets the ranges of `uuids` the transaction changed: the table is
+    /// being cleared.
+    pub(super) fn forget_uuid_ranges(&self) {
+        self.uuid_ranges.borrow_mut().clear();
+    }
+
     /// A write transaction is not a store a query can read a snapshot of.
     fn kv_store(&self) -> Option<&KvStore> {
         None
@@ -1784,6 +1884,7 @@ impl KvTxn<'_> {
             universe: Default::default(),
             entries: None,
             live_cache: None,
+            uuid_ranges: Some(&self.uuid_ranges),
         })
     }
 }
@@ -1850,6 +1951,8 @@ pub struct KvTxn<'e> {
     /// encoded and put once, at the commit or when the entry moves on.
     log_chunk: RefCell<Option<entry::HeldChunk>>,
     last_targets_kept: &'e std::sync::Mutex<Option<entry::LastTargets>>,
+    /// The ranges of `uuids` the transaction changed (doc "Store tables").
+    uuid_ranges: UuidRanges,
 }
 
 /// A flag of the store as a write transaction sees it. The flags say what the
@@ -2249,9 +2352,8 @@ impl KvStore {
                 if txn.dense_id(uuid)?.is_none() {
                     let id = u32::try_from(txn.next(State::NextMetarecordId)?)
                         .context("dense ids exhausted")?;
-                    let mut w = txn.txn.borrow_mut();
-                    t.ids.put(&mut w, uuid, &id.to_be_bytes())?;
-                    t.uuids.put(&mut w, &id.to_be_bytes(), uuid)?;
+                    t.ids.put(&mut txn.txn.borrow_mut(), uuid, &id.to_be_bytes())?;
+                    txn.put_uuid(id, uuid)?;
                 }
             }
             let mut w = txn.txn.borrow_mut();
@@ -2487,6 +2589,7 @@ impl<'e> KvTxn<'e> {
             part_lists: &store.part_lists,
             records: RefCell::new(HashMap::new()),
             records_dirty: RefCell::new(Default::default()),
+            uuid_ranges: RefCell::new(HashMap::new()),
             parts: RefCell::new(HashMap::new()),
             writes_listed: TxnFlag::of(&store.writes_pending),
             deletes: TxnFlag::of(&store.deletes),
@@ -2509,6 +2612,7 @@ impl<'e> KvTxn<'e> {
     /// Writes what the transaction still holds in memory, and commits.
     fn finish(self) -> Result<()> {
         self.flush_log_chunk()?;
+        self.flush_uuid_ranges()?;
         metafolder_core::slowlog::timed("commit.records", || self.flush_records())?;
         metafolder_core::slowlog::timed("commit.derived", || self.flush_sets())?;
         let wtxn = self.txn.into_inner();
@@ -2653,6 +2757,7 @@ impl KvTxn<'_> {
                     universe: Default::default(),
                     entries: None,
                     live_cache: None,
+                    uuid_ranges: Some(&self.uuid_ranges),
                 };
                 let Some(meta) = self.t.log_contexts.get(&txn, &be(log_context))? else { break };
                 let meta = dec_log_context(meta)?;

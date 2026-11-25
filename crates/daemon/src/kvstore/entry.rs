@@ -244,6 +244,9 @@ impl Chunk {
         let mut out = Enc::default();
         match &self.ids {
             Some(ids) => {
+                // Records written together are runs of ids: a few bytes.
+                let mut ids = ids.clone();
+                ids.optimize();
                 let mut bytes = Vec::new();
                 ids.serialize_into(&mut bytes).expect("a bitmap into a vector");
                 out.varint(BY_ID + ids.len()).bytes(&bytes);
@@ -544,7 +547,7 @@ impl Read<'_> {
         };
         if let Some(ids) = &chunk.ids {
             if chunk.targets.len() != ids.len() as usize {
-                chunk.targets = ids.iter().map(|id| self.uuid_of_id(id)).collect::<Result<_>>()?;
+                chunk.targets = self.uuids_of_ids_iter(&mut ids.iter())?;
             }
         }
         Ok(chunk)

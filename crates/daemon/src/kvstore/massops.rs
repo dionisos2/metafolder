@@ -66,7 +66,7 @@ impl KvTxn<'_> {
     /// The uuids of dense ids, in the order of the ids.
     pub(super) fn uuids_of_ids(&self, ids: &RoaringBitmap) -> Result<Vec<Uuid>> {
         let txn = self.txn.borrow();
-        self.read_in(&txn, &mut |read: &Read| ids.iter().map(|id| read.uuid_of_id(id)).collect())
+        self.read_in(&txn, &mut |read: &Read| read.uuids_of_ids_iter(&mut ids.iter()))
     }
 
     /// Logs a write to `field` of the records `ids` (live ones) as one entry,
@@ -597,8 +597,8 @@ impl KvTxn<'_> {
         let txn = self.txn.borrow();
         for t in targets {
             let Some(id) = t.id else { return Ok(None) };
-            let named = self.t.uuids.get(&txn, &id.to_be_bytes())?;
-            if named != Some(t.uuid.as_bytes().as_slice()) || self.live_in(&txn, id)? {
+            let named = super::uuid_at(&self.t, &txn, id)?;
+            if named != Some(t.uuid) || self.live_in(&txn, id)? {
                 return Ok(None);
             }
             for row in &t.before {

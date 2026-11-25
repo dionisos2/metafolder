@@ -1304,8 +1304,8 @@ impl Source for KvSource<'_> {
         if !self.counted(1) {
             return None;
         }
-        let r = self.t.uuids.get(&self.r, &id.to_be_bytes()).map(|u| u.map(uuid_of));
-        self.ok(r.map_err(Into::into), None)
+        let r = super::uuid_at(&self.t, &self.r, id);
+        self.ok(r, None)
     }
 
     fn id_count(&self) -> u64 {
@@ -1578,7 +1578,7 @@ impl Source for KvSource<'_> {
             let mut out = Vec::new();
             for id in &candidates {
                 self.read_keys(1)?;
-                let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
+                let Some(uuid) = super::uuid_at(&self.t, &self.r, id)? else { continue };
                 // The record's rows: one key.
                 let mut positions = Vec::new();
                 let rows =
@@ -1594,7 +1594,7 @@ impl Source for KvSource<'_> {
                     }
                 }
                 if positions.iter().any(|(_, name)| keep(name)) {
-                    out.push((uuid_of(uuid), positions));
+                    out.push((uuid, positions));
                 }
             }
             Ok(out)

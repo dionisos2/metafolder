@@ -289,32 +289,38 @@ fn a_mass_write_by_id_reads_nothing_per_record() {
     }
 }
 
-/// Once folded, the entry names its targets by uuid: reading its operations
-/// reads its chunk, not a uuid per target.
+/// Once folded, the entry names its targets by uuid: its chunk holds 16
+/// bytes a target, where it held a bitmap of their dense ids.
 #[test]
 fn the_fold_names_an_entry_s_targets_by_uuid() {
-    let (mut store, _dir) = open();
+    let dir = TempDir::new("kv-mass-log-fold");
+    let mut store = KvStore::open_unsynced(dir.path()).unwrap();
     let uuids = records(&mut store, 3000);
     let ids = store.dense_ids(&uuids).unwrap();
     store.fold().unwrap();
     let head = store.head().unwrap().unwrap();
     write(&mut store, |w| w.mass_add_ids("tag", s("jazz"), &ids).unwrap());
-    let read = |store: &KvStore| {
-        let before = store.reads();
-        let ops = store.ops_after(head).unwrap();
-        assert_eq!(ops.len(), 3000);
-        assert_eq!(ops.iter().map(|o| o.entity_uuid).collect::<BTreeSet<_>>().len(), 3000);
-        (ops, store.reads() - before)
+    let named = |store: &KvStore| -> Vec<(i64, Uuid)> {
+        store.ops_after(head).unwrap().into_iter().map(|o| (o.id, o.entity_uuid)).collect()
     };
-    let (unfolded, by_id) = read(&store);
+    let unfolded = named(&store);
+    assert_eq!(unfolded.iter().map(|(_, u)| *u).collect::<BTreeSet<_>>().len(), 3000);
+    // The entry's first chunk: its first op id, chunk 0 (doc "Log storage").
+    let first = unfolded[0].0;
+    let largest_chunk = |dir: &TempDir| -> usize {
+        let env = common::kv::raw_env(dir.path());
+        let table = common::kv::open_raw(&env, "log_targets");
+        let r = env.read_txn().unwrap();
+        let key = [&first.to_be_bytes()[..], &0u32.to_be_bytes()].concat();
+        table.get(&r, &key).unwrap().unwrap().len()
+    };
+    drop(store);
+    assert!(largest_chunk(&dir) < 1000, "by dense id: a bitmap of a run");
+    let mut store = KvStore::open_unsynced(dir.path()).unwrap();
     store.fold().unwrap();
-    let (folded, by_uuid) = read(&store);
-    let named = |ops: &[metafolder_daemon::log::OpRow]| -> Vec<(i64, Uuid)> {
-        ops.iter().map(|o| (o.id, o.entity_uuid)).collect()
-    };
-    assert_eq!(named(&unfolded), named(&folded), "the same operations on the same records");
-    assert!(by_id >= 3000, "before the fold, a uuid read per target: {by_id}");
-    assert!(by_uuid < 50, "after it, the chunk alone: {by_uuid}");
+    assert_eq!(named(&store), unfolded, "the same operations on the same records");
+    drop(store);
+    assert!(largest_chunk(&dir) >= 16 * 3000, "by uuid");
 }
 
 /// A write to one record that only differs from a write in bulk of the same
