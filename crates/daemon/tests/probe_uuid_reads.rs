@@ -151,6 +151,96 @@ fn probe_uuid_reads() {
         }
         println!("PROBE {line}");
     }
+    // One uuid alone, cold: the median of 15 ids, each after the store went
+    // cold; then warm, a million random ids.
+    let r4096 = 2 + RANGES.iter().position(|&n| n == 4096).unwrap();
+    let mut cold_get = Vec::new();
+    let mut cold_range = Vec::new();
+    for k in 0..15u32 {
+        let i = (k * 26_777 + 11) % RECORDS;
+        let (e, dbs) = cold(&dir, env, &names);
+        env = e;
+        let t = Instant::now();
+        {
+            let r = env.read_txn().unwrap();
+            assert_eq!(dbs[0].get(&r, &i.to_be_bytes()).unwrap().unwrap(), uuid(i));
+        }
+        cold_get.push(t.elapsed().as_secs_f64() * 1e3);
+        let (e, dbs) = cold(&dir, env, &names);
+        env = e;
+        let t = Instant::now();
+        {
+            let r = env.read_txn().unwrap();
+            let v = dbs[r4096].get(&r, &(i / 4096).to_be_bytes()).unwrap().unwrap();
+            let at = ((i % 4096) * 16) as usize;
+            assert_eq!(&v[at..at + 16], &uuid(i));
+        }
+        cold_range.push(t.elapsed().as_secs_f64() * 1e3);
+    }
+    let median = |mut v: Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    println!(
+        "PROBE one uuid cold (median of 15): get {:.2} ms  r4096 {:.2} ms",
+        median(cold_get),
+        median(cold_range)
+    );
+    let (e, dbs) = cold(&dir, env, &names);
+    env = e;
+    let r = env.read_txn().unwrap();
+    let ids: Vec<u32> =
+        (0..1_000_000u32).map(|k| k.wrapping_mul(2_654_435_761) % RECORDS).collect();
+    for db in [dbs[0], dbs[r4096]] {
+        // Warmed by a first pass.
+        for &i in &ids[..RECORDS as usize / 2] {
+            std::hint::black_box(db.get(&r, &i.to_be_bytes()).ok());
+            std::hint::black_box(db.get(&r, &(i / 4096).to_be_bytes()).ok());
+        }
+    }
+    let t = Instant::now();
+    for &i in &ids {
+        std::hint::black_box(dbs[0].get(&r, &i.to_be_bytes()).unwrap());
+    }
+    let warm_get = t.elapsed().as_secs_f64() * 1e9 / ids.len() as f64;
+    let t = Instant::now();
+    for &i in &ids {
+        let v = dbs[r4096].get(&r, &(i / 4096).to_be_bytes()).unwrap().unwrap();
+        let at = ((i % 4096) * 16) as usize;
+        std::hint::black_box(&v[at..at + 16]);
+    }
+    let warm_range = t.elapsed().as_secs_f64() * 1e9 / ids.len() as f64;
+    println!("PROBE one uuid warm (1M random): get {warm_get:.0} ns  r4096 {warm_range:.0} ns");
+    drop(r);
+    // A creation alone, committed with its fsync: its uuid put under its id,
+    // or its range rewritten. The median of 15, the store warm.
+    let mut by_get = Vec::new();
+    let mut by_range = Vec::new();
+    for k in 0..15u32 {
+        let i = (k * 26_777 + 11) % RECORDS;
+        let row = [&i.to_be_bytes()[..], b"rows"].concat();
+        let t = Instant::now();
+        let mut w = env.write_txn().unwrap();
+        dbs[0].put(&mut w, &i.to_be_bytes(), &uuid(i)).unwrap();
+        dbs[1].put(&mut w, &row, &[8u8; 300]).unwrap();
+        w.commit().unwrap();
+        by_get.push(t.elapsed().as_secs_f64() * 1e3);
+        let t = Instant::now();
+        let mut w = env.write_txn().unwrap();
+        let key = (i / 4096).to_be_bytes();
+        let mut v = dbs[r4096].get(&w, &key).unwrap().unwrap().to_vec();
+        let at = ((i % 4096) * 16) as usize;
+        v[at..at + 16].copy_from_slice(&uuid(i));
+        dbs[r4096].put(&mut w, &key, &v).unwrap();
+        dbs[1].put(&mut w, &row, &[9u8; 300]).unwrap();
+        w.commit().unwrap();
+        by_range.push(t.elapsed().as_secs_f64() * 1e3);
+    }
+    println!(
+        "PROBE one creation committed (median of 15): get table {:.2} ms  r4096 {:.2} ms",
+        median(by_get),
+        median(by_range)
+    );
     drop(env);
     std::fs::remove_dir_all(&dir).unwrap();
 }
