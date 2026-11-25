@@ -381,11 +381,25 @@ fn script_lists_the_scripts_and_copies_a_template() {
 
 /// `mf repo wear` says what a fold would write in and what a reindex would win
 /// back (doc "Storage wear"); `--json` prints the daemon's answer as it is.
+/// Sets the repository's mass-write threshold of every kind to `n` in its
+/// `config.json`, and loads it again for it to apply (doc "Mass writes in
+/// the store"): the shipped one is far above what a test writes.
+fn with_mass_threshold(repo: &str, root: &TempDir, n: u64) {
+    assert_ok(&mf(&["-u", repo, "repo", "unload"]));
+    let path = root.join(".metafolder/config.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["mass_write_threshold"] = serde_json::json!(n);
+    std::fs::write(&path, config.to_string()).unwrap();
+    assert_ok(&mf(&["repo", "load", root.to_str().unwrap()]));
+}
+
 #[test]
 fn test_repo_wear_says_what_is_pending_and_what_is_dead() {
-    let (repo, _root) = init_repo("wear");
-    // Past the mass-write threshold (20 shipped): a write to fewer records
-    // is written into them and leaves nothing pending.
+    let (repo, root) = init_repo("wear");
+    // Past the mass-write threshold, set low for the test: a write to fewer
+    // records is written into them and leaves nothing pending.
+    with_mass_threshold(&repo, &root, 20);
     for _ in 0..21 {
         create_metarecord(&repo, &["note:string=x"]);
     }
@@ -418,9 +432,10 @@ fn test_repo_wear_says_what_is_pending_and_what_is_dead() {
 /// pending bytes afterwards, and a second fold finds nothing.
 #[test]
 fn test_repo_fold_folds_what_is_pending() {
-    let (repo, _root) = init_repo("fold");
-    // Past the mass-write threshold (20 shipped): a write to fewer records
-    // is written into them and leaves nothing pending.
+    let (repo, root) = init_repo("fold");
+    // Past the mass-write threshold, set low for the test: a write to fewer
+    // records is written into them and leaves nothing pending.
+    with_mass_threshold(&repo, &root, 20);
     for _ in 0..21 {
         create_metarecord(&repo, &["note:string=x"]);
     }

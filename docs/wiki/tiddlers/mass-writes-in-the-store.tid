@@ -15,7 +15,7 @@ not: that value has to be known, so every record is read first.
 A write to many records goes in bulk only when it would change more records than the
 repository's ''mass-write threshold'' of its kind — an add, a removal, a set (an unset
 too) or a deletion each have theirs: `[settings] mass-write-threshold-add`, `-remove`,
-`-set` and `-delete` in the daemon's configuration (20 each shipped), overridden by
+`-set` and `-delete` in the daemon's configuration (1023 each shipped, 511 for a deletion: what a calibration found on an SSD, November 2026 — [[Calibrating the mass-write thresholds]]), overridden by
 `mass_write_threshold` in the repository's `config.json` ([[Repository layout on disk]]). A replace of a value over many records is a removal and an add, a rename
 adds and an unset, each held to its own. The records it would
 change are known before anything is written, from the postings and the counters: an

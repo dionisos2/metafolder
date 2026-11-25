@@ -475,7 +475,7 @@ mod tests {
         assert_eq!(s.orphan_cascade_limit, 10_000);
         assert_eq!(
             s.mass_write_thresholds(),
-            crate::log::MassThresholds { add: 20, remove: 20, set: 20, delete: 20 }
+            crate::log::MassThresholds { add: 1023, remove: 1023, set: 1023, delete: 511 }
         );
         assert_eq!(s.watchd_socket, PathBuf::from("/run/metafolder/watchd.sock"));
         assert_eq!(s.slow_operation_threshold_ms, 1500);

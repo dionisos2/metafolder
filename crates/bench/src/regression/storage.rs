@@ -217,6 +217,12 @@ fn build(dir: &Path, shape: &Shape, name: &str) -> Result<Vec<Uuid>> {
     crate::seed_repo_config(dir)?;
     let opened = repo::init_repository(dir, None, Some(name), false)
         .with_context(|| format!("init a repository at {}", dir.display()))?;
+    // The series measure a mass write of SMALL records in bulk, as they did
+    // under the threshold of 20 shipped until November 2026: the repository
+    // keeps it, whatever the daemon's (doc "Mass writes in the store").
+    let mut config = metafolder_daemon::config::RepoConfig::read(&opened.metafolder_dir)?;
+    config.set_mass_write_thresholds(metafolder_daemon::log::MassThresholds::all(20));
+    config.write(&opened.metafolder_dir)?;
     let store = opened.metafolder_dir.join(repo::INTERNAL_DIR).join(repo::KV_DIR);
     drop(opened.conn);
     let mut conn = KvStore::open_unsynced(&store)?;
