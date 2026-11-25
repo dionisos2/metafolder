@@ -86,6 +86,14 @@ export async function mount(root, metafolder) {
   /** @type {string|null} uuid of the folder last recorded in the
    *  recently-viewed list, so a re-listing of it is not another view */
   let lastViewedDir = null;
+  // The first listing is the panel coming up where it was left, or at the
+  // root — not the user going into a folder: it is not a view.
+  let listedOnce = false;
+  // Whether the entry under the cursor was highlighted by the panel itself
+  // (the one its location names, the folder it came back up from) rather than
+  // chosen by the user: its selection is published marked `auto`, which is not
+  // a view (doc "Why recently viewed is kept by the GUI").
+  let cursorAuto = false;
   // True when this panel is a value picker resolving to a folder path (doc
   // "Value picker", e.g. the repos panel's "Browse…"): the right-click menu then
   // offers "Pick this folder", so confirming does not depend on knowing the
@@ -377,14 +385,16 @@ export async function mount(root, metafolder) {
     // "Setting ignore patterns").
     await writeLocation(mf, { dir, cursor: null }, ['dir', 'cursor']);
     const highlight = cursor === undefined ? childOnTheWay(dir, left) : cursor;
-    if (highlight !== null) await selectByName(mf, highlight);
+    if (highlight !== null) await selectByName(mf, highlight, { auto: true });
     const dirUuid = await enrichSelfParent();
     // Going into a folder is a view of it (doc "Frecent folders"), recorded
-    // once per arrival: a refresh or a mutation listing it again is not one.
+    // once per arrival: a refresh or a mutation listing it again is not one,
+    // and neither is the first listing, where the panel comes up.
     if (repo && dirUuid && dirUuid !== lastViewedDir) {
       lastViewedDir = dirUuid;
-      void metafolder.recent.touch(repo, dirUuid);
+      if (listedOnce) void metafolder.recent.touch(repo, dirUuid);
     }
+    listedOnce = true;
     await enrichChildren(dirUuid, mf);
     await refreshEligibility();
     await refreshActivity();
@@ -577,7 +587,10 @@ export async function mount(root, metafolder) {
       const item = listing[cursorIndex];
       if (!item) return;
       const uuid = trackedPaths.get(item.path);
-      await mf.workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
+      await mf.workspace.set(
+        'selected_metarecord',
+        uuid ? (cursorAuto ? { uuid, repo, auto: true } : { uuid, repo }) : null,
+      );
       await mf.workspace.set('selected_paths', [item.path]);
     },
   });
@@ -589,11 +602,14 @@ export async function mount(root, metafolder) {
       !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
   }
 
-  /** @param {MetafolderApi} mf @param {number} index */
-  async function select(mf, index) {
+  /** @param {MetafolderApi} mf @param {number} index
+   *  @param {{auto?: boolean}} [options] `auto`: the panel highlights the
+   *  entry itself, not the user */
+  async function select(mf, index, { auto = false } = {}) {
     const next = Math.max(0, Math.min(index, listing.length - 1));
     if (next !== cursorIndex && !mf.workspace.mayMoveSelection()) return;
     cursorIndex = next;
+    cursorAuto = auto;
     // Keep the cursor inside the rendered window (jumping to the last entry
     // expands it so the row exists in the DOM to scroll to). Tracked status is
     // already loaded for the whole directory, so revealing rows needs no fetch.
@@ -1051,7 +1067,7 @@ export async function mount(root, metafolder) {
       await metafolder.workspace.set(CONSTRAIN_VAR, false);
     }
     if (currentDir === null || !samePath(dir, currentDir)) await open(metafolder, dir, cursor);
-    else if (cursor) await selectByName(metafolder, cursor);
+    else if (cursor) await selectByName(metafolder, cursor, { auto: true });
   }
 
   async function followLocationVariables() {
@@ -1102,10 +1118,11 @@ export async function mount(root, metafolder) {
   }
 
   /** Highlights the entry named `name` in the current listing, if present.
-   *  @param {MetafolderApi} mf @param {string} name */
-  async function selectByName(mf, name) {
+   *  @param {MetafolderApi} mf @param {string} name
+   *  @param {{auto?: boolean}} [options] as `select` */
+  async function selectByName(mf, name, options) {
     const index = listing.findIndex((item) => item.name === name);
-    if (index >= 0) await select(mf, index);
+    if (index >= 0) await select(mf, index, options);
   }
 
   // ── Filesystem operations (doc "file-manager panel") ─────────────
@@ -1141,8 +1158,9 @@ export async function mount(root, metafolder) {
   async function refresh(mf) {
     if (currentDir === null) return;
     const keep = cursorIndex;
+    const keepAuto = cursorAuto;
     await open(mf, currentDir);
-    if (keep >= 0) await select(mf, keep);
+    if (keep >= 0) await select(mf, keep, { auto: keepAuto });
   }
 
   // Reveal the next window of rows as the listing is scrolled to its end — the

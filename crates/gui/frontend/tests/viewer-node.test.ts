@@ -275,3 +275,71 @@ describe('viewer panel — the children of a node', () => {
     expect(names()).toEqual([]);
   });
 });
+
+// A selection a panel made by itself — the first row of a fresh result — is
+// marked `auto`: shown, but not a view (doc "Why recently viewed is kept by the
+// GUI"); the user choosing it afterwards is one.
+describe('viewer panel — what counts as a view', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () => new TextEncoder().encode('a text file\n').buffer,
+      })),
+    );
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function mounted(initial: Record<string, unknown>) {
+    const root = shadowRoot();
+    const s = stub(initial);
+    const mod = await import('../../default-config/panel-types/viewer/main.js');
+    await mod.mount(root, s.api as never);
+    await vi.advanceTimersByTimeAsync(0);
+    return { ...s, viewer: root.getElementById('viewer')! };
+  }
+
+  test('a file selected by itself is shown, not counted', async () => {
+    const { api, viewer } = await mounted({
+      selected_paths: ['/repo/notes.txt'],
+      selected_metarecord: { uuid: 'file', repo: 'r', auto: true },
+    });
+    expect(viewer.querySelector('pre')?.textContent).toContain('a text file');
+    expect(api.recent.touch).not.toHaveBeenCalled();
+  });
+
+  test('the user choosing it afterwards counts it', async () => {
+    const { api, write } = await mounted({
+      selected_paths: ['/repo/notes.txt'],
+      selected_metarecord: { uuid: 'file', repo: 'r', auto: true },
+    });
+    write([
+      ['selected_metarecord', { uuid: 'file', repo: 'r' }],
+      ['selected_paths', ['/repo/notes.txt']],
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.recent.touch).toHaveBeenCalledTimes(1);
+    expect(api.recent.touch).toHaveBeenCalledWith('r', 'file');
+  });
+
+  test('the same metarecord chosen alone, its file kept, counts it too', async () => {
+    const { api, write } = await mounted({
+      selected_paths: ['/repo/notes.txt'],
+      selected_metarecord: { uuid: 'file', repo: 'r', auto: true },
+    });
+    write([['selected_metarecord', { uuid: 'file', repo: 'r' }]]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.recent.touch).toHaveBeenCalledWith('r', 'file');
+  });
+
+  test('a node selected by itself is not counted either', async () => {
+    const { api } = await mounted({ selected_metarecord: { uuid: 'music', repo: 'r', auto: true } });
+    expect(api.recent.touch).not.toHaveBeenCalled();
+  });
+});

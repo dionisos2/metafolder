@@ -278,3 +278,36 @@ describe('a move refused to keep an edit (doc "Edits in progress")', () => {
     expect(panel.cursorRow()).toBe(row + 1);
   });
 });
+
+// The row a fresh result selects by itself is not the user's choice: it is
+// published marked `auto`, which the panels counting views skip (doc "Why
+// recently viewed is kept by the GUI"); a move of the cursor is the user's.
+describe('the selection a result makes by itself', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('[]', { status: 200 })),
+    );
+    document.body.replaceChildren();
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+  });
+
+  test('is published marked auto', async () => {
+    const p = await mountPanel(1);
+    expect(p.store.get('selected_metarecord')).toEqual({ uuid: 'm1', repo: 'r', auto: true });
+  });
+
+  test('a move of the cursor publishes the row unmarked', async () => {
+    const p = await mountPanel(1);
+    await p.next();
+    expect(p.store.get('selected_metarecord')).toEqual({ uuid: 'm2', repo: 'r' });
+  });
+
+  test('selecting the first row again publishes it unmarked', async () => {
+    const p = await mountPanel(1);
+    const functions = provided(p.provide);
+    await functions.select!(functions.index!());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(p.store.get('selected_metarecord')).toEqual({ uuid: 'm1', repo: 'r' });
+  });
+});

@@ -2,7 +2,7 @@
 // going into a folder is a view of that folder's metarecord, recorded in the
 // repository's recently-viewed list like a view in the detail panel — once per
 // arrival, not again when the same folder is listed again (a refresh, a
-// mutation, the change feed).
+// mutation, the change feed), and not the first listing, where the panel comes up.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -151,16 +151,18 @@ describe('file-manager records the folders it goes into', () => {
     Element.prototype.scrollIntoView = () => {};
   });
 
-  test('the folder shown on mount is recorded', async () => {
+  // The first listing is the panel coming up, not the user going anywhere
+  // (doc "Why recently viewed is kept by the GUI").
+  test('the folder shown on mount is not recorded', async () => {
     const { api } = await mount('r1');
-    expect(api.recent.touch.mock.calls).toEqual([['r1', 'diruuid']]);
+    expect(api.recent.touch).not.toHaveBeenCalled();
   });
 
-  test('a refresh of the same folder records nothing more', async () => {
+  test('a refresh of the same folder records nothing either', async () => {
     const { api } = await mount('r1');
     await provided(api).refresh();
     await new Promise((r) => setTimeout(r, 0));
-    expect(api.recent.touch.mock.calls).toEqual([['r1', 'diruuid']]);
+    expect(api.recent.touch).not.toHaveBeenCalled();
   });
 
   test('going into another folder records it', async () => {

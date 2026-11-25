@@ -21,6 +21,19 @@ the front rather than adding one. `crates/gui/src/recent.rs` holds it, behind
 show changes, and not when the same one is reloaded; the [[file-manager panel]] when it
 goes into another folder.
 
+!! Only what the user chose is a view
+
+A view is the user choosing a metarecord — with the mouse, a key, a command — and not
+a panel selecting one by itself. A fresh result in the [[metarecord-list panel]] selects
+its first row, so that the detail beside it has something to show, and the
+[[file-manager panel]] highlights an entry when it arrives in a folder (the one its
+location names, the folder it came back up from): counted, each opening of a repository
+raised the score of whatever came first. Such a selection is published marked `auto`,
+`{uuid, repo, auto: true}` ([[Workspace variables]]): the detail and the viewer show it,
+but do not `touch`. The user choosing it afterwards — a click on that row, Enter — publishes
+it unmarked, and that is the view. Likewise the file manager's first listing, where the
+panel comes up, is not a visit of the folder; going into one afterwards is.
+
 !! A time and a rank
 
 Each line carries when the metarecord was last viewed and a ''rank'': one per view,

@@ -127,7 +127,7 @@ export function backTarget(local, selectedPath) {
 
 /**
  * The metarecord the selection points at, as metarecord-list publishes it.
- * @typedef {{uuid: string, repo: string}} Selected
+ * @typedef {{uuid: string, repo: string, auto?: boolean}} Selected
  *
  * Position tracking of the mounted <video>: `stored` mirrors the field's value
  * so a redundant write can be skipped.
@@ -1358,9 +1358,12 @@ export async function mount(root, metafolder) {
 
   // Record the view in the repo's recently-viewed list (GUI-side, no daemon
   // write) when the selection points at a tracked metarecord — only on an
-  // actual change, so re-selecting the same file does not churn the list.
+  // actual change, so re-selecting the same file does not churn the list, and
+  // only when the user chose it: a selection marked `auto`, which a panel made
+  // by itself, is shown but not counted (doc "Why recently viewed is kept by
+  // the GUI").
   function touchRecent() {
-    if (selected?.uuid && selected.uuid !== lastViewedUuid) {
+    if (selected?.uuid && !selected.auto && selected.uuid !== lastViewedUuid) {
       lastViewedUuid = selected.uuid;
       void metafolder.recent.touch(selected.repo, selected.uuid);
     }
@@ -1372,6 +1375,14 @@ export async function mount(root, metafolder) {
   // the node shown follows the selection.
   /** @param {unknown} value the `selected_metarecord` workspace variable */
   function followNode(value) {
+    const next = /** @type {Selected|null} */ (value ?? null);
+    // The metarecord shown, chosen again by the user after a panel had
+    // selected it by itself: nothing to re-target, but now a view.
+    if (selected?.auto && next && !next.auto && next.uuid === selected.uuid && next.repo === selected.repo) {
+      selected = next;
+      touchRecent();
+      return;
+    }
     if (paths.length > 0 || localPath !== null || holdingChanges()) return;
     // A slideshow moves to a file, its paths written next: showing the
     // metarecord meanwhile would tell it to skip what has no file.

@@ -17,7 +17,7 @@ live. What belongs to no workspace in particular — the file clipboard — is i
 
 |!Key |!Value |!Meaning |
 |`active_repo` |uuid or `null` |the workspace's repository; read-only, fixed when the workspace takes one ([[Workspaces]]) |
-|`selected_metarecord` |`{uuid, repo}` or `null` |the highlighted metarecord; `null` for an untracked file |
+|`selected_metarecord` |`{uuid, repo}` or `null` |the highlighted metarecord; `null` for an untracked file. `auto: true` besides when a panel selected it by itself, not the user: it is then not a view ([[Why recently viewed is kept by the GUI]]) |
 |`selected_paths` |list of absolute paths |the highlighted file — at most one entry, one position of the metarecord's `mfr_path` (a list, as scripts read it) |
 |`selected_metarecords` |list of uuids |the ''checked'' metarecords, for a bulk operation ([[Cross-panel selection]]) |
 |`selected_untracked_paths` |list of absolute paths |the ''checked'' files without a metarecord, checked in the file manager: the file operations take them, the field operations cannot ([[Cross-panel selection]]) |

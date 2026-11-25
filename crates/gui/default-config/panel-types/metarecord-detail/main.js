@@ -15,7 +15,7 @@ import { createFieldCatalog, createValues } from './values.js';
 
 /**
  * The selected metarecord's identity, as the other panels publish it.
- * @typedef {{uuid: string, repo: string}} Selection
+ * @typedef {{uuid: string, repo: string, auto?: boolean}} Selection
  *
  * A metarecord with its fields, as `GET …/metarecords/:uuid` returns it.
  * @typedef {{uuid: string, version: number, fields: Field[]}} Loaded
@@ -572,8 +572,11 @@ export async function mount(root, metafolder) {
     }
     // Record the view in the repo's recently-viewed list (GUI-side, no daemon
     // write) — only when the displayed record actually changed, so a
-    // `metarecords:dirty` reload of the same record does not churn the list.
-    if (metarecord && metarecord.uuid !== lastViewedUuid) {
+    // `metarecords:dirty` reload of the same record does not churn the list,
+    // and only when the user chose it: a selection marked `auto`, which a
+    // panel made by itself, is shown but not counted (doc "Why recently
+    // viewed is kept by the GUI").
+    if (metarecord && !selection.auto && metarecord.uuid !== lastViewedUuid) {
       lastViewedUuid = metarecord.uuid;
       void metafolder.recent.touch(selection.repo, metarecord.uuid);
     }

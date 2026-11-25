@@ -396,7 +396,7 @@ export async function mount(root, metafolder) {
           cursorIndex = keepIndex;
         } else if (metarecords.length > 0) {
           render();
-          await setCursor(mf, 0);
+          await setCursor(mf, 0, { auto: true });
           return;
         } else {
           cursorIndex = -1;
@@ -564,6 +564,12 @@ export async function mount(root, metafolder) {
   /** @type {Map<string, number>} */
   const pendingEchoes = new Map();
 
+  // Whether the row under the cursor was put there by the list itself — the
+  // first row of a fresh result — rather than by the user. Its selection is
+  // published marked `auto`, which is not a view (doc "Why recently viewed is
+  // kept by the GUI"); the next move of the cursor, the user's, clears it.
+  let cursorAuto = false;
+
   // The table rows and the grid cards are index-aligned with `metarecords`:
   // moving the cursor retargets the highlight, and the selection is published
   // coalesced (doc "Moving the cursor").
@@ -573,7 +579,10 @@ export async function mount(root, metafolder) {
       const metarecord = metarecords[cursorIndex];
       if (!metarecord) return;
       pendingEchoes.set(metarecord.uuid, (pendingEchoes.get(metarecord.uuid) ?? 0) + 1);
-      await mf.workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
+      await mf.workspace.set(
+        'selected_metarecord',
+        cursorAuto ? { uuid: metarecord.uuid, repo, auto: true } : { uuid: metarecord.uuid, repo },
+      );
       await mf.workspace.set('selected_paths', pathsOf(metarecord));
     },
   });
@@ -582,11 +591,14 @@ export async function mount(root, metafolder) {
   // command's run (doc "Command transactions"), or the panel's own
   // (`metafolder`) for a click, a key in a zone, a listener.
 
-  /** @param {MetafolderApi} mf @param {number} index */
-  async function setCursor(mf, index) {
+  /** @param {MetafolderApi} mf @param {number} index
+   *  @param {{auto?: boolean}} [options] `auto`: the list places the cursor
+   *  itself, not the user */
+  async function setCursor(mf, index, { auto = false } = {}) {
     const next = Math.max(0, Math.min(index, metarecords.length - 1));
     if (next !== cursorIndex && !mf.workspace.mayMoveSelection()) return;
     cursorIndex = next;
+    cursorAuto = auto;
     if (!metarecords[cursorIndex]) {
       render();
       return;
