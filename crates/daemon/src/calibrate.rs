@@ -472,4 +472,75 @@ mod tests {
             thresholds(&[r(Kind::Add, 1), r(Kind::Remove, 2), r(Kind::Set, 3), r(Kind::Delete, 4)]);
         assert_eq!(t, MassThresholds { add: 1, remove: 2, set: 3, delete: 4 });
     }
+
+    /// Where a cold write's time goes, phase by phase: not a check, a probe
+    /// run by hand (`CALIBRATE_PROBE_RECORDS`, default 400 000).
+    #[test]
+    #[ignore]
+    fn probe_the_phases_of_a_cold_write() {
+        let records: u64 = std::env::var("CALIBRATE_PROBE_RECORDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(400_000);
+        let cancel = || false;
+        let reporter = Reporter::new(&|_, _, _| {}, &cancel);
+        let path = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("calprobe-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        let mut scratch = Scratch { store: Some(KvStore::open(&path).unwrap()), dir: path };
+        fill(scratch.store(), records, &reporter).unwrap();
+        let files: Vec<u32> =
+            crate::store::Rows::holder_ids(&*scratch.store(), "mime").unwrap().iter().collect();
+        let mut picker = Picker { files, calls: 0 };
+        let mut round = 0;
+        for kind in KINDS {
+            for n in [512u64, 1024, 2048, 4096] {
+                for (mode, threshold) in [("each", u64::MAX), ("mass", 0)] {
+                    round += 1;
+                    let ids = picker.take(n, kind == Kind::Delete).unwrap();
+                    let value = Value::String(format!("calibrate{round}"));
+                    if kind == Kind::Remove {
+                        let store = scratch.store();
+                        let mut w = Writer::begin_with_retention(store, None, KEEP_NOTHING_TRIMMED)
+                            .unwrap();
+                        w.mass_add_ids("tag", value.clone(), &ids).unwrap();
+                        w.commit().unwrap();
+                        store.fold().unwrap();
+                    }
+                    scratch.go_cold().unwrap();
+                    let store = scratch.store();
+                    let ((), entry) = metafolder_core::slowlog::capture("probe", || {
+                        let mut w = Writer::begin_with_retention(store, None, KEEP_NOTHING_TRIMMED)
+                            .unwrap();
+                        w.set_mass_threshold(threshold);
+                        match kind {
+                            Kind::Add => w.mass_add_ids("tag", value, &ids).map(drop),
+                            Kind::Remove => w.mass_remove_ids("tag", &value, &ids).map(drop),
+                            Kind::Set => w
+                                .mass_set_ids("rank", vec![Value::Int(round as i64)], &ids)
+                                .map(drop),
+                            Kind::Delete => w.mass_delete_ids(&ids).map(drop),
+                        }
+                        .unwrap();
+                        metafolder_core::slowlog::timed("commit", || w.commit()).unwrap();
+                    });
+                    let phases: Vec<String> = entry
+                        .phases
+                        .iter()
+                        .filter(|p| p.ms > 0 || p.name.starts_with("mass."))
+                        .map(|p| format!("{}={}ms/{}k", p.name, p.ms, p.reads))
+                        .collect();
+                    println!(
+                        "PROBE {} {n} {mode}: {} ms, {} reads | {}",
+                        kind.name(),
+                        entry.ms,
+                        entry.reads,
+                        phases.join(" ")
+                    );
+                    store.fold().unwrap();
+                }
+            }
+        }
+    }
 }

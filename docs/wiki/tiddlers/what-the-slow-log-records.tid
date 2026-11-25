@@ -62,6 +62,14 @@ synonym:
 |`commit.log` |inside `commit`: writing the operation log's last rows and trimming it to its retention |
 |`commit.derived` |inside `commit`: writing back the derived index sets the write changed |
 |`commit.store` |inside `commit`: the store's own commit — dirty pages, the free-page list, the `fsync`; for a repository held in memory, the disk's commit then the copy's |
+|`mass.would_change` |a write to many records: which of them it would change, from the postings — what decides between one at a time and in bulk ([[Mass writes in the store]]) |
+|`mass.universe` |a write in bulk: reading the live metarecords, which its records are sifted through (`mass.universe.write`: a deletion writing them back) |
+|`mass.holders` |a write in bulk: which records hold the value, or the field's values a set replaces |
+|`mass.counts` |a write in bulk: the type counts it changes; for a deletion, summed over the counters of every field |
+|`mass.children` |a deletion in bulk: whether a folder it deletes keeps a child |
+|`mass.pending` |a write in bulk: its pending writes and pending index writes |
+|`mass.uuids` |a write in bulk: the uuids of its records, which its log entry names — one key read per record ([[Log storage]]) |
+|`mass.entry` |a write in bulk: writing its log entry |
 |`rules.load` |re-reading the watch-rule index after HEAD moved |
 |`disk.stat` |a watch check's stat of each path, before it takes the store handle |
 |`explain` |a watch check's verdicts, under the store handle |

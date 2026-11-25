@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use metafolder_core::metarecord::Value;
+use metafolder_core::slowlog::{phase, timed};
 use roaring::RoaringBitmap;
 use uuid::Uuid;
 
@@ -93,9 +94,10 @@ impl KvTxn<'_> {
         // Nothing may name a deleted record: what it left in the indexes
         // would come back to life with it (doc "Deleting a metarecord in the
         // store").
-        let universe = self.read_chunked(Bitmaps::LiveMetarecords, &[])?;
+        let universe = timed("mass.universe", || self.read_chunked(Bitmaps::LiveMetarecords, &[]))?;
         let ids = &(ids & &universe);
         let mut before = Vec::new();
+        let holders = phase("mass.holders");
         let changed = match kind {
             Kind::Add | Kind::Remove => {
                 let value = &values[0];
@@ -113,8 +115,11 @@ impl KvTxn<'_> {
                 if reverts.is_some() && changed != *ids {
                     return Ok(None);
                 }
+                drop(holders);
                 let n = changed.len() as i64;
-                self.count_type(field, value, if kind == Kind::Add { n } else { -n })?;
+                timed("mass.counts", || {
+                    self.count_type(field, value, if kind == Kind::Add { n } else { -n })
+                })?;
                 changed
             }
             Kind::Replace => {
@@ -126,7 +131,8 @@ impl KvTxn<'_> {
                 };
                 if !changed.is_empty() {
                     before = self.values_held(field, &changed)?;
-                    self.count_rows_replaced(field, values, &changed)?;
+                    drop(holders);
+                    timed("mass.counts", || self.count_rows_replaced(field, values, &changed))?;
                 }
                 changed
             }
@@ -134,7 +140,7 @@ impl KvTxn<'_> {
         if changed.is_empty() {
             return Ok(Some(MassApplied { changed, last_op: 0, touches_watch: false }));
         }
-        self.mass_end_ids(field, kind, values.to_vec(), changed.clone())?;
+        timed("mass.pending", || self.mass_end_ids(field, kind, values.to_vec(), changed.clone()))?;
         let (effect, params) = match kind {
             Kind::Add => (Effect::Add, Params::Value(field.to_string(), values[0].clone())),
             Kind::Remove => (Effect::Remove, Params::Value(field.to_string(), values[0].clone())),
@@ -164,11 +170,13 @@ impl KvTxn<'_> {
                 }
             }
         }
-        let targets = self.uuids_of_ids(&changed)?;
+        let targets = timed("mass.uuids", || self.uuids_of_ids(&changed))?;
+        let entry = phase("mass.entry");
         let chunks = entry::chunks(&targets, false, |k| {
             held.get_mut(k).map(std::mem::take).unwrap_or_default()
         });
         let first = self.put_entry(&h, &chunks)?;
+        drop(entry);
         let last = first + changed.len() as i64 - 1;
         Ok(Some(MassApplied { changed, last_op: last, touches_watch: false }))
     }
@@ -253,7 +261,7 @@ impl KvTxn<'_> {
         timestamp: i64,
         origin: Option<&str>,
     ) -> Result<Option<MassApplied>> {
-        let universe = self.read_chunked(Bitmaps::LiveMetarecords, &[])?;
+        let universe = timed("mass.universe", || self.read_chunked(Bitmaps::LiveMetarecords, &[]))?;
         let changed = ids & &universe;
         if changed.is_empty() {
             return Ok(Some(MassApplied { changed, last_op: 0, touches_watch: false }));
@@ -268,6 +276,7 @@ impl KvTxn<'_> {
                 }
             }
         }
+        let checks = phase("mass.children");
         let (fields, positional) = self.fields_held()?;
         // A folder deleted here has all its children deleted here too, or the
         // children are unpicked one by one.
@@ -285,6 +294,8 @@ impl KvTxn<'_> {
                 }
             }
         }
+        drop(checks);
+        let counts = phase("mass.counts");
         for field in &fields {
             self.count_rows_gone(field, &changed)?;
         }
@@ -295,7 +306,10 @@ impl KvTxn<'_> {
         for field in ["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED] {
             touches_watch |= !(&self.holder_ids_now(field)? & &changed).is_empty();
         }
-        self.chunk_apply(Bitmaps::LiveMetarecords, &[], &changed, false)?;
+        drop(counts);
+        timed("mass.universe.write", || {
+            self.chunk_apply(Bitmaps::LiveMetarecords, &[], &changed, false)
+        })?;
         let h = Header {
             context: log_context,
             timestamp,
@@ -308,9 +322,12 @@ impl KvTxn<'_> {
         };
         // The before of every target is in its record, which the deletion
         // keeps as it was until the fold copies it into the chunks.
-        let targets = self.uuids_of_ids(&changed)?;
-        let first = self.put_entry(&h, &entry::chunks(&targets, true, |_| Vec::new()))?;
+        let targets = timed("mass.uuids", || self.uuids_of_ids(&changed))?;
+        let first = timed("mass.entry", || {
+            self.put_entry(&h, &entry::chunks(&targets, true, |_| Vec::new()))
+        })?;
         let last = first + changed.len() as i64 - 1;
+        let _pending = phase("mass.pending");
         // A pending write of kind `delete` in each part, which the operation
         // of an id is its rank in (doc "Mass writes in the store").
         self.append_listed(Written::Delete, "", &[], &changed, |taken| {

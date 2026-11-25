@@ -1891,7 +1891,10 @@ impl<'c> Writer<'c> {
     ) -> Result<Mass> {
         let Some(ids) = ids else { return Ok(Mass::Each(None)) };
         if self.reverting.is_none() {
-            if let Some(would) = self.would_change(kind, name, values, ids)? {
+            let would = metafolder_core::slowlog::timed("mass.would_change", || {
+                self.would_change(kind, name, values, ids)
+            })?;
+            if let Some(would) = would {
                 if would.len() <= self.mass_threshold.of(kind) {
                     return Ok(Mass::Each(Some(would)));
                 }
