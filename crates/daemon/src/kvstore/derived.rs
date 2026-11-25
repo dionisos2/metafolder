@@ -1881,6 +1881,9 @@ impl KvStore {
         // What the lists hold is written into the records first: the records
         // are filed again below, and the rows are derived from them.
         txn.fold_all_mass()?;
+        // The log names its targets by uuid before the ids are numbered
+        // again (doc "Log storage").
+        while txn.index_log_step(super::entry::INDEX_BUDGET)? {}
         txn.drop_left_behind()?;
         // A reindex invalidates the work under way anyway: the contexts left
         // empty go (doc "Log contexts").

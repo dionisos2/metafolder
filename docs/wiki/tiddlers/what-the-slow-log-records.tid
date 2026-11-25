@@ -68,7 +68,6 @@ synonym:
 |`mass.counts` |a write in bulk: the type counts it changes; for a deletion, summed over the counters of every field |
 |`mass.children` |a deletion in bulk: whether a folder it deletes keeps a child |
 |`mass.pending` |a write in bulk: its pending writes and pending index writes |
-|`mass.uuids` |a write in bulk: the uuids of its records, which its log entry names — one key read per record ([[Log storage]]) |
 |`mass.entry` |a write in bulk: writing its log entry |
 |`rules.load` |re-reading the watch-rule index after HEAD moved |
 |`disk.stat` |a watch check's stat of each path, before it takes the store handle |

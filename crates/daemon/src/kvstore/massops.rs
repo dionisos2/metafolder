@@ -170,9 +170,8 @@ impl KvTxn<'_> {
                 }
             }
         }
-        let targets = timed("mass.uuids", || self.uuids_of_ids(&changed))?;
         let entry = phase("mass.entry");
-        let chunks = entry::chunks(&targets, false, |k| {
+        let chunks = entry::chunks_by_id(&changed, false, |k| {
             held.get_mut(k).map(std::mem::take).unwrap_or_default()
         });
         let first = self.put_entry(&h, &chunks)?;
@@ -322,9 +321,8 @@ impl KvTxn<'_> {
         };
         // The before of every target is in its record, which the deletion
         // keeps as it was until the fold copies it into the chunks.
-        let targets = timed("mass.uuids", || self.uuids_of_ids(&changed))?;
         let first = timed("mass.entry", || {
-            self.put_entry(&h, &entry::chunks(&targets, true, |_| Vec::new()))
+            self.put_entry(&h, &entry::chunks_by_id(&changed, true, |_| Vec::new()))
         })?;
         let last = first + changed.len() as i64 - 1;
         let _pending = phase("mass.pending");

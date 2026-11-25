@@ -263,10 +263,11 @@ fn retention_counts_an_entry_once_and_takes_it_whole() {
     assert!(all.iter().all(|o| o.log_context_id != log_context));
 }
 
-/// What a write by id reads is the same whatever the number of records, but
-/// for the uuid of each, which the log names its targets by.
+/// What a write by id reads is the same whatever the number of records: its
+/// log entry names them by dense id, the fold turns them into uuids later
+/// (doc "Log storage").
 #[test]
-fn a_mass_write_by_id_reads_one_uuid_per_record() {
+fn a_mass_write_by_id_reads_nothing_per_record() {
     fn reads_of(n: usize, remove: bool) -> u64 {
         let (mut store, _dir) = open();
         let uuids = records(&mut store, n);
@@ -284,10 +285,85 @@ fn a_mass_write_by_id_reads_one_uuid_per_record() {
     }
     for remove in [false, true] {
         let (small, big) = (reads_of(100, remove), reads_of(3000, remove));
-        // One read per record: its uuid, which the log names it by.
-        let one_each = 2900 + 4;
-        assert!(big <= small + one_each, "remove {remove}: {small} reads for 100, {big} for 3000");
+        assert!(big <= small + 4, "remove {remove}: {small} reads for 100, {big} for 3000");
     }
+}
+
+/// Once folded, the entry names its targets by uuid: reading its operations
+/// reads its chunk, not a uuid per target.
+#[test]
+fn the_fold_names_an_entry_s_targets_by_uuid() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 3000);
+    let ids = store.dense_ids(&uuids).unwrap();
+    store.fold().unwrap();
+    let head = store.head().unwrap().unwrap();
+    write(&mut store, |w| w.mass_add_ids("tag", s("jazz"), &ids).unwrap());
+    let read = |store: &KvStore| {
+        let before = store.reads();
+        let ops = store.ops_after(head).unwrap();
+        assert_eq!(ops.len(), 3000);
+        assert_eq!(ops.iter().map(|o| o.entity_uuid).collect::<BTreeSet<_>>().len(), 3000);
+        (ops, store.reads() - before)
+    };
+    let (unfolded, by_id) = read(&store);
+    store.fold().unwrap();
+    let (folded, by_uuid) = read(&store);
+    let named = |ops: &[metafolder_daemon::log::OpRow]| -> Vec<(i64, Uuid)> {
+        ops.iter().map(|o| (o.id, o.entity_uuid)).collect()
+    };
+    assert_eq!(named(&unfolded), named(&folded), "the same operations on the same records");
+    assert!(by_id >= 3000, "before the fold, a uuid read per target: {by_id}");
+    assert!(by_uuid < 50, "after it, the chunk alone: {by_uuid}");
+}
+
+/// A write to one record that only differs from a write in bulk of the same
+/// transaction by its target still reads as its own operation.
+#[test]
+fn an_operation_after_a_write_in_bulk_names_its_own_target() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 30);
+    let ids = store.dense_ids(&uuids[..20]).unwrap();
+    let head = store.head().unwrap().unwrap();
+    write(&mut store, |w| {
+        w.set_mass_threshold(0);
+        w.mass_add_ids("tag", s("jazz"), &ids).unwrap();
+        w.append_field(uuids[25], "tag", s("jazz")).unwrap();
+    });
+    for fold in [false, true] {
+        if fold {
+            store.fold().unwrap();
+        }
+        let ops = store.ops_after(head).unwrap();
+        assert_eq!(ops.len(), 21, "fold {fold}");
+        assert_eq!(ops.last().unwrap().entity_uuid, uuids[25], "fold {fold}");
+        assert_eq!(
+            ops[..20].iter().map(|o| o.entity_uuid).collect::<BTreeSet<_>>(),
+            uuids[..20].iter().copied().collect::<BTreeSet<_>>()
+        );
+        assert_eq!(store.entity_ops_after(uuids[25], head).unwrap().len(), 1, "fold {fold}");
+    }
+}
+
+/// A deletion in bulk names its records by dense id too, and a reindex before
+/// any fold, which numbers the ids again, keeps what it names.
+#[test]
+fn a_reindex_keeps_what_a_deletion_in_bulk_names() {
+    let (mut store, _dir) = open();
+    let uuids = records(&mut store, 60);
+    let ids = store.dense_ids(&uuids[10..50]).unwrap();
+    let head = store.head().unwrap().unwrap();
+    write(&mut store, |w| {
+        w.set_mass_threshold(0);
+        w.mass_delete_ids(&ids).unwrap();
+    });
+    let before: Vec<_> =
+        store.ops_after(head).unwrap().into_iter().map(|o| (o.id, o.entity_uuid)).collect();
+    assert_eq!(before.len(), 40);
+    store.reindex().unwrap();
+    let after: Vec<_> =
+        store.ops_after(head).unwrap().into_iter().map(|o| (o.id, o.entity_uuid)).collect();
+    assert_eq!(before, after);
 }
 
 #[test]

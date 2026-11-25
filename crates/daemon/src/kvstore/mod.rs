@@ -2937,6 +2937,7 @@ impl WriteTxn for KvTxn<'_> {
                 targets: vec![op.entity],
                 before: vec![before],
                 pending: Default::default(),
+                ids: None,
             };
             last = self.put_entry(&h, &[chunk])?;
         }

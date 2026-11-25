@@ -15,9 +15,10 @@ targets and its before without reading the records.
 
 The write names its records by ''dense id'': the query ends with a bitmap, and the
 write takes it as it is (`Writer::mass_add_ids`, `mass_remove_ids`; the routes of
-`field add` and `field remove` and the batch endpoint). No record and no existence
-check is read per record; the entry's targets are the uuids of the ids, read in the
-order of the ids (`tests/kv_mass_log.rs` counts the keys). A call that has uuids
+`field add` and `field remove` and the batch endpoint). No record, no existence
+check and no uuid is read per record: the entry's targets are the ids themselves, in
+their order, which the idle fold turns into uuids later ([[Log storage]];
+`tests/kv_mass_log.rs` counts the keys). A call that has uuids
 (`mass_add`) looks their ids up, once each.
 
 A write to many records moves HEAD by the number of records it changed, one

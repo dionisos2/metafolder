@@ -24,14 +24,26 @@ entry'', one key each, which is what it costs.
 ```
 log_entries  first op id → log context · timestamp · origin · effect · file action
                            · [first reverted op] · parameters · target count
-log_targets  first op id · chunk number → { uuid } · pending ranks · before of the chunk
+log_targets  first op id · chunk number → { uuid } or the dense ids · pending ranks
+                                           · before of the chunk
 ```
 
 A chunk holds a fixed number of targets (4096): an entry of one target is two
-keys, with no case of its own. The targets are ''uuids'', never dense ids: one form,
-nothing for a reindex to rewrite. A write to many records, which holds its records as
-a bitmap of dense ids, turns them into uuids as it writes (`uuids`, one key per id, in
-the order of the ids).
+keys, with no case of its own. A write to many records holds its records as a bitmap
+of dense ids, and its chunks name them so — the ids of the chunk, a roaring bitmap, in
+their order —: it reads nothing per record. The idle fold names them by ''uuid''
+afterwards ([[Folding in idle time]]), as it indexes the entry by metarecord: the
+entries not yet indexed are the list of those to convert, and a chunk already by
+uuid is left as it is. A reindex, which numbers the ids again, first does it for
+every entry. Until then, a read of such a chunk reads the uuid of each id; a chunk by
+dense id is not extended by a write to one record (see Compaction below): that write starts
+an entry of its own.
+
+The cost it spares is the write's: reading a uuid per record, one key each scattered
+over the store, was ~200 ms of a ~210 ms write in bulk of a thousand records or more,
+cold, on a store of 400 000 (November 2026, the probes `calibrate.rs` and
+`tests/probe_uuid_reads.rs`); the fold pays it at a quiet moment instead
+(user decision, November 2026).
 
 |!Header part |!Holds |
 |log context |the innermost context of the write ([[Log contexts]]) |
@@ -85,6 +97,9 @@ log, of the same context, and the targets are disjoint. A revert's entry is exte
 only by the revert of the next operation (first reverted = last reverted + 1). So a
 loop of `mf … field add` over a thousand files, inside one context, is one entry.
 
+Nor is a last chunk that names its targets by dense id, which only a write to many
+records writes: the operation starts an entry of its own.
+
 A deletion is not extended: the undo of a deletion of many records knows it by its
 entry. Whether the entry already names the target is asked of its targets, which the
 store keeps in memory between the writes that extend it (read from the chunks once,
@@ -128,8 +143,8 @@ under it.
 
 A metarecord's history after an id reads `log_entries_by_metarecord`, then the entries
 not yet indexed, searching their targets (in any order: a compaction appends to them).
-Its cost is loading those entries; the idle fold keeps them few. A reindex touches
-none of the log: it holds no dense id.
+Its cost is loading those entries; the idle fold keeps them few. A reindex first
+names every target by uuid, then touches none of the log.
 
 The first reverted op is read by displays and by the undo selection — which is why a
 revert records it rather than merely looking like one. Nothing on the write path

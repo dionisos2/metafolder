@@ -83,12 +83,22 @@ pub(crate) struct Header {
 /// operation. The before of a target of a deletion of many records may still
 /// be in its record, which the pending deletion keeps as it was: its rank is
 /// then `pending`, and its before here empty (doc "Mass writes in the store").
+///
+/// A write to many records names its targets by dense id (`ids`), in their
+/// order, and reads no uuid: the idle fold names them by uuid later, and a
+/// reindex first (doc "Log storage"). A chunk read so has its `targets` read
+/// from the ids; written, it keeps the ids while they are there.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chunk {
     pub(crate) targets: Vec<Uuid>,
     pub(crate) before: Vec<Vec<FieldRow>>,
     pub(crate) pending: RoaringBitmap,
+    pub(crate) ids: Option<RoaringBitmap>,
 }
+
+/// Added to the count of targets at the head of a chunk that names them by
+/// dense id: a count of uuids is at most [`CHUNK`].
+const BY_ID: u64 = 1 << 20;
 
 const EFFECTS: [(Effect, &str); 8] = [
     (Effect::Create, "create_metarecord"),
@@ -228,11 +238,22 @@ impl Chunk {
     /// `varint n · n × uuid · varint len · [the pending ranks, a roaring
     /// bitmap] · varint groups · { varint len · field · value · varint count
     /// · { varint rank } }`, a group being a row the targets of its ranks held.
+    /// Named by dense id: `varint (BY_ID + n) · varint len · [the ids, a
+    /// roaring bitmap]` in place of the uuids.
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = Enc::default();
-        out.varint(self.targets.len() as u64);
-        for t in &self.targets {
-            out.raw(t.as_bytes());
+        match &self.ids {
+            Some(ids) => {
+                let mut bytes = Vec::new();
+                ids.serialize_into(&mut bytes).expect("a bitmap into a vector");
+                out.varint(BY_ID + ids.len()).bytes(&bytes);
+            }
+            None => {
+                out.varint(self.targets.len() as u64);
+                for t in &self.targets {
+                    out.raw(t.as_bytes());
+                }
+            }
         }
         if self.pending.is_empty() {
             out.varint(0);
@@ -265,9 +286,17 @@ impl Chunk {
 
     pub(crate) fn decode(b: &[u8]) -> Result<Chunk> {
         let mut r = Dec(b);
-        let n = usize::try_from(r.varint()?)?;
+        let head = r.varint()?;
+        let (n, targets, ids) = if head >= BY_ID {
+            let n = usize::try_from(head - BY_ID)?;
+            let ids = RoaringBitmap::deserialize_from(r.bytes()?)?;
+            ensure!(ids.len() == n as u64, "a chunk of {n} targets naming {} ids", ids.len());
+            (n, Vec::new(), Some(ids))
+        } else {
+            let n = usize::try_from(head)?;
+            (n, (0..n).map(|_| r.uuid()).collect::<Result<Vec<_>>>()?, None)
+        };
         ensure!(n as u64 <= CHUNK, "a chunk of {n} targets");
-        let targets = (0..n).map(|_| r.uuid()).collect::<Result<Vec<_>>>()?;
         let pending = match r.bytes()? {
             [] => RoaringBitmap::new(),
             bytes => RoaringBitmap::deserialize_from(bytes)?,
@@ -285,7 +314,12 @@ impl Chunk {
             }
         }
         ensure!(r.is_empty(), "a chunk of trailing bytes");
-        Ok(Chunk { targets, before, pending })
+        Ok(Chunk { targets, before, pending, ids })
+    }
+
+    /// How many targets.
+    pub(crate) fn len(&self) -> usize {
+        self.ids.as_ref().map_or(self.targets.len(), |ids| ids.len() as usize)
     }
 }
 
@@ -418,27 +452,29 @@ pub(super) fn of_op(op: &NewOp, context: i64, timestamp: i64) -> Result<(Header,
     Ok((h, before))
 }
 
-/// The chunks of a write to many records: `targets` in chunks of
-/// [`CHUNK`], the before of the target at rank `k` being `before(k)`, and
+/// The chunks of a write to many records, its targets named by dense id,
+/// `ids` in their order — no uuid is read (doc "Log storage") —, in chunks
+/// of [`CHUNK`], the before of the target at rank `k` being `before(k)`, and
 /// every rank pending when `pending`.
-pub(super) fn chunks(
-    targets: &[Uuid],
+pub(super) fn chunks_by_id(
+    ids: &RoaringBitmap,
     pending: bool,
     mut before: impl FnMut(usize) -> Vec<FieldRow>,
 ) -> Vec<Chunk> {
-    targets
-        .chunks(CHUNK as usize)
+    let all: Vec<u32> = ids.iter().collect();
+    all.chunks(CHUNK as usize)
         .enumerate()
         .map(|(n, part)| {
             let at = n * CHUNK as usize;
             Chunk {
-                targets: part.to_vec(),
+                targets: Vec::new(),
                 before: (0..part.len()).map(|k| before(at + k)).collect(),
                 pending: if pending {
                     (0..part.len() as u32).collect()
                 } else {
                     RoaringBitmap::new()
                 },
+                ids: Some(part.iter().copied().collect()),
             }
         })
         .collect()
@@ -492,17 +528,26 @@ impl Read<'_> {
 
     /// Chunk `n` of the entry `first`: the one a write transaction holds, if
     /// it is that one.
+    /// A chunk that names its targets by dense id has their uuids read.
     pub(super) fn chunk(&self, first: i64, n: u64) -> Result<Chunk> {
-        if let Some(chunk) = self.log_chunk.and_then(|held| held(first, n)) {
-            return Ok(chunk);
+        let mut chunk = match self.log_chunk.and_then(|held| held(first, n)) {
+            Some(chunk) => chunk,
+            None => {
+                self.count(1)?;
+                let v = self
+                    .t
+                    .log_targets
+                    .get(self.r, &chunk_key(first, n))?
+                    .with_context(|| format!("chunk {n} of log entry {first} is missing"))?;
+                Chunk::decode(v)?
+            }
+        };
+        if let Some(ids) = &chunk.ids {
+            if chunk.targets.len() != ids.len() as usize {
+                chunk.targets = ids.iter().map(|id| self.uuid_of_id(id)).collect::<Result<_>>()?;
+            }
         }
-        self.count(1)?;
-        let v = self
-            .t
-            .log_targets
-            .get(self.r, &chunk_key(first, n))?
-            .with_context(|| format!("chunk {n} of log entry {first} is missing"))?;
-        Chunk::decode(v)
+        Ok(chunk)
     }
 
     /// The chunk of operation `id` of `entry`, from `loaded` when it holds it.
@@ -537,10 +582,15 @@ impl Read<'_> {
         let mut loaded = Loaded::default();
         let (chunk, rank) = self.chunk_of(&entry, id, &mut loaded)?;
         if chunk.pending.contains(rank as u32) {
-            let uuid = chunk.targets[rank];
-            self.count(1)?;
-            let dense = super::derived::id_of(self.t, self.r, uuid.as_bytes())?
-                .with_context(|| format!("deleted metarecord {uuid} has no dense id"))?;
+            let dense = match chunk.ids.as_ref().and_then(|ids| ids.select(rank as u32)) {
+                Some(id) => id,
+                None => {
+                    let uuid = chunk.targets[rank];
+                    self.count(1)?;
+                    super::derived::id_of(self.t, self.r, uuid.as_bytes())?
+                        .with_context(|| format!("deleted metarecord {uuid} has no dense id"))?
+                }
+            };
             return self.record_raw(dense);
         }
         Ok(chunk.before[rank].clone())
@@ -785,7 +835,7 @@ impl KvTxn<'_> {
             let mut w = self.txn.borrow_mut();
             let t = self.t;
             let first = super::State::NextLogOp.get(&t, &w)?.unwrap_or(1);
-            debug_assert_eq!(chunks.iter().map(|c| c.targets.len() as u64).sum::<u64>(), h.targets);
+            debug_assert_eq!(chunks.iter().map(|c| c.len() as u64).sum::<u64>(), h.targets);
             let at = super::be(first);
             t.log_entries.put(&mut w, &at, &h.encode()?)?;
             if let Some((last, before)) = chunks.split_last() {
@@ -881,6 +931,27 @@ impl KvTxn<'_> {
         if !same || entry.last() != next - 1 {
             return Ok(None);
         }
+        let (n, rank) = (entry.h.targets / CHUNK, (entry.h.targets % CHUNK) as usize);
+        // A chunk naming its targets by dense id is not extended: an entry
+        // of a write in bulk, which a write to one record rarely follows.
+        if rank != 0 {
+            let by_id = match self.log_chunk.borrow().as_ref() {
+                Some(h) if h.first == entry.first && h.n == n => Some(h.chunk.ids.is_some()),
+                _ => None,
+            };
+            let by_id = match by_id {
+                Some(b) => b,
+                None => {
+                    let t = self.t;
+                    let w = self.txn.borrow();
+                    let v = t.log_targets.get(&w, &chunk_key(entry.first, n))?;
+                    v.is_some_and(|v| Chunk::decode(v).is_ok_and(|c| c.ids.is_some()))
+                }
+            };
+            if by_id {
+                return Ok(None);
+            }
+        }
         // The entry's targets: those the store kept since the last write that
         // extended it, else its chunks.
         let mut last = self.last_targets.borrow_mut();
@@ -901,14 +972,18 @@ impl KvTxn<'_> {
         known.targets += 1;
         drop(last);
         let at = super::be(entry.first);
-        let (n, rank) = (entry.h.targets / CHUNK, (entry.h.targets % CHUNK) as usize);
         // The chunk extended: the one held, else read once and held.
         let holds =
             self.log_chunk.borrow().as_ref().is_some_and(|h| h.first == entry.first && h.n == n);
         if !holds {
             self.flush_log_chunk()?;
             let chunk = if rank == 0 {
-                Chunk { targets: Vec::new(), before: Vec::new(), pending: RoaringBitmap::new() }
+                Chunk {
+                    targets: Vec::new(),
+                    before: Vec::new(),
+                    pending: RoaringBitmap::new(),
+                    ids: None,
+                }
             } else {
                 self.chunk_coded(0);
                 self.read_log(|r| r.chunk(entry.first, n))?
@@ -1037,10 +1112,22 @@ impl KvTxn<'_> {
         if entries.is_empty() {
             return Ok(false);
         }
+        // The chunks named by dense id are rewritten by uuid: the held one
+        // among them.
+        self.flush_log_chunk()?;
         let mut done = 0u64;
         let mut up_to = indexed;
         for entry in entries {
-            let targets = self.read_log(|r| r.targets(&entry))?;
+            let mut targets = Vec::with_capacity(entry.h.targets as usize);
+            for n in 0..chunks_of(entry.h.targets) {
+                let mut chunk = self.read_log(|r| r.chunk(entry.first, n))?;
+                if chunk.ids.take().is_some() {
+                    self.chunk_coded(1);
+                    let key = chunk_key(entry.first, n);
+                    self.t.log_targets.put(&mut self.txn.borrow_mut(), &key, &chunk.encode())?;
+                }
+                targets.extend(chunk.targets);
+            }
             let mut w = self.txn.borrow_mut();
             for (k, u) in targets.iter().enumerate() {
                 let id = entry.first + k as i64;
@@ -1221,8 +1308,12 @@ mod tests {
             vec![row("tags", Value::String("a".into()))],
             vec![row("n", Value::Int(3)), row("tags", Value::Nothing)],
         ];
-        let chunk =
-            Chunk { targets: targets.clone(), before: before.clone(), pending: Default::default() };
+        let chunk = Chunk {
+            targets: targets.clone(),
+            before: before.clone(),
+            pending: Default::default(),
+            ids: None,
+        };
         let back = Chunk::decode(&chunk.encode()).unwrap();
         assert_eq!(back.targets, targets);
         assert!(back.pending.is_empty());
@@ -1236,7 +1327,8 @@ mod tests {
         }
         // A deletion pending: every before still in the records, then all but
         // the target given back and written to.
-        let mut pending = Chunk { targets, before: vec![vec![]; 4], pending: (0..4).collect() };
+        let mut pending =
+            Chunk { targets, before: vec![vec![]; 4], pending: (0..4).collect(), ids: None };
         assert_eq!(Chunk::decode(&pending.encode()).unwrap(), pending);
         pending.pending.remove(2);
         pending.before[2] = vec![row("n", Value::Int(1))];
@@ -1251,6 +1343,7 @@ mod tests {
             targets: targets.clone(),
             before: targets.iter().map(|_| tag()).collect(),
             pending: Default::default(),
+            ids: None,
         };
         let bytes = chunk.encode();
         // n · uuids · no pending · one group: field, value, rank count, ranks
@@ -1262,6 +1355,7 @@ mod tests {
             targets,
             before: vec![vec![]; CHUNK as usize],
             pending: (0..CHUNK as u32).collect(),
+            ids: None,
         };
         assert!(deleted.encode().len() < 16 * CHUNK as usize + 32);
         assert_eq!(Chunk::decode(&bytes).unwrap(), chunk);
@@ -1273,6 +1367,7 @@ mod tests {
             targets: vec![Uuid::from_u128(1), Uuid::from_u128(2)],
             before: vec![vec![row("a", Value::Int(1))], vec![]],
             pending: [1].into_iter().collect(),
+            ids: None,
         };
         let bytes = chunk.encode();
         for cut in 0..bytes.len() {
@@ -1282,11 +1377,51 @@ mod tests {
             targets: vec![Uuid::from_u128(1)],
             before: vec![vec![]],
             pending: Default::default(),
+            ids: None,
         };
         let mut bytes = bad_rank.encode();
         // One group naming rank 5 of a chunk of one target.
         bytes.pop();
         bytes.extend_from_slice(&[1, 1, b'a', 2, 2, 1, 5]);
         assert!(Chunk::decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_chunk_named_by_dense_id_comes_back_with_its_ids() {
+        let ids: RoaringBitmap = [3, 70, 71, 9000].into_iter().collect();
+        let chunk = Chunk {
+            targets: Vec::new(),
+            before: vec![vec![row("tag", Value::Int(1))], vec![], vec![], vec![]],
+            pending: [2].into_iter().collect(),
+            ids: Some(ids.clone()),
+        };
+        assert_eq!(chunk.len(), 4);
+        let back = Chunk::decode(&chunk.encode()).unwrap();
+        assert_eq!(back, chunk);
+        // Read, its uuids filled in: written again, it keeps the ids.
+        let read = Chunk { targets: vec![Uuid::from_u128(1); 4], ..back };
+        assert_eq!(Chunk::decode(&read.encode()).unwrap(), chunk);
+    }
+
+    #[test]
+    fn a_chunk_named_by_dense_id_is_refused_when_its_count_lies() {
+        let ids: RoaringBitmap = [3, 70].into_iter().collect();
+        let chunk = Chunk {
+            targets: Vec::new(),
+            before: vec![vec![], vec![]],
+            pending: Default::default(),
+            ids: Some(ids),
+        };
+        let mut bytes = chunk.encode();
+        // The count, one byte past BY_ID's varint, said three.
+        let mut head = Enc::default();
+        head.varint(BY_ID + 3);
+        let mut real = Enc::default();
+        real.varint(BY_ID + 2);
+        bytes.splice(..real.0.len(), head.0);
+        assert!(Chunk::decode(&bytes).is_err());
+        for cut in 0..chunk.encode().len() {
+            assert!(Chunk::decode(&chunk.encode()[..cut]).is_err(), "cut at {cut}");
+        }
     }
 }

@@ -48,7 +48,8 @@ case, and a copy of every record at idle time would be paid for nothing.
 
 The log entries written since the last fold are indexed by metarecord last
 (`log_entries_by_metarecord`, [[Log storage]]): a read of a metarecord's history
-reads the entries not yet indexed directly, so nothing waits on it.
+reads the entries not yet indexed directly, so nothing waits on it. The same step
+names by uuid the targets a write to many records named by dense id.
 
 A step is not made while a coordinated revert holds the repository or the root is
 absent. `mf repo fold` folds at once what is pending ([[POST /repos/:repo/fold]]), and `mf repo reindex` folds everything. A list has ''no limit'': a
