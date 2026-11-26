@@ -368,6 +368,22 @@ enum RepoCommand {
         /// The repository's .metafolder directory, or the root holding it
         path: PathBuf,
     },
+    /// Merge another repository's configuration into this one's
+    ///
+    /// Merges the 'main' branch of FROM's .metafolder/config/ into PATH's, as
+    /// update-config does the defaults (doc "Repository configuration"): what
+    /// FROM changed joins PATH's own edits — to bring two schemas in line
+    /// before a sync. FROM is only read, and must have its edits committed. A
+    /// conflict leaves PATH's config/ untouched, keeps what was fetched on its
+    /// branch 'pulled' and lists the files (exit 1). Works on the files alone:
+    /// a loaded repository reads the result at `mf schema reload` (the schema)
+    /// or its next load.
+    PullConfig {
+        /// The repository to merge into: its .metafolder directory, or its root
+        path: PathBuf,
+        /// The repository to merge from: its .metafolder directory, or its root
+        from: PathBuf,
+    },
     /// Load an existing repository, wait for its warmup and print its UUID
     ///
     /// By its root, its --metafolder, or — with no path — by the name given
@@ -1578,6 +1594,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 no_ignore,
             ),
             RepoCommand::UpdateConfig { path } => commands::update_repo_config(&path),
+            RepoCommand::PullConfig { path, from } => commands::pull_repo_config(&path, &from),
             RepoCommand::Rename { name } => commands::rename_repo(ctx, &name),
             RepoCommand::Load { root, metafolder, no_wait, in_memory } => {
                 commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait, in_memory)

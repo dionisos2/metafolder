@@ -1338,7 +1338,10 @@ pub(crate) fn check_schemas_identical(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<(),
     let sb = ctx.client.get(&format!("/repos/{}/schema", b.as_simple()))?;
     if sa != sb {
         return Err(CliError::Op(
-            "the two repositories have different schemas; sync requires identical schemas".into(),
+            "the two repositories have different schemas; sync requires identical schemas: \
+             merge one's configuration into the other's with \
+             `mf repo pull-config <root> <other root>`, then `mf schema reload` it"
+                .into(),
         ));
     }
     Ok(())

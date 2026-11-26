@@ -80,6 +80,26 @@ pub fn install(metafolder_dir: &Path, defaults: &Path) -> Result<InstallOutcome,
     Ok(InstallOutcome { sync, migrated })
 }
 
+/// Merges the configuration of the repository whose `.metafolder/` is `from`
+/// into the one of the repository at `metafolder_dir`
+/// (`mf repo pull-config`): what the other's `main` has that this one lacks
+/// joins this one's edits, as the defaults do ([`install`]). `from` is only
+/// read; both must have a `config/` git repository.
+pub fn pull(metafolder_dir: &Path, from: &Path) -> Result<SyncOutcome, String> {
+    let config = metafolder_dir.join(CONFIG_DIR);
+    let from_config = from.join(CONFIG_DIR);
+    for (metafolder, config) in [(metafolder_dir, &config), (from, &from_config)] {
+        if !config.join(".git").exists() {
+            return Err(format!(
+                "{} has no configuration repository: run mf repo update-config {} first",
+                config.display(),
+                metafolder.display()
+            ));
+        }
+    }
+    config_sync::pull(&config, &from_config)
+}
+
 /// Moves the [`LEGACY_FILES`] found directly in `metafolder_dir` into
 /// `config`. The schema stays where it is when `config.json` names its file
 /// (`"schema"`): that path is the user's, relative to `.metafolder/`.
@@ -281,5 +301,153 @@ mod tests {
         let err = install(&area.metafolder(), &area.defaults()).unwrap_err();
         assert!(err.contains("metafolder-sync-config"), "{err}");
         assert!(!area.metafolder().join("config").exists());
+    }
+
+    // ── pull ─────────────────────────────────────────────────────────────
+
+    /// Two repositories installed from the same defaults.
+    fn two_repositories(schema: &str) -> (Area, Area) {
+        let (ours, theirs) = (Area::new(), Area::new());
+        for area in [&ours, &theirs] {
+            area.set_default("schema.json", schema);
+            area.set_default("metadata-map.toml", "map\n");
+            area.install();
+        }
+        (ours, theirs)
+    }
+
+    /// Commits the edits of `area`'s configuration, as a user would.
+    fn commit(area: &Area) {
+        let dir = area.metafolder().join(CONFIG_DIR);
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "edit"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    fn pull_into(ours: &Area, theirs: &Area) -> Result<SyncOutcome, String> {
+        pull(&ours.metafolder(), &theirs.metafolder())
+    }
+
+    #[test]
+    fn a_pull_merges_the_other_repository_edits_into_its_own() {
+        let (ours, theirs) = two_repositories("a\nb\nc\nd\ne\n");
+        ours.write("config/schema.json", "A\nb\nc\nd\ne\n");
+        theirs.write("config/schema.json", "a\nb\nc\nd\nE\n");
+        commit(&theirs);
+
+        let out = pull_into(&ours, &theirs).unwrap();
+        assert!(out.updated);
+        assert!(out.user_edits_committed);
+        assert_eq!(out.conflict, None);
+        assert_eq!(ours.read("config/schema.json").as_deref(), Some("A\nb\nc\nd\nE\n"));
+        // The other repository is not touched.
+        assert_eq!(theirs.read("config/schema.json").as_deref(), Some("a\nb\nc\nd\nE\n"));
+    }
+
+    #[test]
+    fn a_pull_finds_the_defaults_both_started_from_in_unrelated_histories() {
+        // Ours started from older defaults and was updated; theirs started from
+        // the newer ones: no commit in common, the newer defaults' tree is.
+        let (ours, theirs) = (Area::new(), Area::new());
+        ours.set_default("metadata-map.toml", "map\n");
+        ours.set_default("schema.json", "old\n");
+        ours.install();
+        for area in [&ours, &theirs] {
+            area.set_default("metadata-map.toml", "map\n");
+            area.set_default("schema.json", "a\nb\nc\nd\ne\n");
+            area.install();
+        }
+        ours.write("config/schema.json", "A\nb\nc\nd\ne\n");
+        theirs.write("config/schema.json", "a\nb\nc\nd\nE\n");
+        commit(&theirs);
+
+        let out = pull_into(&ours, &theirs).unwrap();
+        assert_eq!(out.conflict, None);
+        assert_eq!(ours.read("config/schema.json").as_deref(), Some("A\nb\nc\nd\nE\n"));
+    }
+
+    #[test]
+    fn a_second_pull_merges_from_the_first() {
+        let (ours, theirs) = two_repositories("a\nb\nc\nd\ne\n");
+        theirs.write("config/schema.json", "a\nb\nc\nd\nE\n");
+        commit(&theirs);
+        pull_into(&ours, &theirs).unwrap();
+        // Both change the file again, far apart: the first pull is the base.
+        ours.write("config/schema.json", "A\nb\nc\nd\nE\n");
+        theirs.write("config/schema.json", "a\nb\nC\nd\nE\n");
+        commit(&theirs);
+
+        let out = pull_into(&ours, &theirs).unwrap();
+        assert_eq!(out.conflict, None);
+        assert_eq!(ours.read("config/schema.json").as_deref(), Some("A\nb\nC\nd\nE\n"));
+    }
+
+    #[test]
+    fn a_pull_with_nothing_new_changes_nothing() {
+        let (ours, theirs) = two_repositories("s\n");
+        assert_eq!(pull_into(&ours, &theirs).unwrap(), SyncOutcome::default());
+        theirs.write("config/schema.json", "t\n");
+        commit(&theirs);
+        assert!(pull_into(&ours, &theirs).unwrap().updated);
+        assert_eq!(pull_into(&ours, &theirs).unwrap(), SyncOutcome::default());
+    }
+
+    #[test]
+    fn a_pull_that_conflicts_leaves_the_configuration_as_it_was() {
+        let (ours, theirs) = two_repositories("line\n");
+        ours.write("config/schema.json", "mine\n");
+        theirs.write("config/schema.json", "theirs\n");
+        commit(&theirs);
+
+        let out = pull_into(&ours, &theirs).unwrap();
+        assert_eq!(out.conflict, Some(vec![PathBuf::from("schema.json")]));
+        assert_eq!(ours.read("config/schema.json").as_deref(), Some("mine\n"));
+        // What was pulled stays at hand, for a merge by hand.
+        let pulled = ours.metafolder().join("config/.git/refs/heads/pulled");
+        assert!(pulled.is_file());
+    }
+
+    #[test]
+    fn a_pull_conflict_resolved_by_hand_as_the_help_says_is_then_up_to_date() {
+        let (ours, theirs) = two_repositories("line\n");
+        ours.write("config/schema.json", "mine\n");
+        theirs.write("config/schema.json", "theirs\n");
+        commit(&theirs);
+        assert!(pull_into(&ours, &theirs).unwrap().conflict.is_some());
+
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(ours.metafolder().join(CONFIG_DIR))
+                .output()
+                .unwrap()
+        };
+        git(&["merge", "--allow-unrelated-histories", "pulled"]);
+        assert!(git(&["checkout", "--theirs", "--", "schema.json"]).status.success());
+        assert!(git(&["add", "schema.json"]).status.success());
+        assert!(git(&["commit", "--no-edit"]).status.success());
+
+        assert_eq!(ours.read("config/schema.json").as_deref(), Some("theirs\n"));
+        assert_eq!(pull_into(&ours, &theirs).unwrap(), SyncOutcome::default());
+    }
+
+    #[test]
+    fn a_pull_refuses_uncommitted_edits_in_the_other_repository() {
+        let (ours, theirs) = two_repositories("s\n");
+        theirs.write("config/schema.json", "t\n");
+        let err = pull_into(&ours, &theirs).unwrap_err();
+        assert!(err.contains("uncommitted"), "{err}");
+        assert_eq!(ours.read("config/schema.json").as_deref(), Some("s\n"));
+    }
+
+    #[test]
+    fn a_pull_from_a_repository_without_a_configuration_names_the_cure() {
+        let (ours, theirs) = (two_repositories("s\n").0, Area::new());
+        let err = pull_into(&ours, &theirs).unwrap_err();
+        assert!(err.contains("mf repo update-config"), "{err}");
     }
 }

@@ -14,6 +14,7 @@ Commands:
   list                 List the loaded repositories (pretty-printed JSON), and those whose root went away, marked `"lost": true`
   init                 Initialise a new repository and print its UUID
   update-config        Merge the repository defaults into one repository's configuration
+  pull-config          Merge another repository's configuration into this one's
   load                 Load an existing repository, wait for its warmup and print its UUID
   known                List the repositories the daemon's configuration knows by name, loaded or not (pretty-printed JSON)
   unload               Unload the selected repository (stops its watcher, releases its DB lock)

@@ -12,7 +12,9 @@ the parsed documents — layout and key order do not count —; two repositories
 a schema are identical.
 
 The schema file is not synced: bringing the two into agreement is a step of its own,
-done by hand.
+[[mf repo pull-config]] (which the refusal names), followed by `mf schema reload`.
+Sync never does it itself: the daemon writes no configuration file
+([[Repository configuration]]).
 
 Identical schemas do not make every write pass: a field carried over is validated
 by the target like any write, and may break a constraint together with the target

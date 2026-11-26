@@ -31,6 +31,23 @@ pub struct SyncOutcome {
 /// the git commands that finish the merge by hand, ready to paste. Shared by
 /// `metafolder-sync-config` and `mf repo init` / `update-config`.
 pub fn conflict_help(dir: &Path, paths: &[PathBuf]) -> String {
+    merge_help(dir, paths, "the new defaults", "git merge default", "the shipped version")
+}
+
+/// What to tell the user when [`pull`] into `dir` conflicted on `paths`:
+/// as [`conflict_help`], the merge being of [`PULLED_BRANCH`]. The flag is
+/// needed for a first pull, whose histories are unrelated, and harmless after.
+pub fn pull_conflict_help(dir: &Path, paths: &[PathBuf]) -> String {
+    merge_help(
+        dir,
+        paths,
+        "the other repository's configuration",
+        &format!("git merge --allow-unrelated-histories {PULLED_BRANCH}"),
+        "the other repository's version",
+    )
+}
+
+fn merge_help(dir: &Path, paths: &[PathBuf], what: &str, merge: &str, theirs: &str) -> String {
     let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
     let files =
         paths.iter().map(|p| shell_quote(&p.to_string_lossy())).collect::<Vec<_>>().join(" ");
@@ -40,12 +57,12 @@ pub fn conflict_help(dir: &Path, paths: &[PathBuf]) -> String {
     }
     out += &format!(
         "Nothing was changed: the 'main' branch (your edits, committed) was left as it was.\n\
-         To merge the new defaults by hand:\n\
+         To merge {what} by hand:\n\
          \x20 cd {dir}\n\
-         \x20 git merge default\n\
-         then edit each file listed above to keep both your changes and the new defaults \
+         \x20 {merge}\n\
+         then edit each file listed above to keep both your changes and {what} \
          (remove the <<<<<<< ======= >>>>>>> markers), or keep one side whole:\n\
-         \x20 git checkout --theirs -- {files}    # the shipped version\n\
+         \x20 git checkout --theirs -- {files}    # {theirs}\n\
          \x20 git checkout --ours -- {files}      # your version\n\
          and finish the merge:\n\
          \x20 git add {files}\n\
@@ -386,15 +403,7 @@ pub(crate) fn update(
     let mut index = repo.index().map_err(gerr)?;
 
     if index.has_conflicts() {
-        let mut paths = Vec::new();
-        for conflict in index.conflicts().map_err(gerr)? {
-            let conflict = conflict.map_err(gerr)?;
-            if let Some(entry) = conflict.our.or(conflict.their).or(conflict.ancestor) {
-                paths.push(PathBuf::from(String::from_utf8_lossy(&entry.path).into_owned()));
-            }
-        }
-        paths.sort();
-        paths.dedup();
+        let paths = conflict_paths(&index)?;
         // Restore main exactly as it was before the merge.
         repo.cleanup_state().map_err(gerr)?;
         let restore = repo.find_object(main_restore, None).map_err(gerr)?;
@@ -426,6 +435,149 @@ pub(crate) fn update(
     repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
 
     Ok(SyncOutcome { updated: true, user_edits_committed, ..Default::default() })
+}
+
+// ── Pull from another repository's configuration ────────────────────────
+
+/// The branch of `config_dir` that holds what [`pull`] fetched, kept for a
+/// merge by hand after a conflict.
+pub const PULLED_BRANCH: &str = "pulled";
+
+/// Merges the `main` branch of the configuration repository at `from_dir`
+/// into the one at `config_dir` (`mf repo pull-config`, doc "Repository
+/// configuration"), leaving `from_dir` untouched.
+///
+/// The two histories are unrelated until a first pull joins them — each
+/// repository made its own first commit —, so the base of that first merge is
+/// the latest tree of the defaults both `default` branches hold, or an empty
+/// tree when they hold none (every file that differs then conflicts). A
+/// conflict leaves `main` as it was (with the user's edits committed) and the
+/// fetched commit on [`PULLED_BRANCH`].
+pub(crate) fn pull(config_dir: &Path, from_dir: &Path) -> Result<SyncOutcome, String> {
+    let theirs = git2::Repository::open(from_dir).map_err(gerr)?;
+    refuse_unless_on_main(&theirs, from_dir)?;
+    if working_tree_dirty(&theirs)? {
+        return Err(format!(
+            "{} has uncommitted edits: commit them there first \
+             (git -C {} commit -am 'edits'), so that what is pulled is what it reads",
+            from_dir.display(),
+            shell_quote(&from_dir.to_string_lossy())
+        ));
+    }
+    let repo = git2::Repository::open(config_dir).map_err(gerr)?;
+    refuse_unless_on_main(&repo, config_dir)?;
+
+    let from_url =
+        from_dir.to_str().ok_or_else(|| format!("{} is not valid UTF-8", from_dir.display()))?;
+    const THEIR_DEFAULT: &str = "refs/metafolder-pull/default";
+    let mut remote = repo.remote_anonymous(from_url).map_err(gerr)?;
+    remote
+        .fetch(
+            &[
+                format!("+refs/heads/main:refs/heads/{PULLED_BRANCH}"),
+                format!("+refs/heads/default:{THEIR_DEFAULT}"),
+            ],
+            None,
+            None,
+        )
+        .map_err(gerr)?;
+    let pulled = repo.refname_to_id(&format!("refs/heads/{PULLED_BRANCH}")).map_err(gerr)?;
+    let their_default = repo.refname_to_id(THEIR_DEFAULT).map_err(gerr)?;
+    repo.find_reference(THEIR_DEFAULT).map_err(gerr)?.delete().map_err(gerr)?;
+
+    let pulled_commit = repo.find_commit(pulled).map_err(gerr)?;
+    let annotated = repo.find_annotated_commit(pulled).map_err(gerr)?;
+    let main_tree = repo.head().map_err(gerr)?.peel_to_tree().map_err(gerr)?.id();
+    let dirty = working_tree_dirty(&repo)?;
+    if repo.merge_analysis(&[&annotated]).map_err(gerr)?.0.is_up_to_date()
+        || (!dirty && main_tree == pulled_commit.tree_id())
+    {
+        return Ok(SyncOutcome::default());
+    }
+
+    let sig = signature()?;
+    if dirty {
+        commit_all(&repo, &sig, "user edits")?;
+    }
+    let main =
+        repo.find_reference("refs/heads/main").map_err(gerr)?.peel_to_commit().map_err(gerr)?;
+    let outcome = |conflict: Option<Vec<PathBuf>>| SyncOutcome {
+        updated: conflict.is_none(),
+        user_edits_committed: dirty,
+        conflict,
+        ..Default::default()
+    };
+
+    let (analysis, _) = repo.merge_analysis(&[&annotated]).map_err(gerr)?;
+    if analysis.is_fast_forward() {
+        repo.find_reference("refs/heads/main")
+            .map_err(gerr)?
+            .set_target(pulled, "fast-forward to the pulled configuration")
+            .map_err(gerr)?;
+        repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
+        return Ok(outcome(None));
+    }
+
+    let mut index = if repo.merge_base(main.id(), pulled).is_ok() {
+        repo.merge_commits(&main, &pulled_commit, None).map_err(gerr)?
+    } else {
+        let base = match common_tree(&repo, their_default)? {
+            Some(tree) => repo.find_tree(tree).map_err(gerr)?,
+            None => {
+                let empty = repo.treebuilder(None).map_err(gerr)?.write().map_err(gerr)?;
+                repo.find_tree(empty).map_err(gerr)?
+            }
+        };
+        let ours = main.tree().map_err(gerr)?;
+        let theirs = pulled_commit.tree().map_err(gerr)?;
+        repo.merge_trees(&base, &ours, &theirs, None).map_err(gerr)?
+    };
+    if index.has_conflicts() {
+        return Ok(outcome(Some(conflict_paths(&index)?)));
+    }
+    let tree = index.write_tree_to(&repo).map_err(gerr)?;
+    let tree = repo.find_tree(tree).map_err(gerr)?;
+    repo.commit(
+        Some("refs/heads/main"),
+        &sig,
+        &sig,
+        &format!("merge the configuration of {}", from_dir.display()),
+        &tree,
+        &[&main, &pulled_commit],
+    )
+    .map_err(gerr)?;
+    repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
+    Ok(outcome(None))
+}
+
+/// The latest tree of this repository's `default` branch that the history of
+/// `their_default` holds too: the defaults two repositories both started from.
+fn common_tree(
+    repo: &git2::Repository,
+    their_default: git2::Oid,
+) -> Result<Option<git2::Oid>, String> {
+    let trees = |start: git2::Oid| -> Result<Vec<git2::Oid>, String> {
+        let mut walk = repo.revwalk().map_err(gerr)?;
+        walk.push(start).map_err(gerr)?;
+        walk.map(|oid| Ok(repo.find_commit(oid.map_err(gerr)?).map_err(gerr)?.tree_id())).collect()
+    };
+    let theirs: std::collections::HashSet<_> = trees(their_default)?.into_iter().collect();
+    let ours = repo.refname_to_id("refs/heads/default").map_err(gerr)?;
+    Ok(trees(ours)?.into_iter().find(|tree| theirs.contains(tree)))
+}
+
+/// The files an index holds conflicts on, sorted.
+fn conflict_paths(index: &git2::Index) -> Result<Vec<PathBuf>, String> {
+    let mut paths = Vec::new();
+    for conflict in index.conflicts().map_err(gerr)? {
+        let conflict = conflict.map_err(gerr)?;
+        if let Some(entry) = conflict.our.or(conflict.their).or(conflict.ancestor) {
+            paths.push(PathBuf::from(String::from_utf8_lossy(&entry.path).into_owned()));
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
 /// Refuses to touch a repository the user is working in by hand: a merge
@@ -901,6 +1053,14 @@ vars.target-new = "n"
         assert!(help.contains("  git add gui/style.css 'gui/my file.toml'\n"), "{help}");
         assert!(help.contains("  git commit --no-edit\n"), "{help}");
         assert!(help.contains("git merge --abort"), "{help}");
+    }
+
+    #[test]
+    fn pull_conflict_help_merges_the_pulled_branch() {
+        let help = pull_conflict_help(Path::new("/r/.metafolder/config"), &["schema.json".into()]);
+        assert!(help.contains("  git merge --allow-unrelated-histories pulled\n"), "{help}");
+        assert!(help.contains("the other repository's version"), "{help}");
+        assert!(!help.contains("default"), "{help}");
     }
 
     #[test]

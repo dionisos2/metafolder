@@ -27,6 +27,10 @@ fast-forward or a merge, and on a conflict nothing changed and the files listed,
 resolve with `git merge default` in `config/`. The repository is never updated by
 itself.
 
+Two repositories bring their configurations in line — the identical schemas a sync
+requires — with [[mf repo pull-config]], which merges one's `main` into the other's in
+the same steps.
+
 !! Who writes it
 
 The clients, never the daemon, which only reads the files

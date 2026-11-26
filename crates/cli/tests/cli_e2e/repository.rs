@@ -51,6 +51,70 @@ fn test_update_config_merges_new_defaults_into_the_repository_edits() {
     assert_ok(&mf(&["-u", &repo, "schema", "reload"]));
 }
 
+/// Commits the edits of a repository's configuration, as a user would.
+fn commit_config(root: &std::path::Path) {
+    let dir = root.join(".metafolder/config");
+    for args in [&["add", "-A"][..], &["commit", "-qm", "edit"]] {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+}
+
+#[test]
+fn test_pull_config_brings_a_schema_in_line_for_a_sync() {
+    let (a, root_a) = init_repo("pull_config_a");
+    let (b, root_b) = init_repo("pull_config_b");
+    std::fs::write(root_b.join(".metafolder/config/schema.json"), FILM_SCHEMA).unwrap();
+    commit_config(&root_b);
+    assert_ok(&mf(&["-u", &b, "schema", "reload"]));
+    let intents = temp_dir("pull_config_intents");
+    let intents = intents.join("i.toml");
+    std::fs::write(&intents, format!("[[intents]]\nrepo = '{a}'\nquery = 'mf_watch = true'\n"))
+        .unwrap();
+    let plan = || mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+
+    // Different schemas: the sync refuses, and names the cure.
+    let out = plan();
+    assert_ne!(out.code, 0);
+    assert!(out.stderr.contains("mf repo pull-config"), "{}", out.stderr);
+
+    // No daemon involved: the files alone.
+    let out = mf_cfg(&["repo", "pull-config", root_a.to_str().unwrap(), root_b.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("configuration merged from "), "{}", out.stdout);
+    let schema = std::fs::read_to_string(root_a.join(".metafolder/config/schema.json")).unwrap();
+    assert_eq!(schema, FILM_SCHEMA);
+    let again =
+        mf_cfg(&["repo", "pull-config", root_a.to_str().unwrap(), root_b.to_str().unwrap()]);
+    assert_eq!(again.stdout.trim(), "configuration already up to date");
+
+    assert_ok(&mf(&["-u", &a, "schema", "reload"]));
+    assert_ok(&plan());
+}
+
+#[test]
+fn test_pull_config_conflict_lists_the_files_and_exits_1() {
+    let (_, root_a) = init_repo("pull_config_conflict_a");
+    let (_, root_b) = init_repo("pull_config_conflict_b");
+    let map_a = root_a.join(".metafolder/config/metadata-map.toml");
+    let map_b = root_b.join(".metafolder/config/metadata-map.toml");
+    let base = std::fs::read_to_string(&map_a).unwrap();
+    std::fs::write(&map_a, format!("{base}# mine\n")).unwrap();
+    std::fs::write(&map_b, format!("{base}# theirs\n")).unwrap();
+    commit_config(&root_b);
+
+    let out = mf_cfg(&["repo", "pull-config", root_a.to_str().unwrap(), root_b.to_str().unwrap()]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("metadata-map.toml"), "{}", out.stderr);
+    assert!(out.stderr.contains("git merge --allow-unrelated-histories pulled"), "{}", out.stderr);
+    assert_eq!(std::fs::read_to_string(&map_a).unwrap(), format!("{base}# mine\n"));
+}
+
 #[test]
 fn test_update_config_moves_an_old_layout_into_config() {
     let (repo, root) = init_repo("update_config_old");

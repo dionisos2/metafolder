@@ -1,0 +1,25 @@
+title: $:/mf/gen/CLI command/mf repo pull-config
+catalog: CLI command
+target: mf repo pull-config
+summary: Merge another repository's configuration into this one's
+
+!! Reference
+
+```
+Merge another repository's configuration into this one's
+
+Merges the 'main' branch of FROM's .metafolder/config/ into PATH's, as update-config does the defaults (doc "Repository configuration"): what FROM changed joins PATH's own edits — to bring two schemas in line before a sync. FROM is only read, and must have its edits committed. A conflict leaves PATH's config/ untouched, keeps what was fetched on its branch 'pulled' and lists the files (exit 1). Works on the files alone: a loaded repository reads the result at `mf schema reload` (the schema) or its next load.
+
+Usage: mf repo pull-config <PATH> <FROM>
+
+Arguments:
+  <PATH>
+          The repository to merge into: its .metafolder directory, or its root
+
+  <FROM>
+          The repository to merge from: its .metafolder directory, or its root
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

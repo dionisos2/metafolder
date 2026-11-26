@@ -72,16 +72,7 @@ pub(super) fn report_config_conflict(
 /// configuration of the repository at `path` — its `.metafolder/`, or the
 /// root holding one. No daemon involved.
 pub fn update_repo_config(path: &Path) -> Result<i32, CliError> {
-    let metafolder = if path.join("config.json").is_file() {
-        path.to_path_buf()
-    } else if path.join(".metafolder").join("config.json").is_file() {
-        path.join(".metafolder")
-    } else {
-        return Err(CliError::Usage(format!(
-            "no repository at {}: name its .metafolder directory or its root",
-            path.display()
-        )));
-    };
+    let metafolder = metafolder_dir_at(path)?;
     let outcome = metafolder_core::repo_config::install(&metafolder, &repo_defaults_dir()?)
         .map_err(CliError::Op)?;
     for moved in &outcome.migrated {
@@ -100,6 +91,41 @@ pub fn update_repo_config(path: &Path) -> Result<i32, CliError> {
             "configuration already up to date"
         }
     );
+    Ok(0)
+}
+
+/// The `.metafolder/` directory `path` names: itself, or the one in the root
+/// it names.
+fn metafolder_dir_at(path: &Path) -> Result<PathBuf, CliError> {
+    if path.join("config.json").is_file() {
+        Ok(path.to_path_buf())
+    } else if path.join(".metafolder").join("config.json").is_file() {
+        Ok(path.join(".metafolder"))
+    } else {
+        Err(CliError::Usage(format!(
+            "no repository at {}: name its .metafolder directory or its root",
+            path.display()
+        )))
+    }
+}
+
+/// `mf repo pull-config <path> <from>`: merges the configuration of the
+/// repository at `from` into the one at `path`. No daemon involved.
+pub fn pull_repo_config(path: &Path, from: &Path) -> Result<i32, CliError> {
+    let metafolder = metafolder_dir_at(path)?;
+    let from = std::path::absolute(metafolder_dir_at(from)?)
+        .map_err(|e| CliError::Op(format!("cannot resolve {}: {e}", from.display())))?;
+    let outcome = metafolder_core::repo_config::pull(&metafolder, &from).map_err(CliError::Op)?;
+    if let Some(paths) = &outcome.conflict {
+        let dir = metafolder.join(metafolder_core::repo_config::CONFIG_DIR);
+        eprint!("{}", metafolder_core::config_sync::pull_conflict_help(&dir, paths));
+        return Ok(1);
+    }
+    if outcome.updated {
+        println!("configuration merged from {}", from.display());
+    } else {
+        println!("configuration already up to date");
+    }
     Ok(0)
 }
 

@@ -124,6 +124,11 @@ than breaking them.
   (`check-deps.sh --headless`). It still needs `node`, which renders the documentation.
 
 ### Added
+- **`mf repo pull-config <path> <from>`** merges another repository's
+  `.metafolder/config/` into this one's — how two repositories get the identical schemas
+  a sync requires, which `mf sync plan`/`run` now name when they refuse. The first pull
+  merges from the defaults both were installed from.
+
 - **Syncing with a repository of another machine: `mf repo borrow` and `mf repo
   give-back`.** Through a mount of its files (sshfs…), the remote's `.metafolder/` is
   copied to a local directory and loaded from there, to sync like any repository; the

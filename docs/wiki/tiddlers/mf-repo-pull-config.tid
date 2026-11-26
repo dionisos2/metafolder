@@ -1,0 +1,32 @@
+title: mf repo pull-config
+tags: [[CLI command]] Configuration Sync
+kind: reference
+summary: Merge another repository's configuration into this one's
+
+`mf repo pull-config <path> <from>` merges the `main` branch of `<from>`'s
+`.metafolder/config/` into `<path>`'s ([[Repository configuration]]), the way
+[[mf repo update-config]] merges the defaults: what `<from>` changed joins `<path>`'s
+own edits. It is how two repositories get the identical schemas a sync requires
+([[Why schemas must be identical]]). Each path names a `.metafolder/` directory or the
+root holding one; no daemon is involved, and a loaded `<path>` reads its new schema at
+`mf schema reload`.
+
+* `<from>` is only read. Its edits must be committed — what its daemon reads is its
+  working tree, and only commits are fetched —, or the command refuses and says how.
+* `<path>`'s uncommitted edits are committed first, as for `update-config`.
+* Prints `configuration merged from <from>` or `configuration already up to date`.
+* A conflict leaves `<path>`'s `config/` as it was, lists the files (full paths) on
+  stderr with the git commands that finish the merge by hand, and exits 1. What was
+  fetched stays on the branch `pulled` of `<path>`'s `config/`, for that merge.
+
+!! The first pull
+
+Each repository's `config/` started with a commit of its own, so two of them share no
+commit until a first pull joins their histories (the merge commit has both as
+parents; later pulls merge from it as git would). That first merge takes as its base
+the latest defaults both `default` branches hold — the tree of
+`~/.config/metafolder/daemon/repo-default/` they were both installed or updated from —,
+and an empty base when there is none, every file that differs then a conflict. A merge
+by hand after a conflict on a first pull has only git's own empty base
+(`git merge --allow-unrelated-histories pulled`, as the help says), so it may list more
+than the command did.
