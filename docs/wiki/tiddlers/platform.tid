@@ -15,7 +15,7 @@ The ''programs'' are another matter. A port to Windows, then macOS, is under way
 |daemon, `mf` |built and tested |not built |compiles (`cargo check --target x86_64-pc-windows-gnu`), never run |
 |watcher |the inotify source, or the fanotify broker ([[Watch sources and regimes]]) |the `notify` source would place one registration per directory |same |
 |`metafolder-watchd` |yes |no (fanotify is Linux-only) |no: the crate compiles empty, the binary says so and exits |
-|GUI |yes |refuses to start: it needs `bwrap` ([[Sandboxing the media decoders]]) |does not compile yet |
+|GUI |yes |refuses to start: it needs `bwrap` ([[Sandboxing the media decoders]]) |compiles, and refuses to start for the same reason |
 
 What the daemon does without Linux, where it compiles:
 
@@ -25,6 +25,8 @@ What the daemon does without Linux, where it compiles:
 * ''no copy in memory'' off Unix: holding a repository in memory needs a tmpfs, and is refused ([[Holding a repository in memory]]);
 * ''no free-space probe'' off Unix: the store's map grows by its default room;
 * the calibration does not drop the store from the page cache off Linux, and so reads warm.
+
+And the GUI, off Unix: ''no workspace shell'' — its persistent `bash` runs over pipes, FIFOs and process groups, so a typed line is refused, naming why ([[shell panel]]); a path the shell gives back, and one quoted for it, are taken at their text.
 
 Where the code does branch per platform, both branches are kept honest — the stat
 fields that exist only on Unix ([[File metadata fields]]), the token directory

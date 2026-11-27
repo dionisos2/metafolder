@@ -21,10 +21,10 @@ and binaries; the test targets not yet checked):
 - =core=, =cli=, =daemon= and =watchd= (empty off Linux) compile, clippy
   clean, libraries and binaries; what the daemon does without Linux is in doc
   "Platform".
-- =gui=: stops at the build script, =icons/icon.ico= missing (Tauri needs it
-  for a Windows resource), and in the =trash= crate 5.4.0, whose Windows code
-  fails to compile (=windows.rs:564=, E0070): try a newer version. What
-  follows is unknown.
+- =gui= compiles and is clippy clean: =icons/icon.ico= generated from
+  =icon.png=, =trash= given its Windows COM feature, the persistent shell
+  replaced off Unix by one that refuses (=shell_session_unsupported.rs=). It
+  still refuses to start without =bwrap= (step 2).
 - then the test targets (=--all-targets=), and =bench= / =query-oracle=.
 
 ** 2. Confining the GUI's media decoders on Windows

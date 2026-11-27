@@ -10,7 +10,10 @@
 
 use crate::state::workspace::{ShellLine, ShellPlace};
 use crate::state::GuiState;
-use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
+use std::ffi::OsStr;
+use std::ffi::OsString;
+#[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -126,7 +129,7 @@ pub async fn run_in(
         let _ = std::fs::remove_file(&file);
         let left = left.strip_suffix(b"\n").unwrap_or(&left);
         if !left.is_empty() {
-            gui.set_shell_cd(&ws_id, PathBuf::from(OsStr::from_bytes(left)), place.selection)?;
+            gui.set_shell_cd(&ws_id, path_of_bytes(left), place.selection)?;
         }
     }
 
@@ -232,18 +235,35 @@ pub async fn shell_cwd(
     Ok(cwd_of(&app.gui, &app.daemon, &ws_id).await.map(|dir| dir.to_string_lossy().into_owned()))
 }
 
+/// The path whose bytes the shell wrote: exact on Unix, its text elsewhere.
+fn path_of_bytes(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    return PathBuf::from(OsStr::from_bytes(bytes));
+    #[cfg(not(unix))]
+    return PathBuf::from(String::from_utf8_lossy(bytes).into_owned());
+}
+
 /// `path` as one single-quoted `sh` word, at its exact bytes: a name that is
-/// not text is still that name (doc "Tree names").
+/// not text is still that name (doc "Tree names"). Off Unix, at its text.
 pub(crate) fn shell_quote(path: &Path) -> OsString {
     let mut quoted = vec![b'\''];
-    for &byte in path.as_os_str().as_bytes() {
+    #[cfg(unix)]
+    let bytes = path.as_os_str().as_bytes();
+    #[cfg(not(unix))]
+    let lossy = path.to_string_lossy();
+    #[cfg(not(unix))]
+    let bytes = lossy.as_bytes();
+    for &byte in bytes {
         match byte {
             b'\'' => quoted.extend_from_slice(b"'\\''"),
             byte => quoted.push(byte),
         }
     }
     quoted.push(b'\'');
-    OsString::from_vec(quoted)
+    #[cfg(unix)]
+    return OsString::from_vec(quoted);
+    #[cfg(not(unix))]
+    return OsString::from(String::from_utf8_lossy(&quoted).into_owned());
 }
 
 /// Clears the running indicator for a workspace when dropped, so it is removed

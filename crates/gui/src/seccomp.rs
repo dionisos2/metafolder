@@ -20,6 +20,9 @@
 //! on x86-64) kills the process — the numbers would not mean what the list
 //! says.
 
+// The filter is Linux's: elsewhere its instructions are defined, not used.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
 /// The classic-BPF instruction (`struct sock_filter`).
 #[derive(Clone, Copy)]
 struct Insn {

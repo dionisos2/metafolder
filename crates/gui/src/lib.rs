@@ -40,6 +40,12 @@ pub mod saved_workspaces;
 pub mod seccomp;
 pub mod server;
 pub mod shell_exec;
+#[cfg(unix)]
+pub mod shell_session;
+/// The persistent shell is bash over pipes, FIFOs and process groups: off Unix
+/// a session that runs nothing, and says so (doc "Platform").
+#[cfg(not(unix))]
+#[path = "shell_session_unsupported.rs"]
 pub mod shell_session;
 pub mod slow;
 pub mod state;
