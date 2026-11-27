@@ -1269,9 +1269,17 @@ fn unload_lost(
 
 /// The identity of the directory at `root` (`st_dev`, `st_ino`), following a
 /// symlinked root as the repository does; `None` when it cannot be read.
+#[cfg(unix)]
 fn root_identity_of(root: &Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(root).ok().map(|m| (m.dev(), m.ino()))
+}
+
+/// No inode to tell a moved root by off Unix: never read, so a root moved
+/// away is not noticed (doc "Platform").
+#[cfg(not(unix))]
+fn root_identity_of(_root: &Path) -> Option<(u64, u64)> {
+    None
 }
 
 /// Writes `mfr_watch_exceeded = true` on each subtree root of `frontier`,

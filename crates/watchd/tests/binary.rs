@@ -1,5 +1,6 @@
 //! The binary itself: its arguments reach the service, and a broker that
 //! cannot start says so and exits non-zero — rather than stream nothing.
+#![cfg(target_os = "linux")]
 
 #[test]
 fn test_a_broker_that_cannot_start_says_so() {

@@ -411,10 +411,7 @@ pub(super) fn rows_abs_path(
                     None => crate::relpath::RelPath::root(),
                 };
                 let abs = parent_rel.child(name).to_abs(root);
-                use std::os::unix::ffi::OsStrExt;
-                return Ok(Some(metafolder_core::metarecord::TreePath::from_bytes(
-                    abs.as_os_str().as_bytes().to_vec(),
-                )));
+                return Ok(Some(metafolder_core::metarecord::TreePath::from_path(&abs)));
             }
         }
     }

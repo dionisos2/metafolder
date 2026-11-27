@@ -31,14 +31,23 @@
 //! handle *resolved* run only where the kernel allows it there (Linux 6.10+)
 //! and nothing forbids it — not in a container whose seccomp profile refuses
 //! `open_by_handle_at`: measure on a host (`cargo llvm-cov -p metafolder-watchd`).
+//!
+//! fanotify is Linux's: elsewhere the crate is empty, and the daemon watches
+//! with its notify source only (doc "Platform").
 
+#[cfg(target_os = "linux")]
 pub mod fanotify;
+#[cfg(target_os = "linux")]
 pub mod filter;
+#[cfg(target_os = "linux")]
 pub mod proto;
+#[cfg(target_os = "linux")]
 pub mod server;
+#[cfg(target_os = "linux")]
 pub mod service;
-#[cfg(any(test, feature = "sim"))]
+#[cfg(all(target_os = "linux", any(test, feature = "sim")))]
 pub mod sim;
+#[cfg(target_os = "linux")]
 mod sys;
-#[cfg(test)]
+#[cfg(all(target_os = "linux", test))]
 mod test_support;

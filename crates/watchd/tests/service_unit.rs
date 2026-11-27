@@ -1,6 +1,7 @@
 //! The systemd unit is part of the broker's security: it is what grants the two
 //! capabilities, and what takes everything else away. These tests hold it to
 //! that (doc "The fanotify broker").
+#![cfg(target_os = "linux")]
 
 use std::collections::HashMap;
 use std::path::PathBuf;

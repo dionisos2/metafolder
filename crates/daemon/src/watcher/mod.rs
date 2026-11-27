@@ -32,6 +32,7 @@ use crate::forest::Forest;
 use crate::relpath::RelPath;
 use crate::state::RepoState;
 
+#[cfg(target_os = "linux")]
 pub mod fanotify;
 pub mod inotify;
 
@@ -268,6 +269,7 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
 /// load: a restart is what re-decides (a broker that comes up later is picked
 /// up by the next load).
 /// The source, and why the broker was not taken when it was not.
+#[cfg(target_os = "linux")]
 fn open_source(
     repo: &Arc<RepoState>,
     tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
@@ -289,6 +291,16 @@ fn open_source(
             Ok((inotify::Source::start(repo, tx)?, Some(reason)))
         }
     }
+}
+
+/// fanotify is Linux's: elsewhere the notify source is the only one, and not a
+/// fallback worth a warning (doc "Platform").
+#[cfg(not(target_os = "linux"))]
+fn open_source(
+    repo: &Arc<RepoState>,
+    tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
+) -> Result<(Arc<dyn Source>, Option<String>)> {
+    Ok((inotify::Source::start(repo, tx)?, Some("the fanotify broker is Linux's".into())))
 }
 
 // ── Watch check (doc "Checking whether a path is watched") ───────────────────────────

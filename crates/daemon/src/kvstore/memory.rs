@@ -27,14 +27,23 @@ pub struct Residency {
 
 /// Where the copies live by default: a `tmpfs` every Linux has, one
 /// directory per user.
+#[cfg(unix)]
 pub fn default_dir() -> PathBuf {
     PathBuf::from(format!("/dev/shm/metafolder-{}", rustix::process::getuid().as_raw()))
+}
+
+/// No `tmpfs` to hold a copy in off Unix: a value for the setting only, as
+/// [`copy_in`] refuses there (doc "Platform").
+#[cfg(not(unix))]
+pub fn default_dir() -> PathBuf {
+    std::env::temp_dir().join("metafolder-memory")
 }
 
 /// The file held locked for as long as a copy is in use.
 const HELD: &str = "held.lock";
 
 /// The bytes copied per step: the unit of the load's progress.
+#[cfg(unix)]
 const CHUNK: usize = 16 << 20;
 
 /// What tells a store's owner that its copy fell behind the disk.
@@ -70,6 +79,17 @@ impl Memory {
     /// Copies the store file `data` into a new directory under `base`,
     /// `progress(done, total)` in bytes. The store must not be written
     /// meanwhile. Returns the copy's directory, locked.
+    #[cfg(not(unix))]
+    pub(super) fn copy_in(
+        _data: &Path,
+        _base: &Path,
+        _progress: &dyn Fn(u64, u64),
+    ) -> Result<(PathBuf, File)> {
+        bail!("holding a repository in memory needs a tmpfs, which only Unix has")
+    }
+
+    /// See the other `copy_in`.
+    #[cfg(unix)]
     pub(super) fn copy_in(
         data: &Path,
         base: &Path,
@@ -173,6 +193,7 @@ impl Memory {
 #[cfg(test)]
 const SEQ: std::sync::atomic::Ordering = std::sync::atomic::Ordering::SeqCst;
 
+#[cfg(unix)]
 fn copy_file(from: &Path, to: &Path, total: u64, progress: &dyn Fn(u64, u64)) -> Result<()> {
     use std::io::{Read, Write};
     let mut src = File::open(from)?;

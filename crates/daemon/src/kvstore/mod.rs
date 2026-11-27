@@ -609,14 +609,25 @@ fn map_to_grant(used: usize, map: usize, free: usize) -> Option<usize> {
 
 /// Bytes available to an unprivileged writer on the filesystem holding
 /// `dir`; `None` when it cannot be asked.
+#[cfg(unix)]
 fn free_space(dir: &Path) -> Option<usize> {
     let st = rustix::fs::statvfs(dir).ok()?;
     Some((st.f_bavail as u128 * st.f_frsize as u128).min(usize::MAX as u128) as usize)
 }
 
+/// Not asked off Unix yet: the map grows by the default room (doc "Platform").
+#[cfg(not(unix))]
+fn free_space(_dir: &Path) -> Option<usize> {
+    None
+}
+
 /// `n` rounded up to the system's page size, as LMDB requires of a map size.
 fn page_multiple(n: usize) -> usize {
+    #[cfg(unix)]
     let page = rustix::param::page_size().max(4096);
+    // Windows maps by its allocation granularity, 64 KiB.
+    #[cfg(not(unix))]
+    let page = 64 << 10;
     n.div_ceil(page) * page
 }
 

@@ -657,6 +657,7 @@ impl Source {
 
     /// [`start`](Self::start) for the fanotify source: watching nothing until
     /// it is told the mounts the broker cannot cover ([`set_within`](Self::set_within)).
+    #[cfg(target_os = "linux")]
     pub(crate) fn start_within(
         repo: &Arc<RepoState>,
         tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
@@ -666,6 +667,7 @@ impl Source {
 
     /// Where watches may go from now on: inside `mounts` only. Whether that
     /// changed — the caller then places them again.
+    #[cfg(target_os = "linux")]
     pub(crate) fn set_within(&self, mut mounts: Vec<PathBuf>) -> bool {
         mounts.sort();
         let mut within = self.within.lock_recover();

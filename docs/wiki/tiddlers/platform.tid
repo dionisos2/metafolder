@@ -1,27 +1,36 @@
 title: Platform
 kind: overview
 aliases: platforms portability windows macos
-summary: Linux is the platform metafolder runs on; the data model is portable, and the code is written for macOS and Windows where it can be, but neither is built or tested.
+summary: Linux is the platform metafolder runs on; the data model is portable, a port to Windows then macOS is under way, and what each Linux-only part does elsewhere.
 
 The ''data'' is platform-independent: paths are stored relative to the repository
 root, `/`-separated, as the exact bytes of their names ([[Path representation]]), so a
 repository created on one machine can be loaded on another — a repository on a
 removable drive, say ([[Moving a repository]]).
 
-The ''programs'' are another matter. What runs where, today:
+The ''programs'' are another matter. A port to Windows, then macOS, is under way
+(`roadmap.org`); what runs where, today:
 
 |!Piece |!Linux |!macOS |!Windows |
-|daemon, `mf` |built and tested |not built: written with Unix calls only (`flock`, `statvfs`, Unix sockets), no port work done |does not compile: those calls have no fallback |
+|daemon, `mf` |built and tested |not built |compiles (`cargo check --target x86_64-pc-windows-gnu`), never run |
 |watcher |the inotify source, or the fanotify broker ([[Watch sources and regimes]]) |the `notify` source would place one registration per directory |same |
-|`metafolder-watchd` |yes |no (fanotify is Linux-only) |no |
-|GUI |yes |refuses to start: it needs `bwrap` ([[Sandboxing the media decoders]]) |same |
+|`metafolder-watchd` |yes |no (fanotify is Linux-only) |no: the crate compiles empty, the binary says so and exits |
+|GUI |yes |refuses to start: it needs `bwrap` ([[Sandboxing the media decoders]]) |does not compile yet |
+
+What the daemon does without Linux, where it compiles:
+
+* ''no broker'': the notify source only, and `GET /watch` says why (`backend_reason`); `[settings] watchd-socket` is not read;
+* ''no mount table'': `/proc/self/mountinfo` is Linux's, so mount points are told by the device id ([[Mount point detection]]) and a drive plugged in under a root is seen at the next placement, not as it comes ([[Offline subtrees]]);
+* ''no root identity'' off Unix: a root moved away is not noticed ([[When the root moves]]);
+* ''no copy in memory'' off Unix: holding a repository in memory needs a tmpfs, and is refused ([[Holding a repository in memory]]);
+* ''no free-space probe'' off Unix: the store's map grows by its default room;
+* the calibration does not drop the store from the page cache off Linux, and so reads warm.
 
 Where the code does branch per platform, both branches are kept honest — the stat
 fields that exist only on Unix ([[File metadata fields]]), the token directory
 ([[Session tokens]]), mount point detection without `/proc` ([[Mount point detection]])
-— but nothing exercises the non-Linux ones. Treat macOS and Windows as ''design
-targets'': a change should not make a port harder than it is, and should not claim one
-exists.
+— but nothing exercises the non-Linux ones. A change should not make the port harder
+than it is, and should not claim it is done.
 
 The GUI renders in the system WebView (WebKit2GTK on Linux); which audio and video
 codecs it can play depends on the GStreamer plugins installed.

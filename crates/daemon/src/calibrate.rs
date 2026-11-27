@@ -182,11 +182,13 @@ impl Scratch {
 
     /// Closes the store, drops its file from the page cache, and opens it
     /// again: what the next write reads comes from the disk. A file still
-    /// mapped would keep its pages.
+    /// mapped would keep its pages. Only Linux is told to drop them: elsewhere
+    /// the calibration reads warm (doc "Platform").
     fn go_cold(&mut self) -> Result<()> {
         self.store = None;
         let data = std::fs::File::open(self.dir.join("data.mdb")).context("open the store")?;
         data.sync_all().context("sync the store")?;
+        #[cfg(target_os = "linux")]
         rustix::fs::fadvise(&data, 0, None, rustix::fs::Advice::DontNeed)
             .context("drop the store from the page cache")?;
         self.store = Some(KvStore::open(&self.dir)?);

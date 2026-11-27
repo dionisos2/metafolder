@@ -18,18 +18,9 @@ x86_64-pc-windows-gnu= and =mingw-w64-gcc= are installed, and
 State on 27 November 2026 (=cargo check --workspace --keep-going=, libraries
 and binaries; the test targets not yet checked):
 
-- =core= and =cli= compile already.
-- =watchd= is Linux by nature: the crate compiles empty elsewhere, its
-  binary refuses to run. Its =proto= reads names as Unix bytes, so it goes
-  Linux-only with the rest.
-- =daemon=: 17 errors once =watchd= is gated, all of one kind —
-  =std::os::unix= (=OsStrExt=, =DirBuilderExt::mode=, =MetadataExt::dev/ino=),
-  =rustix::{fs, param, process}=, the fanotify source
-  (=watcher/fanotify.rs=) and the mount watch (=mount.rs=, which uses
-  =watchd::fanotify::MountWatch=). Files: =state.rs=, =mount.rs=,
-  =kvstore/{memory,mod}.rs=, =watcher/fanotify.rs=, =routes/history.rs=,
-  =calibrate.rs=. More may appear once these are fixed (type checking runs
-  after name resolution).
+- =core=, =cli=, =daemon= and =watchd= (empty off Linux) compile, clippy
+  clean, libraries and binaries; what the daemon does without Linux is in doc
+  "Platform".
 - =gui=: stops at the build script, =icons/icon.ico= missing (Tauri needs it
   for a Windows resource), and in the =trash= crate 5.4.0, whose Windows code
   fails to compile (=windows.rs:564=, E0070): try a newer version. What

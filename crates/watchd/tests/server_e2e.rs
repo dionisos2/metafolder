@@ -4,6 +4,7 @@
 //! The event source is synthetic — the kernel side has its own tests — because
 //! what is under test here is the broker's half: identification, filtering,
 //! and the shape of the stream.
+#![cfg(target_os = "linux")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};

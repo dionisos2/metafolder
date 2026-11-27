@@ -22,6 +22,9 @@
 //! gives each *subvolume* an anonymous device id, so `st_dev` calls a plain
 //! subvolume boundary a mount point although nothing is mounted there and
 //! nothing can be unplugged.
+// The mount table and its following are Linux's (`/proc/self/mountinfo`):
+// elsewhere the parser and the follower's state are unused (doc "Platform").
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -491,6 +494,14 @@ pub mod follow {
         followed.push(Followed { repo: Arc::downgrade(repo), root, points });
     }
 
+    /// Linux signals a change of its mount table; elsewhere nothing is
+    /// followed, as where the table cannot be watched (doc "Platform").
+    #[cfg(not(target_os = "linux"))]
+    fn start() -> Option<Mutex<Vec<Followed>>> {
+        None
+    }
+
+    #[cfg(target_os = "linux")]
     fn start() -> Option<Mutex<Vec<Followed>>> {
         let mut watch = match metafolder_watchd::fanotify::MountWatch::open() {
             Ok(watch) => watch,
@@ -516,6 +527,7 @@ pub mod follow {
 
     /// The table changed: each repository whose mount points did is told
     /// which, on a thread of its own — it waits for the repository's lock.
+    #[cfg(target_os = "linux")]
     fn changed(followed: &mut Vec<Followed>) {
         table::invalidate();
         let table = table::current();
@@ -608,8 +620,14 @@ struct MountInfoEntry {
 /// options [optional fields] - fstype source superoptions`. Later lines win, so
 /// a directory mounted over twice reports the volume actually visible.
 fn parse_mountinfo(bytes: &[u8]) -> HashMap<PathBuf, MountInfoEntry> {
-    use std::os::unix::ffi::OsStringExt;
-    let path = |field: &[u8]| PathBuf::from(std::ffi::OsString::from_vec(unescape(field)));
+    #[cfg(unix)]
+    let path = |field: &[u8]| {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(unescape(field)))
+    };
+    // Only Linux has the table: elsewhere it is only parsed in tests.
+    #[cfg(not(unix))]
+    let path = |field: &[u8]| PathBuf::from(String::from_utf8_lossy(&unescape(field)).into_owned());
     let mut out = HashMap::new();
     for (order, line) in bytes.split(|b| *b == b'\n').enumerate() {
         let fields: Vec<&[u8]> = line.split(|b| *b == b' ').collect();
