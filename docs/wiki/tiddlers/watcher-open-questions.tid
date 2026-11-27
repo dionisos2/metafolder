@@ -1,7 +1,7 @@
 title: Watcher open questions
 tags: Watcher
 kind: question
-status: deferred
-summary: A per-repository choice of source.
+status: record
+summary: The questions the watcher left open, now settled: a per-repository choice of source given up.
 
-* ''A per-repository choice of source'' (forcing inotify for one repository while the broker serves the others) has not been asked for; today the socket is the only switch.
+* ''A per-repository choice of source: given up'' (user, 27 November 2026). Forcing inotify for one repository while the broker serves the others was never asked for; the socket stays the only switch. The case it would serve, a part of a tree the broker does not see, is already handled on its own: a mount the broker does not cover is watched by an inotify source scoped to it ([[Uncovered mounts]]).
