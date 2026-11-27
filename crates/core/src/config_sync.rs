@@ -91,7 +91,52 @@ fn shell_quote(s: &str) -> String {
 /// repository at `config_dir`, creating it on first run and otherwise merging
 /// the refreshed defaults into the user's `main` branch.
 pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String> {
+    apply(gather_defaults(source_root)?, config_dir)
+}
+
+/// As [`sync`], from a directory of defaults already laid out as the
+/// configuration is — what [`export_defaults`] writes, and a release installs
+/// as `share/metafolder/defaults/` (doc "Building a release").
+pub fn sync_defaults(defaults_dir: &Path, config_dir: &Path) -> Result<SyncOutcome, String> {
+    apply(read_defaults(defaults_dir)?, config_dir)
+}
+
+/// Where a release installs the defaults, from the path of the running
+/// binary: `<prefix>/bin/x` → `<prefix>/share/metafolder/defaults`.
+pub fn installed_defaults(exe: &Path) -> PathBuf {
+    let bin = exe.parent().unwrap_or(Path::new("."));
+    let prefix = bin.parent().unwrap_or(Path::new(".."));
+    prefix.join("share").join("metafolder").join("defaults")
+}
+
+/// Writes the defaults gathered from the checkout `source_root` into
+/// `out_dir`, laid out as the configuration is, for [`sync_defaults`]. The
+/// directory must be new or empty: a file left from an older export would ship
+/// as a default.
+pub fn export_defaults(source_root: &Path, out_dir: &Path) -> Result<(), String> {
     let files = gather_defaults(source_root)?;
+    if let Ok(mut entries) = std::fs::read_dir(out_dir) {
+        if entries.next().is_some() {
+            return Err(format!("{} is not empty", out_dir.display()));
+        }
+    }
+    for (rel, bytes) in &files {
+        // Written by every sync itself, not a shipped default.
+        if rel == Path::new(".gitignore") {
+            continue;
+        }
+        let path = out_dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&path, bytes)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn apply(files: BTreeMap<PathBuf, Vec<u8>>, config_dir: &Path) -> Result<SyncOutcome, String> {
     let mut outcome = if config_dir.join(".git").exists() {
         update(config_dir, &files)?
     } else {
@@ -729,6 +774,25 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
     Ok(out)
 }
 
+/// The defaults of a directory laid out as the configuration is. Like a
+/// checkout's, they must hold the rendered documentation.
+fn read_defaults(dir: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
+    if !dir.is_dir() {
+        return Err(format!(
+            "no defaults at {}: give a source checkout with --source <dir>, \
+             or a defaults directory with --defaults <dir>",
+            dir.display()
+        ));
+    }
+    if !dir.join("docs").is_dir() {
+        return Err(format!("{} has no docs/: not a complete defaults directory", dir.display()));
+    }
+    let mut out = BTreeMap::new();
+    out.insert(PathBuf::from(".gitignore"), GITIGNORE.as_bytes().to_vec());
+    collect_files(dir, Path::new(""), &mut out)?;
+    Ok(out)
+}
+
 pub(crate) fn collect_files(
     dir: &Path,
     prefix: &Path,
@@ -995,6 +1059,81 @@ vars.target-new = "n"
         let err = sync(&source, &config).unwrap_err();
         assert!(err.contains("make docs"), "{err}");
         assert!(!config.join("gui").exists(), "nothing applied");
+    }
+
+    /// The tree of `config`'s `default` branch.
+    fn default_tree(config: &Path) -> git2::Oid {
+        let repo = git2::Repository::open(config).unwrap();
+        let branch = repo.find_branch("default", git2::BranchType::Local).unwrap();
+        let id = branch.get().peel_to_tree().unwrap().id();
+        id
+    }
+
+    #[test]
+    fn an_exported_defaults_dir_applies_as_its_checkout_does() {
+        let area = scratch();
+        let source = area.join("src");
+        make_source(&source, &[("gui/style.css", "body{}"), ("core/query-grammar", "g1")]);
+        let shipped = source.join("scripts").join("shipped");
+        fs::create_dir_all(shipped.join("lib")).unwrap();
+        fs::write(shipped.join("lib/mf-gui.sh"), "helpers\n").unwrap();
+        fs::create_dir_all(source.join("scripts/templates")).unwrap();
+        fs::write(source.join("scripts/templates/t.sh"), "#!/bin/sh\n").unwrap();
+
+        // The export is laid out as the configuration is, so that a release
+        // ships it as it is (doc "Building a release").
+        let defaults = area.join("defaults");
+        export_defaults(&source, &defaults).unwrap();
+        assert_eq!(fs::read_to_string(defaults.join("gui/style.css")).unwrap(), "body{}");
+        assert_eq!(
+            fs::read_to_string(defaults.join("scripts/lib/mf-gui.sh")).unwrap(),
+            "helpers\n"
+        );
+        assert_eq!(fs::read_to_string(defaults.join("docs/index.json")).unwrap(), "[]\n");
+
+        let (from_source, from_defaults) = (area.join("cfg-a"), area.join("cfg-b"));
+        sync(&source, &from_source).unwrap();
+        let out = sync_defaults(&defaults, &from_defaults).unwrap();
+        assert!(out.initialized);
+        assert_eq!(default_tree(&from_source), default_tree(&from_defaults));
+        assert!(from_defaults.join(".gitignore").exists());
+    }
+
+    #[test]
+    fn an_export_refuses_a_directory_that_holds_something() {
+        let area = scratch();
+        let source = area.join("src");
+        make_source(&source, &[("gui/style.css", "body{}")]);
+        // A file left from an older export would ship as a default.
+        let defaults = area.join("defaults");
+        fs::create_dir_all(&defaults).unwrap();
+        fs::write(defaults.join("stale.toml"), "").unwrap();
+        let err = export_defaults(&source, &defaults).unwrap_err();
+        assert!(err.contains("not empty"), "{err}");
+    }
+
+    #[test]
+    fn a_defaults_dir_without_docs_is_refused() {
+        let area = scratch();
+        let (defaults, config) = (area.join("defaults"), area.join("cfg"));
+        fs::create_dir_all(defaults.join("gui")).unwrap();
+        fs::write(defaults.join("gui/style.css"), "body{}").unwrap();
+        let err = sync_defaults(&defaults, &config).unwrap_err();
+        assert!(err.contains("docs"), "{err}");
+        assert!(!config.join("gui").exists(), "nothing applied");
+    }
+
+    #[test]
+    fn a_missing_defaults_dir_names_the_ways_to_give_one() {
+        let area = scratch();
+        let err = sync_defaults(&area.join("nowhere"), &area.join("cfg")).unwrap_err();
+        assert!(err.contains("nowhere") && err.contains("--source"), "{err}");
+    }
+
+    #[test]
+    fn the_installed_defaults_are_beside_the_binary() {
+        let exe = Path::new("/opt/mf/bin/metafolder-sync-config");
+        assert_eq!(installed_defaults(exe), PathBuf::from("/opt/mf/share/metafolder/defaults"));
     }
 
     #[test]

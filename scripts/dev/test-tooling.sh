@@ -16,6 +16,7 @@ suites=(
     test-prune-target.sh    # target/ pruning (never deletes a live artifact)
     test-run-tests.sh       # the test-runner wrapper's totals/reporting
     test-makefile.sh        # the build and install targets: order and paths
+    test-release.sh         # the release archive's layout and its install.sh
     test-check.sh           # the static checks' disk-space warning, skips and help
     test-shipped-skip.sh    # the shipped-script suites: not built skips, a dead daemon fails
     test-doc-tools.sh       # the documentation wiki's scripts/dev/doc

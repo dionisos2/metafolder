@@ -14,6 +14,12 @@ than breaking them.
 ## [Unreleased]
 
 ### Changed
+- **`metafolder-sync-config` with no argument reads the installed defaults**
+  (doc "Building a release"): `<dir of the binary>/../share/metafolder/defaults/`,
+  no longer the current directory. From a checkout, give it: `--source .`
+  (`make dev` and `make install` do). `--defaults <dir>` reads a directory laid out
+  as the configuration is, which `--source <dir> --export <out>` writes.
+
 - **A metarecord gets the rows its types require** (doc "Completing a type's required
   fields"): created, or given a type, it gets one row of each field a constraint of
   `min: 1` requires and it lacks, at the constraint's `default` (`nothing` without
@@ -136,6 +142,11 @@ than breaking them.
   (`check-deps.sh --headless`). It still needs `node`, which renders the documentation.
 
 ### Added
+- **A release archive** (doc "Building a release"): `make release` writes
+  `dist/metafolder-<version>-<target>.tar.gz` — every program, the shipped
+  defaults and an `install.sh` that installs them without a source checkout,
+  under `~/.local` or `--prefix`, the fanotify broker with `--watchd`.
+
 - **`mf repo pull-config <path> <from>`** merges another repository's
   `.metafolder/config/` into this one's — how two repositories get the identical schemas
   a sync requires, which `mf sync plan`/`run` now name when they refuse. The first pull

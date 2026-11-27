@@ -16,7 +16,9 @@ land in:
 |`scripts/templates/…` |`scripts/templates/…` |
 |`docs/wiki/dist/…` (rendered by `scripts/dev/doc build`, not committed) |`docs/…` |
 
-No binary embeds these files ([[No runtime fallback]]).
+No binary embeds these files ([[No runtime fallback]]). A release ships them
+laid out as the right-hand column, in `share/metafolder/defaults/`
+(`metafolder-sync-config --export`, [[Building a release]]).
 
 ''Scripts.'' The user-facing helper scripts are shared by no single program — a
 script may drive the GUI, the CLI or both — hence their own top-level directory.

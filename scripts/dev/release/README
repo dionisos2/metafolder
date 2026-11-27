@@ -1,0 +1,18 @@
+metafolder @VERSION@ (@TARGET@)
+
+A local metadata manager: a daemon holding repositories, a command line (mf)
+and a graphical interface over its HTTP API.
+
+Install
+    ./install.sh                 into ~/.local (--prefix DIR elsewhere)
+    ./install.sh --watchd        also the fanotify broker, a system service (sudo)
+
+Then put ~/.local/bin on your PATH, start metafolder-daemon, and run mf or
+metafolder-gui. Running install.sh of a newer release upgrades: the new
+defaults are merged with your edits of ~/.config/metafolder/.
+
+Runtime dependencies
+    the GUI: webkit2gtk-4.1, gtk3, librsvg, bubblewrap; optional tools
+    (ffmpeg, poppler, an emoji font…) each switch a feature on.
+    The full list is in the documentation, installed with the configuration:
+    ~/.config/metafolder/docs/, note "GUI runtime dependencies".

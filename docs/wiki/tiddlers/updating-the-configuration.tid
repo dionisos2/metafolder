@@ -7,15 +7,23 @@ After pulling a new version of metafolder, apply its defaults:
 
 ```
 make dev                                  # builds everything, then syncs
-target/debug/metafolder-sync-config       # the sync alone, from the checkout root
+target/debug/metafolder-sync-config --source .   # the sync alone, from the checkout root
 ```
+
+Installed from a release, `./install.sh` of the new release does it
+([[Building a release]]).
 
 `metafolder-sync-config` is the only program that touches the user configuration's git
 history (a repository's own configuration is written by `mf` and the GUI:
-[[Repository configuration]]). It is an install step, never run by a long-lived process. `--source <dir>`
-is the checkout to read the defaults from (default: the current directory),
-`--config-dir <dir>` the configuration to update (default: `~/.config/metafolder/`).
-It refuses a checkout whose documentation has not been rendered
+[[Repository configuration]]). It is an install step, never run by a long-lived process. The defaults come
+from one of three places:
+
+* `--source <dir>`, a source checkout: its `crates/*/default-config/`, scripts and rendered documentation ([[Shipped defaults in the source tree]]);
+* `--defaults <dir>`, a directory laid out as the configuration is, which `--source <dir> --export <out>` writes instead of applying it;
+* with neither, `<dir of the binary>/../share/metafolder/defaults/`, where a release installs them ([[Building a release]]) — and only there: with no such directory it stops, naming the two options.
+
+`--config-dir <dir>` is the configuration to update (default:
+`~/.config/metafolder/`). It refuses defaults without the rendered documentation
 (`scripts/dev/doc build`, which `make dev` runs first — [[Building]]).
 
 !! What it does

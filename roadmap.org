@@ -19,10 +19,6 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Configuration open questions
-doc "Configuration open questions": installing without a source checkout, the
-defaults embedded in =metafolder-sync-config=.
-
 ** Platform open questions
 doc "Platform open questions": Unicode normalisation of names, Windows long
 paths, what a port to macOS or Windows would take.

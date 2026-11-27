@@ -18,3 +18,4 @@ crates/gui/frontend/package-lock.json
 docs/wiki/dist/
 
 benchmarks/history/dionisos_portable.jsonl
+/dist/

@@ -1,0 +1,61 @@
+title: Building a release
+tags: Development
+kind: guide
+audience: dev
+aliases: release make-release
+summary: make release writes dist/metafolder-<version>-<target>.tar.gz — every program, the shipped defaults laid out as the configuration and an install.sh — for a machine without a checkout.
+
+A release is an archive that installs metafolder where there is no source
+checkout. It is built from a checkout:
+
+```
+make release            # scripts/dev/release.sh; DIST=<dir> writes elsewhere than dist/
+```
+
+The script runs `make build build-watchd docs` — every program in release, the
+frontend bundled first, and the rendered documentation — then lays out
+`dist/metafolder-<version>-<target>/` and archives it. The version is the one in
+`crates/core/Cargo.toml`, the target the host `rustc` names.
+
+|!In the archive |!What |
+|`bin/` |`metafolder-daemon`, `mf`, `metafolder-gui`, `metafolder-sync-config`, `metafolder-watchd` |
+|`share/metafolder/defaults/` |the shipped defaults, laid out as the configuration is, written by `metafolder-sync-config --source <checkout> --export <dir>` |
+|`share/metafolder/watchd/` |the broker's systemd unit and system user (`scripts/dev/metafolder-watchd.*`) |
+|`install.sh`, `README` |from `scripts/dev/release/` |
+
+!! Installing one
+
+```
+tar xzf metafolder-0.3.0-x86_64-unknown-linux-gnu.tar.gz
+cd metafolder-0.3.0-x86_64-unknown-linux-gnu
+./install.sh                 # into ~/.local; --prefix DIR elsewhere
+./install.sh --watchd        # also the fanotify broker, a system service (sudo)
+```
+
+`install.sh` copies the programs to `<prefix>/bin`, replaces
+`<prefix>/share/metafolder/defaults/` whole (a default the new release no longer
+ships does not stay), then runs `metafolder-sync-config` with no argument, which
+applies the defaults beside it to `~/.config/metafolder/`: the first time it
+creates the configuration, after an upgrade it merges the new defaults into your
+edits ([[Updating the configuration]]). The broker never goes under the prefix:
+`--watchd` installs it root-owned in `/usr/local/bin`, as `make install-watchd`
+does ([[The fanotify broker]]).
+
+!! Why a directory beside the programs
+
+The defaults are files next to the binaries, not embedded in
+`metafolder-sync-config`: that is where a package puts a program's data
+(`/usr/share/<name>/`), they stay readable, and `metafolder-sync-config` already
+read a directory. `--export` writes them in the layout of the configuration
+itself, so the mapping from the checkout's `crates/*/default-config/` is written
+once, in `gather_defaults` ([[Shipped defaults in the source tree]]); the export
+applied gives the same `default` tree as the checkout it came from
+(`config_sync::tests`). With no `--source` or `--defaults`,
+`metafolder-sync-config` reads `<dir of the binary>/../share/metafolder/defaults/`
+and nothing else: a package installing `/usr/bin` and `/usr/share/metafolder/`
+needs no argument either.
+
+The archive is not a distribution package: it carries no list of the libraries
+the GUI links (webkit2gtk, gtk3) nor of the tools it calls
+([[GUI runtime dependencies]]); the `README` names them. `scripts/dev/test-release.sh` holds the
+layout of the archive and what `install.sh` does, against stubs.

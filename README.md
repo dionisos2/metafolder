@@ -35,6 +35,7 @@ The files shown are free (photographs mostly under CC BY-SA, so are these screen
 make check-deps        # what is missing, and the pacman line to install it (Arch Linux)
 make install           # build in release, install into ~/.local/bin, install the configuration
 make install-headless  # the same without the GUI and its toolkit (node is still needed)
+make release           # an archive with install.sh, for a machine without a checkout
 ```
 
 To build for development instead: [Building](docs/wiki/tiddlers/building.tid).

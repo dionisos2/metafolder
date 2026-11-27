@@ -56,6 +56,8 @@ help:
 	@echo '  install-headless   daemon + cli + user config'
 	@echo '  install-config     install/update ~/.config/metafolder/ (sync-config)'
 	@echo '  uninstall          remove installed binaries from $(BINDIR)'
+	@echo '  release            dist/metafolder-<version>-<target>.tar.gz: every program,'
+	@echo '                     the defaults and install.sh, for a machine without a checkout'
 	@echo ''
 	@echo '  install-watchd     the fanotify broker as a system service (sudo):'
 	@echo '                     binary, system user, unit, (re)started; rerun to update'
@@ -132,7 +134,7 @@ docs: $(NPM_STAMP)
 .PHONY: apply-docs
 apply-docs: docs
 	$(CARGO) build -p metafolder-core --features sync-config --bin metafolder-sync-config
-	target/debug/metafolder-sync-config
+	target/debug/metafolder-sync-config --source .
 
 # The complete development build, doc "Building". The frontend comes before cargo:
 # Tauri embeds it at compile time, and bundled after, the binary keeps the
@@ -150,14 +152,14 @@ dev: frontend docs
 	$(CARGO) test --workspace --no-run $(CARGO_REPORT) >>$(LIVE_LIST)
 	$(CARGO) build -p metafolder-core --features sync-config --bin metafolder-sync-config $(CARGO_REPORT) >>$(LIVE_LIST)
 	scripts/dev/prune-target.sh target/debug $(LIVE_LIST)
-	target/debug/metafolder-sync-config
+	target/debug/metafolder-sync-config --source .
 
 # ── install ──────────────────────────────────────────────────────────────────
 # install-config runs the freshly built binary from the repo root: sync-config
 # gathers crates/*/default-config/ relative to the working directory.
 .PHONY: install-config
 install-config: build-config docs
-	$(TARGET)/metafolder-sync-config
+	$(TARGET)/metafolder-sync-config --source .
 
 $(BINDIR):
 	@mkdir -p $(BINDIR)
@@ -211,6 +213,11 @@ uninstall:
 	@for b in $(BINS_HEADLESS) $(BINS_GUI); do \
 	    if [ -e $(BINDIR)/$$b ]; then echo "rm $(BINDIR)/$$b"; rm -f $(BINDIR)/$$b; fi; \
 	done
+
+# A release archive, installed without a checkout (doc "Building a release").
+.PHONY: release
+release:
+	scripts/dev/release.sh
 
 # ── run / test / maintenance ─────────────────────────────────────────────────
 .PHONY: run-daemon

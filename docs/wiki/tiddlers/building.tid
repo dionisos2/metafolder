@@ -36,7 +36,7 @@ It does, in the one order that works:
 # `cargo build`, `cargo test --workspace --no-run`, and `cargo build -p metafolder-core --features sync-config` — the three sets of artifacts the project uses;
 # `scripts/dev/prune-target.sh`, which deletes what those three builds did not report using;
 # `scripts/dev/doc build` — this wiki, rendered into `docs/wiki/dist/`, and `README.md` from its note;
-# `target/debug/metafolder-sync-config` — the shipped defaults, the shipped scripts and the rendered documentation applied to the configuration repository ([[Updating the configuration]], [[Shipped defaults in the source tree]]).
+# `target/debug/metafolder-sync-config --source .` — the shipped defaults, the shipped scripts and the rendered documentation applied to the configuration repository ([[Updating the configuration]], [[Shipped defaults in the source tree]]).
 
 Use it after pulling, and after touching the frontend or a shipped default.
 `scripts/dev/test-makefile.sh` holds its order and its paths.
@@ -44,7 +44,12 @@ Use it after pulling, and after touching the frontend or a shipped default.
 `make install` is the same chain in release, with the binaries copied into
 `~/.local/bin` (`PREFIX=` to change). `make install-headless` leaves out the GUI and
 its toolkit; it still needs `node`, because the configuration ships the rendered
-documentation.
+documentation. An archive to install on a machine without a checkout is
+`make release` ([[Building a release]]).
+
+In the table below, `metafolder-sync-config` run from the checkout is
+`target/debug/metafolder-sync-config --source .`: with no argument it looks for
+the defaults of an installed release instead.
 
 !! What needs rebuilding after an edit
 
