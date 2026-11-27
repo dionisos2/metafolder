@@ -19,9 +19,6 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
 Every deferred or proposed note, to be gone through one by one: build it, keep
 it deferred, or drop it.
 
-** Schema open questions
-doc "Schema open questions": range constraints.
-
 ** Watcher open questions
 doc "Watcher open questions": a per-repository choice of source.
 

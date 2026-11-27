@@ -260,8 +260,14 @@ async fn test_invalid_schema_makes_load_fail() {
         (
             "min greater than max",
             json!({"version": 1, "groups": [
-                {"targets": "*", "constraints": [{"field": "x", "min": 3, "max": 1}]}]}),
+                {"targets": "*", "constraints": [{"field": "x", "min": 1, "max": 0}]}]}),
             "min",
+        ),
+        (
+            "min above one",
+            json!({"version": 1, "groups": [
+                {"targets": "*", "constraints": [{"field": "x", "min": 2}]}]}),
+            "min must be 0 or 1",
         ),
         (
             "reserved field",
@@ -603,9 +609,7 @@ async fn test_a_batch_is_held_to_the_schema_as_it_ends() {
 
 /// A film requires a name (no default), a year (default 2000), a genre
 /// (default "?") and a parent node (a reference type: its default is not
-/// written); every metarecord requires an origin (default "me"). A `serie`
-/// requires two episodes, which no default can give: a field never holds a
-/// value twice.
+/// written); every metarecord requires an origin (default "me").
 fn completion_schema() -> Value {
     json!({
         "version": 1,
@@ -620,9 +624,6 @@ fn completion_schema() -> Value {
                 {"field": "parent", "type": "tree_ref", "min": 1,
                  "default": {"parent": null, "name": "films"}},
                 {"field": "rating", "type": "int", "max": 1}
-            ]},
-            {"targets": ["serie"], "constraints": [
-                {"field": "episode", "type": "string", "min": 2, "default": "?"}
             ]}
         ]
     })
@@ -682,14 +683,6 @@ async fn test_a_creation_gets_the_required_fields_it_lacks() {
     assert_eq!(values(&film, "name"), vec![string("Alien")]);
     assert_eq!(values(&film, "genre"), vec![string("sf")]);
     assert_eq!(values(&film, "year"), vec![json!({"type": "int", "value": 2000})]);
-
-    // A minimum of two the record lacks both rows of: one default row is all
-    // a completion can add, and the creation is refused.
-    let (status, body) =
-        create(&app, &repo, json!([{"name": "mf_schema", "value": string("serie")}])).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["violations"][0]["kind"], "min_cardinality", "{body}");
-    assert_eq!(body["violations"][0]["field"], "episode", "{body}");
 
     // An untyped metarecord gets what every metarecord requires.
     let (status, plain) =

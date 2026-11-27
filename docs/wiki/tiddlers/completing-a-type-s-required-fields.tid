@@ -3,7 +3,7 @@ tags: Schema
 kind: reference
 summary: A metarecord created, or given a type, gets each row its types require and lacks, at the constraint's default; a type is refused to a record that already breaks it.
 
-A constraint with `min ≥ 1` ([[Schema file]]) is kept by the daemon itself: a
+A constraint with `min: 1` ([[Schema file]]) is kept by the daemon itself: a
 metarecord never lacks a row its types require because it was created in several
 steps. When a write ''creates'' a metarecord, or ''gives it a type'' — a value added
 to `mf_schema` —, the daemon adds, in the same write, one row to each field those
@@ -26,8 +26,8 @@ watcher, reconcile) are not completed, as they are not validated
 
 A field never holds the same value twice ([[No duplicate rows]]), nor `nothing`
 beside a value ([[Nothing versus unknown]]), so a completion adds at most one row to a
-field. A `min` of two the record lacks both rows of stays unmet, and the write is
-refused: those values are to be given.
+field. This is why a `min` is `0` or `1` and never more: a second required row could
+not be completed ([[Schema file]]).
 
 !! What follows from it
 

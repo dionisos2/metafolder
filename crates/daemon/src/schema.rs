@@ -251,6 +251,12 @@ pub fn parse(content: &str) -> Result<CompiledSchema, String> {
                     }
                 }
             }
+            // A field never holds a value twice (doc "No duplicate rows"), so a
+            // minimum above one could not be completed (doc "Completing a type's
+            // required fields"): a field is optional or required, nothing more.
+            if constraint.min > 1 {
+                return Err(format!("{at}: min must be 0 or 1, not {}", constraint.min));
+            }
             if let Some(max) = constraint.max {
                 if constraint.min > max {
                     return Err(format!(

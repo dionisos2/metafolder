@@ -11,7 +11,7 @@ metarecord as the write leaves it. By design:
 * violations already on other fields of the metarecord do not block an unrelated write;
 * editing or reloading the schema never scans the existing data: its violations surface through `mf schema check`, and only block a later write touching the violating field;
 * giving a metarecord a type — a value added to `mf_schema`, at its creation or later — first adds the rows the type requires and the record lacks, then checks the record on ''every'' field the type constrains: a record that already breaks the type is refused it ([[Completing a type's required fields]]). Taking a type away is never refused;
-* deleting a row is a write on its field: removing the last row of a field with `min ≥ 1` is refused. To remove it anyway, remove the type from the metarecord first, or relax the constraint and reload;
+* deleting a row is a write on its field: removing the last row of a field with `min: 1` is refused. To remove it anyway, remove the type from the metarecord first, or relax the constraint and reload;
 * deleting a ''whole metarecord'' is always allowed: cardinality does not apply to it.
 
 On a violation the transaction is rolled back and the answer is `400` with a

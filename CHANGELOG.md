@@ -16,10 +16,15 @@ than breaking them.
 ### Changed
 - **A metarecord gets the rows its types require** (doc "Completing a type's required
   fields"): created, or given a type, it gets one row of each field a constraint of
-  `min ≥ 1` requires and it lacks, at the constraint's `default` (`nothing` without
+  `min: 1` requires and it lacks, at the constraint's `default` (`nothing` without
   one, or for a reference type) — the daemon now writes `default`. Giving a type
   checks the record on every field the type constrains, and is refused to a record
   that already breaks it; it used to be never refused.
+
+- **A schema constraint's `min` is `0` or `1`** (doc "Schema file"): a field never
+  holds a value twice, so a second required row could never be completed. A schema
+  with a larger `min` no longer loads (`400`, naming the constraint): lower it to
+  `1`, and require the other values by hand.
 
 - **A pair's sync store has its own tables' review** (format 3): `meta` is split into
   `version` and `repositories`, `by_a`/`by_b` become `links_by_record_a`/`_b`, and a

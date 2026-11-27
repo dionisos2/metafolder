@@ -1,7 +1,7 @@
 title: Schema open questions
 tags: Schema
 kind: question
-status: deferred
-summary: Range constraints, enumerations and patterns on values.
+status: record
+summary: The questions the schema left open, now settled: value constraints given up.
 
-* ''Value constraints.'' Constraints cover the type and the number of rows only. Ranges (`0 ≤ rating ≤ 10`), enumerations or patterns on strings could come as new constraint keys.
+* ''Value constraints: given up'' (user, 27 November 2026). Constraints cover the type and the number of rows only. Ranges (`0 ≤ rating ≤ 10`), enumerations or patterns on strings could have come as new constraint keys. Nothing asked for them, and each key would have to be kept by the check of one metarecord, by the mass check, which counts rows and would have to read every value for a range, and by `mf schema check` ([[Delta validation]], [[Schema constraints]]).
