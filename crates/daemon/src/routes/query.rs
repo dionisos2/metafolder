@@ -669,6 +669,17 @@ pub(super) async fn batch_rename(
                 validate_schema(repo_state, writer.store(), uuid, &names)
             })?;
         }
+        // A field renamed to `mf_schema` gives its values as types: none of
+        // the records had one (the rename refuses a name they have).
+        if body.to == "mf_schema" && repo_state.schema.lock_recover().is_some() {
+            for uuid in writer.uuids_of(&changed)? {
+                let types = types_of(writer.store(), uuid)?;
+                let fields = complete_types(repo_state, &mut writer, uuid, &types, false)?;
+                slowlog::timed("validate.schema", || {
+                    validate_schema(repo_state, writer.store(), uuid, &fields)
+                })?;
+            }
+        }
         drop(writing);
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
@@ -791,6 +802,18 @@ pub(super) async fn batch_writes(
 
         let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.fields");
+        // The types the batch may give, watched from before its first op: a
+        // record is completed for what it holds as the batch ends.
+        let given: Vec<Value> = ready
+            .iter()
+            .flat_map(|op| match op {
+                Ready::Set(_, name, rows) if name == "mf_schema" => rows.clone(),
+                Ready::Add(_, name, value) if name == "mf_schema" => vec![value.clone()],
+                _ => Vec::new(),
+            })
+            .collect();
+        let gains = TypeGains::watch(repo_state, &writer, "mf_schema", &given)?;
+        let mut created_uuids: Vec<Uuid> = Vec::new();
         // Every metarecord the batch changed, with the names it wrote there.
         let mut touched: std::collections::BTreeMap<Uuid, Vec<String>> = Default::default();
         let mut touch = |uuid: Uuid, name: &str| {
@@ -830,6 +853,7 @@ pub(super) async fn batch_writes(
                     for name in &names {
                         touch(created.uuid, name);
                     }
+                    created_uuids.push(created.uuid);
                     results.push(json!({ "uuid": hex(created.uuid) }));
                     summary.push(("create", None, 1));
                     continue;
@@ -864,6 +888,23 @@ pub(super) async fn batch_writes(
         for (name, (changed, written)) in &by_field {
             for uuid in schema_suspects(repo_state, &writer, changed, name, written)? {
                 touch(uuid, name);
+            }
+        }
+        // What the types the batch leaves require (doc "Completing a type's
+        // required fields"): a creation for all its types and the global
+        // constraints, another record for the types it gained.
+        for uuid in &created_uuids {
+            let mut names = touched.remove(uuid).unwrap_or_default();
+            complete_created(repo_state, &mut writer, *uuid, &mut names)?;
+            touched.insert(*uuid, names);
+        }
+        for (uuid, types) in gains.gained(&writer, &created_uuids)? {
+            let fields = complete_types(repo_state, &mut writer, uuid, &types, false)?;
+            let names = touched.entry(uuid).or_default();
+            for field in fields {
+                if !names.contains(&field) {
+                    names.push(field);
+                }
             }
         }
         drop(writing);

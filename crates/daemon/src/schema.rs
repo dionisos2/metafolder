@@ -65,14 +65,11 @@ struct RawConstraint {
     #[serde(default)]
     #[allow(dead_code)]
     description: Option<String>,
-    /// Optional default value for client templates: a bare JSON value
-    /// interpreted via this constraint's `type`. Never read from this parsed
-    /// struct (hence `dead_code`) and not kept in the compiled form — it exists
-    /// only so `deny_unknown_fields` accepts it in the file. Clients read it
-    /// from the *raw* schema JSON that `GET /schema` serves verbatim, not from
-    /// here.
+    /// Optional default value: a bare JSON value interpreted via this
+    /// constraint's `type`. What the daemon writes for a required row a
+    /// metarecord lacks (doc "Completing a type's required fields"), and what
+    /// clients pre-fill a form with (from the raw schema `GET /schema` serves).
     #[serde(default)]
-    #[allow(dead_code)]
     default: Option<serde_json::Value>,
 }
 
@@ -92,9 +89,62 @@ struct IndexedConstraint {
     value_type: Option<String>,
     min: u64,
     max: Option<u64>,
+    /// What a row this constraint requires is written as when it lacks: the
+    /// `default`, or `nothing` without one or for a reference type.
+    fill: Value,
+}
+
+/// The value types whose `default` the daemon does not write: a reference
+/// names a metarecord, a node or a repository, which a default cannot.
+const REFERENCE_TYPES: [&str; 5] = ["ref", "tree_ref", "hierarchy_ref", "refbase", "externalref"];
+
+impl IndexedConstraint {
+    /// Whether this constraint bears on a metarecord of `types` — the global
+    /// ones only when `global`.
+    fn applies(&self, types: &[String], global: bool) -> bool {
+        match &self.targets {
+            None => global,
+            Some(targets) => targets.iter().any(|t| types.contains(t)),
+        }
+    }
 }
 
 impl CompiledSchema {
+    /// What the constraints of `types` — and the global ones when `global` —
+    /// require: per field, the fewest rows and the value a missing row is
+    /// written as (doc "Completing a type's required fields").
+    pub fn required(&self, types: &[String], global: bool) -> Vec<(String, u64, Value)> {
+        let mut out = Vec::new();
+        for (field, constraints) in &self.by_field {
+            let applying = || constraints.iter().filter(|c| c.applies(types, global));
+            let min = applying().map(|c| c.min).max().unwrap_or(0);
+            if min == 0 {
+                continue;
+            }
+            let fill = applying()
+                .map(|c| &c.fill)
+                .find(|v| **v != Value::Nothing)
+                .cloned()
+                .unwrap_or(Value::Nothing);
+            out.push((field.clone(), min, fill));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// The fields the constraints of `types` — and the global ones when
+    /// `global` — bear on: what a metarecord given those types is checked on.
+    pub fn fields_of(&self, types: &[String], global: bool) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .by_field
+            .iter()
+            .filter(|(_, cs)| cs.iter().any(|c| c.applies(types, global)))
+            .map(|(field, _)| field.clone())
+            .collect();
+        out.sort();
+        out
+    }
+
     pub fn raw(&self) -> &serde_json::Value {
         &self.raw
     }
@@ -182,12 +232,21 @@ pub fn parse(content: &str) -> Result<CompiledSchema, String> {
             }
             // A default is a bare JSON value interpreted via the declared type;
             // the type is therefore required and the value's kind must match it.
+            let mut fill = Value::Nothing;
             if let Some(default) = &constraint.default {
                 match &constraint.value_type {
                     None => return Err(format!("{at}: a default value requires an explicit type")),
                     Some(t) => {
                         if let Err(msg) = check_default_kind(t, default) {
                             return Err(format!("{at}: {msg}"));
+                        }
+                        if !REFERENCE_TYPES.contains(&t.as_str()) {
+                            fill = serde_json::from_value(
+                                serde_json::json!({"type": t, "value": default}),
+                            )
+                            .map_err(|_| {
+                                format!("{at}: default value {default} is not a valid {t}")
+                            })?;
                         }
                     }
                 }
@@ -205,6 +264,7 @@ pub fn parse(content: &str) -> Result<CompiledSchema, String> {
                 value_type: constraint.value_type.clone(),
                 min: constraint.min,
                 max: constraint.max,
+                fill,
             });
         }
     }

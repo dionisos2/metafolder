@@ -423,8 +423,8 @@ async fn test_delta_validation_ignores_untouched_fields() {
     .await;
     let uuid = metarecord["uuid"].as_str().unwrap();
 
-    // Declaring a type via mf_schema never fails, even if constraints of the
-    // new type are violated (film requires one name).
+    // Declaring a type via mf_schema adds what it requires and lacks (film
+    // requires one name: a `nothing` row), so it does not fail here.
     let (status, _) = request(
         &app,
         "PUT",
@@ -599,32 +599,282 @@ async fn test_a_batch_is_held_to_the_schema_as_it_ends() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── Check and reload ──────────────────────────────────────────────────────────
+// ── Completion: a type's required fields written for it ───────────────────────
+
+/// A film requires a name (no default), a year (default 2000), a genre
+/// (default "?") and a parent node (a reference type: its default is not
+/// written); every metarecord requires an origin (default "me"). A `serie`
+/// requires two episodes, which no default can give: a field never holds a
+/// value twice.
+fn completion_schema() -> Value {
+    json!({
+        "version": 1,
+        "groups": [
+            {"targets": "*", "constraints": [
+                {"field": "origin", "type": "string", "min": 1, "default": "me"}
+            ]},
+            {"targets": ["film"], "constraints": [
+                {"field": "name", "type": "string", "min": 1, "max": 1},
+                {"field": "year", "type": "int", "min": 1, "default": 2000},
+                {"field": "genre", "type": "string", "min": 1, "default": "?"},
+                {"field": "parent", "type": "tree_ref", "min": 1,
+                 "default": {"parent": null, "name": "films"}},
+                {"field": "rating", "type": "int", "max": 1}
+            ]},
+            {"targets": ["serie"], "constraints": [
+                {"field": "episode", "type": "string", "min": 2, "default": "?"}
+            ]}
+        ]
+    })
+}
+
+fn string(s: &str) -> Value {
+    json!({"type": "string", "value": s})
+}
+
+/// The values of `field` in a metarecord's JSON, in order.
+fn values(record: &Value, field: &str) -> Vec<Value> {
+    record["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["name"] == field)
+        .map(|f| f["value"].clone())
+        .collect()
+}
+
+async fn get(app: &Router, repo: &str, uuid: &str) -> Value {
+    let (status, body) =
+        request(app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// What a film gets when it is given nothing: each required field at its
+/// default, `nothing` without one or for a reference type.
+fn assert_completed_film(record: &Value) {
+    assert_eq!(values(record, "name"), vec![json!({"type": "nothing"})], "{record}");
+    assert_eq!(values(record, "year"), vec![json!({"type": "int", "value": 2000})], "{record}");
+    assert_eq!(values(record, "genre"), vec![string("?")], "{record}");
+    assert_eq!(values(record, "parent"), vec![json!({"type": "nothing"})], "{record}");
+    assert!(values(record, "rating").is_empty(), "{record}");
+}
 
 #[tokio::test]
-async fn test_schema_check_reports_existing_violations() {
-    // Start without schema, create violating data, then load the schema.
-    let (app, repo, root) = setup_with_schema("check", film_schema()).await;
+async fn test_a_creation_gets_the_required_fields_it_lacks() {
+    let (app, repo, root) = setup_with_schema("complete_create", completion_schema()).await;
+    let (status, film) =
+        create(&app, &repo, json!([{"name": "mf_schema", "value": string("film")}])).await;
+    assert_eq!(status, StatusCode::OK, "{film}");
+    assert_completed_film(&film);
+    assert_eq!(values(&film, "origin"), vec![string("me")]);
 
-    // Bypass validation by writing a wrongly-typed rating… impossible via
-    // the API (delta validation), so simulate pre-existing data: write a
-    // valid int rating, then tighten via a type declared after the fact.
-    let (_, metarecord) = create(
+    // What is given is kept, and only what lacks is added.
+    let (status, film) = create(
         &app,
         &repo,
-        json!([{"name": "rating", "value": {"type": "int", "value": 1}},
-               {"name": "rating", "value": {"type": "int", "value": 2}}]),
+        json!([{"name": "mf_schema", "value": string("film")},
+               {"name": "name", "value": string("Alien")},
+               {"name": "genre", "value": string("sf")}]),
     )
     .await;
-    let uuid = metarecord["uuid"].as_str().unwrap();
-    // Declare it a film (never validated): now rating max=1 is violated.
-    request(
+    assert_eq!(status, StatusCode::OK, "{film}");
+    assert_eq!(values(&film, "name"), vec![string("Alien")]);
+    assert_eq!(values(&film, "genre"), vec![string("sf")]);
+    assert_eq!(values(&film, "year"), vec![json!({"type": "int", "value": 2000})]);
+
+    // A minimum of two the record lacks both rows of: one default row is all
+    // a completion can add, and the creation is refused.
+    let (status, body) =
+        create(&app, &repo, json!([{"name": "mf_schema", "value": string("serie")}])).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["violations"][0]["kind"], "min_cardinality", "{body}");
+    assert_eq!(body["violations"][0]["field"], "episode", "{body}");
+
+    // An untyped metarecord gets what every metarecord requires.
+    let (status, plain) =
+        create(&app, &repo, json!([{"name": "note", "value": string("x")}])).await;
+    assert_eq!(status, StatusCode::OK, "{plain}");
+    assert_eq!(values(&plain, "origin"), vec![string("me")]);
+    assert!(values(&plain, "name").is_empty());
+    drop(root);
+}
+
+#[tokio::test]
+async fn test_every_way_of_creating_completes() {
+    let (app, repo, root) = setup_with_schema("complete_create_all", completion_schema()).await;
+    let film = json!([{"name": "mf_schema", "value": string("film")}]);
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/bulk"),
+        Some(json!({"metarecords": [{"fields": film}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_completed_film(&get(&app, &repo, body["uuids"][0].as_str().unwrap()).await);
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/batch"),
+        Some(json!({"ops": [{"op": "create", "fields": film}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_completed_film(&get(&app, &repo, body["results"][0]["uuid"].as_str().unwrap()).await);
+    drop(root);
+}
+
+#[tokio::test]
+async fn test_giving_a_type_adds_its_required_fields() {
+    let (app, repo, root) = setup_with_schema("complete_type", completion_schema()).await;
+    let (_, plain) = create(&app, &repo, json!([{"name": "note", "value": string("x")}])).await;
+    let uuid = plain["uuid"].as_str().unwrap();
+    let (status, film) = request(
         &app,
         "PUT",
         &format!("/repos/{repo}/metarecords/{uuid}/fields/mf_schema"),
-        Some(json!({"value": {"type": "string", "value": "film"}})),
+        Some(json!({"value": string("film")})),
     )
     .await;
+    assert_eq!(status, StatusCode::OK, "{film}");
+    assert_completed_film(&get(&app, &repo, uuid).await);
+
+    // Taking the type away never fails, and leaves the fields.
+    let (status, body) = request(
+        &app,
+        "DELETE",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/mf_schema"),
+        Some(json!({"value": string("film")})),
+    )
+    .await;
+    assert!(status.is_success(), "{body}");
+    assert_eq!(values(&get(&app, &repo, uuid).await, "year").len(), 1);
+    drop(root);
+}
+
+#[tokio::test]
+async fn test_a_type_is_refused_to_a_record_that_breaks_it() {
+    let (app, repo, root) = setup_with_schema("complete_refused", completion_schema()).await;
+    let int = |n: i64| json!({"type": "int", "value": n});
+    for (rows, kind) in [
+        (
+            json!([{"name": "rating", "value": int(4)}, {"name": "rating", "value": int(5)}]),
+            "max_cardinality",
+        ),
+        (json!([{"name": "year", "value": string("1979")}]), "type"),
+    ] {
+        let (status, plain) = create(&app, &repo, rows).await;
+        assert_eq!(status, StatusCode::OK, "{plain}");
+        let uuid = plain["uuid"].as_str().unwrap();
+        let (status, body) = request(
+            &app,
+            "PUT",
+            &format!("/repos/{repo}/metarecords/{uuid}/fields/mf_schema"),
+            Some(json!({"value": string("film")})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["violations"][0]["kind"], kind, "{body}");
+        // Nothing written: neither the type nor what it would have added.
+        let now = get(&app, &repo, uuid).await;
+        assert!(values(&now, "mf_schema").is_empty(), "{now}");
+        assert!(values(&now, "genre").is_empty(), "{now}");
+    }
+    drop(root);
+}
+
+#[tokio::test]
+async fn test_a_type_given_to_many_records_completes_each() {
+    let (app, repo, root) = setup_with_schema("complete_mass", completion_schema()).await;
+    let mut uuids = Vec::new();
+    for n in ["a", "b"] {
+        let (_, plain) = create(&app, &repo, json!([{"name": "batch", "value": string(n)}])).await;
+        uuids.push(plain["uuid"].as_str().unwrap().to_string());
+    }
+    let batch = json!({"type": "is_present", "field": "batch"});
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/add"),
+        Some(json!({"query": batch, "name": "mf_schema", "value": string("film")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for uuid in &uuids {
+        assert_completed_film(&get(&app, &repo, uuid).await);
+    }
+
+    // A replacement of one type by another gives the new one.
+    let (_, other) = create(
+        &app,
+        &repo,
+        json!([{"name": "mf_schema", "value": string("draft")}, {"name": "x", "value": string("1")}]),
+    )
+    .await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/replace"),
+        Some(json!({"query": {"type": "is_present", "field": "x"}, "name": "mf_schema",
+                    "value": string("draft"), "to": string("film")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_completed_film(&get(&app, &repo, other["uuid"].as_str().unwrap()).await);
+
+    // In a batch, and refused whole when one record breaks the type.
+    let (_, broken) = create(
+        &app,
+        &repo,
+        json!([{"name": "y", "value": string("1")},
+               {"name": "rating", "value": {"type": "int", "value": 1}},
+               {"name": "rating", "value": {"type": "int", "value": 2}}]),
+    )
+    .await;
+    let (_, fine) = create(&app, &repo, json!([{"name": "y", "value": string("2")}])).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/batch"),
+        Some(json!({"ops": [{"op": "add", "query": {"type": "is_present", "field": "y"},
+                             "name": "mf_schema", "value": string("film")}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    for uuid in [&broken["uuid"], &fine["uuid"]] {
+        let now = get(&app, &repo, uuid.as_str().unwrap()).await;
+        assert!(values(&now, "mf_schema").is_empty(), "{now}");
+        assert!(values(&now, "genre").is_empty(), "{now}");
+    }
+    drop(root);
+}
+
+// ── Check and reload ──────────────────────────────────────────────────────────
+
+/// Replaces the schema by [`film_schema`] and reloads it: the data already
+/// there is not checked (doc "Delta validation").
+async fn tighten_to_film_schema(app: &Router, repo: &str, root: &std::path::Path) {
+    std::fs::write(root.join(".metafolder/config/schema.json"), film_schema().to_string()).unwrap();
+    let (status, body) = request(app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
+    assert_eq!(status, StatusCode::OK, "reload failed: {body}");
+}
+
+#[tokio::test]
+async fn test_schema_check_reports_existing_violations() {
+    // Data written while the schema says nothing, then the schema tightened:
+    // a film of two ratings and no name.
+    let (app, repo, root) = setup_with_schema("check", json!({"version": 1, "groups": []})).await;
+    create(
+        &app,
+        &repo,
+        json!([{"name": "mf_schema", "value": {"type": "string", "value": "film"}},
+               {"name": "rating", "value": {"type": "int", "value": 1}},
+               {"name": "rating", "value": {"type": "int", "value": 2}}]),
+    )
+    .await;
+    tighten_to_film_schema(&app, &repo, &root).await;
 
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/schema/check"), Some(json!({}))).await;
@@ -644,26 +894,22 @@ async fn test_schema_check_reports_existing_violations() {
 
 #[tokio::test]
 async fn test_schema_check_limit_caps_violations() {
-    let (app, repo, root) = setup_with_schema("checklimit", film_schema()).await;
-    // Three films, each violating twice (two ratings → max_cardinality; no name
-    // → min_cardinality), so well over a small cap.
+    let (app, repo, root) =
+        setup_with_schema("checklimit", json!({"version": 1, "groups": []})).await;
+    // Three films, each violating twice once the schema is tightened (two
+    // ratings → max_cardinality; no name → min_cardinality), so well over a
+    // small cap.
     for _ in 0..3 {
-        let (_, m) = create(
+        create(
             &app,
             &repo,
-            json!([{"name": "rating", "value": {"type": "int", "value": 1}},
+            json!([{"name": "mf_schema", "value": {"type": "string", "value": "film"}},
+                   {"name": "rating", "value": {"type": "int", "value": 1}},
                    {"name": "rating", "value": {"type": "int", "value": 2}}]),
         )
         .await;
-        let uuid = m["uuid"].as_str().unwrap();
-        request(
-            &app,
-            "PUT",
-            &format!("/repos/{repo}/metarecords/{uuid}/fields/mf_schema"),
-            Some(json!({"value": {"type": "string", "value": "film"}})),
-        )
-        .await;
     }
+    tighten_to_film_schema(&app, &repo, &root).await;
 
     // Unbounded (no limit): every violation, not truncated.
     let (_, full) =

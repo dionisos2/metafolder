@@ -1,0 +1,45 @@
+title: Completing a type's required fields
+tags: Schema
+kind: reference
+summary: A metarecord created, or given a type, gets each row its types require and lacks, at the constraint's default; a type is refused to a record that already breaks it.
+
+A constraint with `min ≥ 1` ([[Schema file]]) is kept by the daemon itself: a
+metarecord never lacks a row its types require because it was created in several
+steps. When a write ''creates'' a metarecord, or ''gives it a type'' — a value added
+to `mf_schema` —, the daemon adds, in the same write, one row to each field those
+constraints require and the record lacks:
+
+* the constraint's `default`, read through its `type`;
+* `nothing` when it has none, or when its type is a reference (`ref`, `tree_ref`,
+  `hierarchy_ref`, `refbase`, `externalref`): a default cannot name a metarecord, a
+  node or a repository. The GUI's form still pre-fills a reference's `default`.
+
+Every way of writing does it — `POST /metarecords`, the bulk and path creations, the
+set writes over a query, the `create` of a batch (judged as the batch ends) —, and
+the rows are part of the write: one undo takes them away with it
+([[The operation log]]). A creation also gets what the global (`"*"`) constraints require; a type
+given later, only what that type's constraints do. The daemon's own creations (the
+watcher, reconcile) are not completed, as they are not validated
+([[Delta validation]]).
+
+!! Only one row
+
+A field never holds the same value twice ([[No duplicate rows]]), nor `nothing`
+beside a value ([[Nothing versus unknown]]), so a completion adds at most one row to a
+field. A `min` of two the record lacks both rows of stays unmet, and the write is
+refused: those values are to be given.
+
+!! What follows from it
+
+* A `nothing` added this way gives way to the first value written to the field:
+  `field add` on a field that holds `nothing` replaces it. A ''default'' value does
+  not: on a field of `max: 1`, set or replace it (`field set`, `field replace`) rather
+  than add a second value.
+* Giving a type checks the record against ''every'' field that type constrains, not
+  only `mf_schema`: a record that already breaks the type — too many rows, a value of
+  another type — is refused it, whole, naming the violations. Taking a type away is
+  never refused, and leaves the fields.
+
+Before November 2026 the daemon wrote no `default`, and giving a type was never
+refused: a repository from then may hold typed metarecords that lack required rows,
+which [[mf schema check]] lists.

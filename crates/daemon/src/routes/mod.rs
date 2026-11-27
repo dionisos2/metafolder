@@ -395,6 +395,117 @@ fn validate_schema(
     }
 }
 
+/// The types of `uuid`: its `mf_schema` values.
+pub(crate) fn types_of(
+    conn: &dyn crate::store::Store,
+    uuid: Uuid,
+) -> Result<Vec<String>, ApiError> {
+    Ok(Rows::rows_named(conn, uuid, "mf_schema")?
+        .into_iter()
+        .filter_map(|r| match r.value {
+            Value::String(s) => Some(s),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Writes into `uuid` the rows the constraints of `types` require and it
+/// lacks — with the global constraints too when `global`, at its creation —,
+/// each at its default (doc "Completing a type's required fields"). Returns
+/// the fields those constraints bear on: the record is to be checked on all
+/// of them, not only on what the write named, so that a type is refused to a
+/// record that breaks it. No schema: nothing to do.
+pub(crate) fn complete_types(
+    repo_state: &RepoState,
+    writer: &mut Writer,
+    uuid: Uuid,
+    types: &[String],
+    global: bool,
+) -> Result<Vec<String>, ApiError> {
+    let (required, fields) = {
+        let guard = repo_state.schema.lock_recover();
+        let Some(schema) = guard.as_ref() else { return Ok(Vec::new()) };
+        (schema.required(types, global), schema.fields_of(types, global))
+    };
+    for (field, min, value) in required {
+        // One row at most: a field never holds a value twice (doc "No
+        // duplicate rows"), nor `nothing` beside anything. A minimum of two
+        // the record lacks more than one row of stays unmet, and refused.
+        let held = Rows::rows_named(writer.store(), uuid, &field)?.len() as u64;
+        if held < min {
+            writer.append_field(uuid, &field, value)?;
+        }
+    }
+    Ok(fields)
+}
+
+/// [`complete_types`] for a metarecord just created: every type it has, and
+/// the global constraints. Adds the fields to check to `touched`.
+pub(crate) fn complete_created(
+    repo_state: &RepoState,
+    writer: &mut Writer,
+    uuid: Uuid,
+    touched: &mut Vec<String>,
+) -> Result<(), ApiError> {
+    if repo_state.schema.lock_recover().is_none() {
+        return Ok(());
+    }
+    let types = types_of(writer.store(), uuid)?;
+    for field in complete_types(repo_state, writer, uuid, &types, true)? {
+        if !touched.contains(&field) {
+            touched.push(field);
+        }
+    }
+    Ok(())
+}
+
+/// The holders of some types before a write to many records, to tell after
+/// it which records it gave one of them ([`TypeGains::gained`]).
+pub(crate) struct TypeGains(Vec<(String, roaring::RoaringBitmap)>);
+
+impl TypeGains {
+    /// Watches the types among `written` when the write is to `mf_schema`
+    /// (and the repository has a schema); watches nothing otherwise.
+    pub(crate) fn watch(
+        repo_state: &RepoState,
+        writer: &Writer,
+        name: &str,
+        written: &[Value],
+    ) -> Result<Self, ApiError> {
+        let mut watched = Vec::new();
+        if name != "mf_schema" || repo_state.schema.lock_recover().is_none() {
+            return Ok(TypeGains(watched));
+        }
+        for value in written {
+            let Value::String(ty) = value else { continue };
+            if watched.iter().any(|(t, _)| t == ty) {
+                continue;
+            }
+            watched.push((ty.clone(), writer.value_holders("mf_schema", value)?));
+        }
+        Ok(TypeGains(watched))
+    }
+
+    /// The records that hold a watched type now and did not before, with the
+    /// types they gained — `created` left out, completed as creations.
+    pub(crate) fn gained(
+        &self,
+        writer: &Writer,
+        created: &[Uuid],
+    ) -> Result<Vec<(Uuid, Vec<String>)>, ApiError> {
+        let mut by_uuid: std::collections::BTreeMap<Uuid, Vec<String>> = Default::default();
+        for (ty, before) in &self.0 {
+            let now = writer.value_holders("mf_schema", &Value::String(ty.clone()))?;
+            for uuid in writer.uuids_of(&(now - before))? {
+                if !created.contains(&uuid) {
+                    by_uuid.entry(uuid).or_default().push(ty.clone());
+                }
+            }
+        }
+        Ok(by_uuid.into_iter().collect())
+    }
+}
+
 /// Shared scaffold for the single-metarecord write handlers (`patch`, `append`,
 /// `replace`, `delete`): runs on the blocking pool, gates on repository
 /// writability, opens a logged [`Writer`], lets `write` resolve the touched
@@ -422,7 +533,24 @@ where
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut writer = repo_state.writer(&mut conn, request_context())?;
         ensure_version(writer.store(), uuid, expected_version)?;
-        let touched = slowlog::timed("write.fields", || write(&mut writer))?;
+        let has_schema = repo_state.schema.lock_recover().is_some();
+        let before = if has_schema { types_of(writer.store(), uuid)? } else { Vec::new() };
+        let mut touched = slowlog::timed("write.fields", || write(&mut writer))?;
+        if has_schema && touched.iter().any(|n| n == "mf_schema") {
+            // A type given: what it requires is added, and the record checked
+            // on every field it constrains.
+            let added: Vec<String> = types_of(writer.store(), uuid)?
+                .into_iter()
+                .filter(|t| !before.contains(t))
+                .collect();
+            if !added.is_empty() {
+                for field in complete_types(repo_state, &mut writer, uuid, &added, false)? {
+                    if !touched.contains(&field) {
+                        touched.push(field);
+                    }
+                }
+            }
+        }
         slowlog::timed("validate.schema", || {
             validate_schema(repo_state, writer.store(), uuid, &touched)
         })?;
@@ -487,11 +615,18 @@ where
 
         let mut writer = repo_state.writer(&mut conn, request_context())?;
         let writing = slowlog::phase("write.fields");
+        let gains = TypeGains::watch(repo_state, &writer, &name, &written)?;
         let changed = write(&mut writer, &ids)?;
         let updated = changed.len();
         for uuid in schema_suspects(repo_state, &writer, &changed, &name, &written)? {
             slowlog::timed("validate.schema", || {
                 validate_schema(repo_state, writer.store(), uuid, std::slice::from_ref(&name))
+            })?;
+        }
+        for (uuid, types) in gains.gained(&writer, &[])? {
+            let fields = complete_types(repo_state, &mut writer, uuid, &types, false)?;
+            slowlog::timed("validate.schema", || {
+                validate_schema(repo_state, writer.store(), uuid, &fields)
             })?;
         }
         drop(writing);

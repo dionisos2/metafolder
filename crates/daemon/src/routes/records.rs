@@ -229,7 +229,7 @@ pub(super) async fn bulk_create_endpoint(
         let mut skipped = 0usize;
         let mut uuids: Vec<String> = Vec::with_capacity(body.metarecords.len());
         for (record, supplied) in body.metarecords.into_iter().zip(supplied) {
-            let touched: Vec<String> = record.fields.iter().map(|f| f.name.clone()).collect();
+            let mut touched: Vec<String> = record.fields.iter().map(|f| f.name.clone()).collect();
             let made = match supplied {
                 Some(uuid) => {
                     if Rows::version(writer.store(), uuid)?.is_some() {
@@ -246,6 +246,7 @@ pub(super) async fn bulk_create_endpoint(
                 }
                 None => writer.create_metarecord(record.fields)?,
             };
+            complete_created(repo_state, &mut writer, made.uuid, &mut touched)?;
             slowlog::timed("validate.schema", || {
                 validate_schema(repo_state, writer.store(), made.uuid, &touched)
             })?;
@@ -276,7 +277,7 @@ pub(super) async fn create_record_endpoint(
             check_writable(&field.name, body.force)?;
         }
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
+        let mut touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
         if let Some(path) = &body.path {
             if supplied.is_some() {
                 return Err(ApiError::bad_request(
@@ -297,11 +298,12 @@ pub(super) async fn create_record_endpoint(
             }
             None => writer.create_metarecord(body.fields)?,
         };
+        complete_created(repo_state, &mut writer, created.uuid, &mut touched)?;
         validate_schema(repo_state, writer.store(), created.uuid, &touched)?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
-        Ok(Json(created))
+        Ok(Json(metarecord_response(&conn, created.uuid)?))
     })
     .await
 }
@@ -350,7 +352,7 @@ fn create_at_path(
         ))
         .with_field("missing_parents", json!(missing)));
     }
-    let touched: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+    let mut touched: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
     let mut extra = fields;
     // Recorded, not followed, until the caller says otherwise.
     if !extra.iter().any(|f| f.name == "mf_watch") {
@@ -365,6 +367,7 @@ fn create_at_path(
         &extra,
         false,
     )?;
+    complete_created(repo_state, &mut writer, uuid, &mut touched)?;
     validate_schema(repo_state, writer.store(), uuid, &touched)?;
     let effects = writer.effects();
     slowlog::timed("commit", || writer.commit())?;
