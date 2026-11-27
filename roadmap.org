@@ -5,6 +5,62 @@ the git history and the CHANGELOG. Deferred work is a wiki note with
 =status: deferred= or =proposed= (=scripts/dev/doc ls --status deferred=; doc
 "Version scope and non-goals").
 
+* Port to Windows, then macOS
+Decided 27 November 2026 (user): metafolder must at least be usable on
+Windows, and preferably on macOS too. No Windows or Mac machine to test on
+for now. Open questions: doc "Platform open questions".
+
+The Windows build is checked from Linux: =rustup target add
+x86_64-pc-windows-gnu= and =mingw-w64-gcc= are installed, and
+=cargo check --target x86_64-pc-windows-gnu= runs here.
+
+** 1. Everything compiles for Windows
+State on 27 November 2026 (=cargo check --workspace --keep-going=, libraries
+and binaries; the test targets not yet checked):
+
+- =core= and =cli= compile already.
+- =watchd= is Linux by nature: the crate compiles empty elsewhere, its
+  binary refuses to run. Its =proto= reads names as Unix bytes, so it goes
+  Linux-only with the rest.
+- =daemon=: 17 errors once =watchd= is gated, all of one kind —
+  =std::os::unix= (=OsStrExt=, =DirBuilderExt::mode=, =MetadataExt::dev/ino=),
+  =rustix::{fs, param, process}=, the fanotify source
+  (=watcher/fanotify.rs=) and the mount watch (=mount.rs=, which uses
+  =watchd::fanotify::MountWatch=). Files: =state.rs=, =mount.rs=,
+  =kvstore/{memory,mod}.rs=, =watcher/fanotify.rs=, =routes/history.rs=,
+  =calibrate.rs=. More may appear once these are fixed (type checking runs
+  after name resolution).
+- =gui=: stops at the build script, =icons/icon.ico= missing (Tauri needs it
+  for a Windows resource), and in the =trash= crate 5.4.0, whose Windows code
+  fails to compile (=windows.rs:564=, E0070): try a newer version. What
+  follows is unknown.
+- then the test targets (=--all-targets=), and =bench= / =query-oracle=.
+
+** 2. Confining the GUI's media decoders on Windows
+The GUI refuses to start without =bwrap= (doc "Sandboxing the media
+decoders"); =bwrap= and seccomp are Linux-only. Options to put to the user:
+an equivalent (AppContainer, job objects), or the previews that run a decoder
+switched off on Windows. A security decision: the user's.
+
+** 3. Behaviour that must be adapted, not only compiled
+- names kept as exact bytes (doc "Tree names") against Windows' UTF-16 names;
+- case-insensitive filesystems (doc "Case sensitivity");
+- a file's identity without =dev=/=ino= (Windows' volume serial and file
+  index);
+- paths longer than 260 characters (the =\\?\= prefix);
+- LMDB on Windows sizes the data file to the whole map at once;
+- the repository lock (=flock= → =LockFileEx=, doc "The repository lock"),
+  the free-space probe (=statvfs= → =GetDiskFreeSpaceEx=);
+- the watcher: the =notify= source only (=ReadDirectoryChangesW=), no
+  broker.
+
+Testing needs Windows: a CI with a =windows-latest= runner (GitHub Actions on
+the =origin2= remote) — pushing there is to be agreed with the user first.
+
+** 4. macOS
+The same questions, plus the Unicode normalisation of names (HFS+ stores NFD,
+APFS compares normalisation-insensitively); a =macos-latest= runner.
+
 * Storage: what is left after the dense id work
 The invariant "a record keeps its dense id between two reindexes" is built (doc
 "Deleting a metarecord in the store"). What is left:
@@ -14,11 +70,3 @@ The invariant "a record keeps its dense id between two reindexes" is built (doc
   0.77 ms against 0.14), so the bench's verdicts against it mean nothing until a
   new baseline is recorded on a neutral machine (doc "The timed regression
   suite"; ask before).
-
-* To discuss
-Every deferred or proposed note, to be gone through one by one: build it, keep
-it deferred, or drop it.
-
-** Platform open questions
-doc "Platform open questions": Unicode normalisation of names, Windows long
-paths, what a port to macOS or Windows would take.
