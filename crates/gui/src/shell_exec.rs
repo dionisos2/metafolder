@@ -603,6 +603,7 @@ mod tests {
 
     /// A `cd` into a directory whose name is not text is kept, at its bytes.
     #[tokio::test]
+    #[cfg(unix)]
     async fn test_a_cd_into_a_name_that_is_not_text_carries_over() {
         use std::os::unix::ffi::OsStrExt;
         let dir = scratch("bytes");

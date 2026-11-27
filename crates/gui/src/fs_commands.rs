@@ -346,6 +346,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn write_text_replaces_the_content_in_place() {
         use std::os::unix::fs::MetadataExt;
         let dir = tempfile::tempdir().unwrap();
@@ -360,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn write_text_goes_through_a_symlink() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("f.txt");

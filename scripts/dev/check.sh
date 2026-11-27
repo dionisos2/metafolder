@@ -15,6 +15,10 @@
 #   clippy      lints rustc cannot see. Run with -D warnings: the tree is clean,
 #               and the only way it stays clean is if the first new warning
 #               fails the build. --lax downgrades them while you work.
+#   windows     clippy over the workspace for x86_64-pc-windows-gnu, the port's
+#               guard while no Windows machine runs the tests (doc "Platform").
+#               The bench is left out: a Linux tool. Skipped where the target
+#               or the mingw-w64 C compiler (LMDB, libgit2) is not installed.
 #   test        the Rust workspace suite, via scripts/dev/run-tests.sh (which adds
 #               the global total cargo never prints).
 #   scripts     the shipped GUI helper scripts (the ones reachable from the
@@ -162,6 +166,21 @@ else
         # a floor, not a total. `cargo clean` first for the real number.
         echo "             ${yellow}${warnings} warning(s)${off} in the crates rebuilt just now — list them with: cargo clippy --workspace --all-targets"
     fi
+fi
+
+# ── windows ──────────────────────────────────────────────────────────────────
+win=x86_64-pc-windows-gnu
+if rustup target list --installed 2>/dev/null | grep -qx "$win" \
+        && command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+    if $strict; then
+        run windows cargo clippy --workspace --exclude metafolder-bench --all-targets \
+            --target "$win" -- -D warnings
+    else
+        run windows cargo clippy --workspace --exclude metafolder-bench --all-targets \
+            --target "$win"
+    fi
+else
+    skip windows "run: rustup target add $win, and install mingw-w64-gcc"
 fi
 
 # ── tests ────────────────────────────────────────────────────────────────────

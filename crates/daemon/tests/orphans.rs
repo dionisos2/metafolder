@@ -121,6 +121,8 @@ fn scan_reports_a_whole_deleted_directory_subtree() {
 }
 
 #[test]
+// An unreadable directory is a Unix mode.
+#[cfg(unix)]
 fn scan_skips_records_under_an_unreadable_directory() {
     // A directory that cannot be read (e.g. a permission drop, or a stand-in for
     // an unmounted path) must NOT mass-orphan its children: the file may well be

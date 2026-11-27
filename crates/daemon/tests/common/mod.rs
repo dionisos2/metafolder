@@ -42,7 +42,12 @@ impl Regime {
     pub fn fs(self) -> Fs {
         match self {
             Regime::Inotify | Regime::Fanotify => Fs::Std,
+            #[cfg(target_os = "linux")]
             Regime::Simulated => Fs::Sim(sim_broker().fs().clone()),
+            // The simulated broker is fanotify's, Linux's: its tests are not
+            // generated elsewhere (`on_every_regime`).
+            #[cfg(not(target_os = "linux"))]
+            Regime::Simulated => unreachable!("the simulated broker is Linux's"),
         }
     }
 }
@@ -51,6 +56,7 @@ impl Regime {
 /// `metafolder_watchd::sim` — its filesystem is [`tests_root`], so every test
 /// directory is on it, and every repository of the process subscribes to it,
 /// as they would to the machine's one broker.
+#[cfg(target_os = "linux")]
 pub fn sim_broker() -> &'static metafolder_watchd::sim::SimBroker {
     static SIM: std::sync::OnceLock<metafolder_watchd::sim::SimBroker> = std::sync::OnceLock::new();
     SIM.get_or_init(|| {
@@ -67,6 +73,7 @@ pub fn sim_broker() -> &'static metafolder_watchd::sim::SimBroker {
 #[derive(Clone)]
 pub enum Fs {
     Std,
+    #[cfg(target_os = "linux")]
     Sim(metafolder_watchd::sim::SimFs),
 }
 
@@ -74,6 +81,7 @@ impl Fs {
     pub fn write(&self, path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::write(path, data),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.write(path, data),
         }
     }
@@ -81,6 +89,7 @@ impl Fs {
     pub fn create_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::create_dir(path),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.create_dir(path),
         }
     }
@@ -88,6 +97,7 @@ impl Fs {
     pub fn create_dir_all(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::create_dir_all(path),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.create_dir_all(path),
         }
     }
@@ -95,6 +105,7 @@ impl Fs {
     pub fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::rename(from, to),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.rename(from, to),
         }
     }
@@ -102,6 +113,7 @@ impl Fs {
     pub fn remove_file(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::remove_file(path),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.remove_file(path),
         }
     }
@@ -109,6 +121,7 @@ impl Fs {
     pub fn remove_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::remove_dir(path),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.remove_dir(path),
         }
     }
@@ -116,6 +129,7 @@ impl Fs {
     pub fn remove_dir_all(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::remove_dir_all(path),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.remove_dir_all(path),
         }
     }
@@ -127,13 +141,18 @@ impl Fs {
     ) -> std::io::Result<()> {
         match self {
             Fs::Std => std::fs::set_permissions(path, perm),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.set_permissions(path, perm),
         }
     }
 
     pub fn symlink(&self, target: impl AsRef<Path>, link: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
+            #[cfg(unix)]
             Fs::Std => std::os::unix::fs::symlink(target, link),
+            #[cfg(windows)]
+            Fs::Std => std::os::windows::fs::symlink_file(target, link),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.symlink(target, link),
         }
     }
@@ -143,6 +162,7 @@ impl Fs {
     pub fn mount_tmpfs(&self, at: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => run_mount(&["-t", "tmpfs", "t"], &[at.as_ref()]),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.mount_tmpfs(at),
         }
     }
@@ -153,6 +173,7 @@ impl Fs {
     pub fn mount_uncoverable(&self, at: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => run_mount(&["-t", "tmpfs", "t"], &[at.as_ref()]),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.mount_uncoverable(at),
         }
     }
@@ -161,6 +182,7 @@ impl Fs {
     pub fn bind_mount(&self, from: impl AsRef<Path>, at: impl AsRef<Path>) -> std::io::Result<()> {
         match self {
             Fs::Std => run_mount(&["--bind"], &[from.as_ref(), at.as_ref()]),
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.bind_mount(from, at),
         }
     }
@@ -172,6 +194,7 @@ impl Fs {
                 let ok = std::process::Command::new("umount").arg(at.as_ref()).status()?;
                 ok.success().then_some(()).ok_or_else(|| std::io::Error::other("umount failed"))
             }
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => sim.unmount(at),
         }
     }
@@ -179,13 +202,20 @@ impl Fs {
     /// Lets what is done meanwhile pile up before the broker reads it, as a
     /// broker that fell behind (the simulated kernel only; the real ones read
     /// when they read).
-    pub fn hold(&self) -> Option<metafolder_watchd::sim::Hold<'_>> {
+    pub fn hold(&self) -> Option<Hold<'_>> {
         match self {
             Fs::Std => None,
+            #[cfg(target_os = "linux")]
             Fs::Sim(sim) => Some(sim.hold()),
         }
     }
 }
+
+/// What [`Fs::hold`] gives: the simulated kernel's hold, on Linux only.
+#[cfg(target_os = "linux")]
+pub type Hold<'a> = metafolder_watchd::sim::Hold<'a>;
+#[cfg(not(target_os = "linux"))]
+pub type Hold<'a> = std::marker::PhantomData<&'a ()>;
 
 fn run_mount(args: &[&str], paths: &[&Path]) -> std::io::Result<()> {
     let ok = std::process::Command::new("mount").args(args).args(paths).status()?;
@@ -224,9 +254,24 @@ pub fn in_userns(test: &str) -> bool {
 
 /// Whether a fanotify broker answers at the daemon's default socket — the
 /// condition for the `fanotify::` variants to run rather than skip.
+#[cfg(target_os = "linux")]
 pub fn broker_available() -> bool {
     std::os::unix::net::UnixStream::connect(settings().watchd_socket).is_ok()
 }
+
+/// No broker off Linux: fanotify is Linux's.
+#[cfg(not(target_os = "linux"))]
+pub fn broker_available() -> bool {
+    false
+}
+
+/// How many events in a folder make the broker ignore it
+/// (`metafolder_watchd::fanotify::IGNORE_AFTER`); the same count off Linux,
+/// where only the notify source runs and it is merely a busy folder.
+#[cfg(target_os = "linux")]
+pub const IGNORE_AFTER: u32 = metafolder_watchd::fanotify::IGNORE_AFTER;
+#[cfg(not(target_os = "linux"))]
+pub const IGNORE_AFTER: u32 = 1000;
 
 /// The text of the shipped `daemon/config.toml`, which the tests start from:
 /// the daemon holds no copy of these values (doc "No runtime fallback").
@@ -257,7 +302,10 @@ pub fn watching_state_on(regime: Regime) -> metafolder_daemon::state::AppState {
     let watchd_socket = match regime {
         Regime::Inotify => tests_root().join("no-broker-here.sock"),
         Regime::Fanotify => defaults.watchd_socket.clone(),
+        #[cfg(target_os = "linux")]
         Regime::Simulated => sim_broker().socket().to_path_buf(),
+        #[cfg(not(target_os = "linux"))]
+        Regime::Simulated => unreachable!("the simulated broker is Linux's"),
     };
     let settings = metafolder_daemon::daemon_config::DaemonSettings {
         watch_quiet_period_ms: 500,
@@ -289,6 +337,7 @@ macro_rules! on_every_regime {
                 }
             )*
         }
+        #[cfg(target_os = "linux")]
         mod fanotify {
             $(
                 #[tokio::test(flavor = "multi_thread")]
@@ -306,6 +355,7 @@ macro_rules! on_every_regime {
                 }
             )*
         }
+        #[cfg(target_os = "linux")]
         mod simulated {
             $(
                 #[tokio::test(flavor = "multi_thread")]

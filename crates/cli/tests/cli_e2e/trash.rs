@@ -165,6 +165,7 @@ fn test_trash_add_moves_a_tracked_file() {
 /// A symbolic link is trashed as the link, never its target (doc "What
 /// trashing does"): the path names the link, not what it points at.
 #[test]
+#[cfg(unix)]
 fn test_trash_add_takes_a_symlink_not_its_target() {
     let (repo, root) = init_repo("trashadd_link");
     let target = root.join("target.txt");

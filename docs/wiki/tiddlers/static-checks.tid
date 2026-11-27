@@ -18,6 +18,7 @@ status is 1 when a check failed.
 |!Check |!Runs |!What it is for |
 |`fmt` |`cargo fmt --all --check` |the workspace is rustfmt-formatted (`rustfmt.toml`); enforcing it stops a stray `cargo fmt` from burying a real change under a reformatting diff |
 |`clippy` |`cargo clippy --workspace --all-targets -- -D warnings` |the tree is clean, and stays so only if the first new warning fails |
+|`windows` |`cargo clippy --workspace --exclude metafolder-bench --all-targets --target x86_64-pc-windows-gnu -- -D warnings` |everything but the bench still compiles for Windows, cleanly: the port's guard while no Windows machine runs the tests ([[Platform]]). Skipped without the target (`rustup target add x86_64-pc-windows-gnu`) or the `mingw-w64-gcc` that LMDB and libgit2 compile with |
 |`test` |`scripts/dev/run-tests.sh` |the Rust suites, with the global total cargo never prints ([[Testing conventions]]) |
 |`scripts` |`scripts/dev/test-shipped-scripts.sh` |the shipped GUI scripts against a scripted `mf` and a throwaway daemon ([[Testing shipped scripts]]) |
 |`tooling` |`scripts/dev/test-tooling.sh` |the project's own build, check and prune scripts, and the wiki's tools |
@@ -31,7 +32,7 @@ status is 1 when a check failed.
 |`coverage` |`cargo llvm-cov --workspace --summary-only` |only with `--coverage`; the GUI end-to-end run counted too: [[Measuring coverage]] |
 
 A missing optional tool — `cargo-deny`, `cargo-hakari`, `semgrep`, `cargo-llvm-cov`, `node`, the npm
-packages — makes its check a ''skip'', printed with the line that installs it, and
+packages, the Windows target — makes its check a ''skip'', printed with the line that installs it, and
 the summary then says that the skipped checks verified nothing.
 
 The timed benchmarks are deliberately not here ([[Performance testing]]). `target/`

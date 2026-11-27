@@ -203,6 +203,7 @@ fn declared_mount_points_report_their_state_and_expected_volume() {
 /// disk, and the volume read offline — its subtree frozen — while mounted.
 /// What can be checked without root: the path probed is the one on disk.
 #[test]
+#[cfg(unix)]
 fn a_declared_mount_point_is_probed_at_its_exact_bytes() {
     use std::os::unix::ffi::OsStrExt;
     let (repo, root) = setup("not_utf8");

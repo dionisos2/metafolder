@@ -45,7 +45,8 @@ STUB
 chmod +x "$bin"/*
 
 run() { # <free KiB>
-    (cd "$fake" && FREE_KIB=$1 PATH="$bin:$PATH" bash scripts/dev/check.sh 2>&1)
+    (cd "$fake" && FREE_KIB=$1 TARGETS=x86_64-pc-windows-gnu PATH="$bin:$PATH" \
+        bash scripts/dev/check.sh 2>&1)
 }
 
 # ── 1. plenty of room: no warning ────────────────────────────────────────────
@@ -61,6 +62,30 @@ assert_contains "the warning names the cure" "$out" "make dev"
 
 # ── 2b. the workspace-hack is checked against the manifests ─────────────────
 assert_contains "the suite runs the hakari check" "$out" "hakari"
+
+# ── 2c. the Windows build is checked where its target is installed ─────────
+# cargo logs its arguments; rustup lists the targets $TARGETS names.
+cat >"$bin/cargo" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$tmp/cargo.log"
+exit 0
+STUB
+cat >"$bin/rustup" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' $TARGETS
+STUB
+printf '#!/usr/bin/env bash\nexit 0\n' >"$bin/x86_64-w64-mingw32-gcc"
+chmod +x "$bin"/*
+: >"$tmp/cargo.log"
+out=$(cd "$fake" && FREE_KIB=$((200 * 1024 * 1024)) TARGETS="x86_64-unknown-linux-gnu x86_64-pc-windows-gnu" \
+    PATH="$bin:$PATH" bash scripts/dev/check.sh 2>&1); rc=$?
+assert_eq "with the Windows target the pass succeeds" 0 "$rc"
+assert_contains "it checks every crate for Windows" "$(cat "$tmp/cargo.log")" \
+    "clippy --workspace --exclude metafolder-bench --all-targets --target x86_64-pc-windows-gnu"
+out=$(cd "$fake" && FREE_KIB=$((200 * 1024 * 1024)) TARGETS="x86_64-unknown-linux-gnu" \
+    PATH="$bin:$PATH" bash scripts/dev/check.sh 2>&1); rc=$?
+assert_eq "without it the pass still succeeds" 0 "$rc"
+assert_contains "it is skipped, naming the install" "$out" "rustup target add x86_64-pc-windows-gnu"
 
 # ── 3. the threshold can be moved ────────────────────────────────────────────
 out=$(cd "$fake" && FREE_KIB=$((3 * 1024 * 1024)) METAFOLDER_CHECK_MIN_FREE_GIB=2 \

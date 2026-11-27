@@ -6,6 +6,7 @@
 //! Its own test binary, because the limit is the whole simulated kernel's —
 //! every repository of the process subscribes to the one broker — and a
 //! lowered limit would drop the events of whatever test ran beside it.
+#![cfg(target_os = "linux")]
 
 use axum::http::StatusCode;
 use axum::Router;

@@ -10,30 +10,18 @@ Decided 27 November 2026 (user): metafolder must at least be usable on
 Windows, and preferably on macOS too. No Windows or Mac machine to test on
 for now. Open questions: doc "Platform open questions".
 
-The Windows build is checked from Linux: =rustup target add
-x86_64-pc-windows-gnu= and =mingw-w64-gcc= are installed, and
-=cargo check --target x86_64-pc-windows-gnu= runs here.
+Everything but the bench compiles for Windows, tests included: the =windows=
+check of =check.sh= (=rustup target add x86_64-pc-windows-gnu= and
+=mingw-w64-gcc= installed here) keeps it so. What each Linux-only part does
+elsewhere: doc "Platform".
 
-** 1. Everything compiles for Windows
-State on 27 November 2026 (=cargo check --workspace --keep-going=, libraries
-and binaries; the test targets not yet checked):
-
-- =core=, =cli=, =daemon= and =watchd= (empty off Linux) compile, clippy
-  clean, libraries and binaries; what the daemon does without Linux is in doc
-  "Platform".
-- =gui= compiles and is clippy clean: =icons/icon.ico= generated from
-  =icon.png=, =trash= given its Windows COM feature, the persistent shell
-  replaced off Unix by one that refuses (=shell_session_unsupported.rs=). It
-  still refuses to start without =bwrap= (step 2).
-- then the test targets (=--all-targets=), and =bench= / =query-oracle=.
-
-** 2. Confining the GUI's media decoders on Windows
+** 1. Confining the GUI's media decoders on Windows
 The GUI refuses to start without =bwrap= (doc "Sandboxing the media
 decoders"); =bwrap= and seccomp are Linux-only. Options to put to the user:
 an equivalent (AppContainer, job objects), or the previews that run a decoder
 switched off on Windows. A security decision: the user's.
 
-** 3. Behaviour that must be adapted, not only compiled
+** 2. Behaviour that must be adapted, not only compiled
 - names kept as exact bytes (doc "Tree names") against Windows' UTF-16 names;
 - case-insensitive filesystems (doc "Case sensitivity");
 - a file's identity without =dev=/=ino= (Windows' volume serial and file
@@ -48,7 +36,7 @@ switched off on Windows. A security decision: the user's.
 Testing needs Windows: a CI with a =windows-latest= runner (GitHub Actions on
 the =origin2= remote) — pushing there is to be agreed with the user first.
 
-** 4. macOS
+** 3. macOS
 The same questions, plus the Unicode normalisation of names (HFS+ stores NFD,
 APFS compares normalisation-insensitively); a =macos-latest= runner.
 

@@ -214,6 +214,15 @@ async fn test_watcher_tracks_create_rename_delete(regime: Regime) {
 /// still load. The watcher must not follow the symlink, and one unwatchable
 /// path must never abort the whole load.
 async fn test_load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
+    // Unreadable is a Unix mode: elsewhere there is nothing to test.
+    #[cfg(unix)]
+    load_succeeds_with_symlink_to_unreadable_dir(regime).await;
+    #[cfg(not(unix))]
+    let _ = regime;
+}
+
+#[cfg(unix)]
+async fn load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
     let fs = regime.fs();
     use std::os::unix::fs::PermissionsExt;
 

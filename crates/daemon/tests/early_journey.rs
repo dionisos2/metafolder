@@ -473,7 +473,7 @@ async fn test_a_busy_folder_moved_in_and_worked_in_unread_is_tracked_whole(regim
     fs.create_dir(&cache).unwrap();
     {
         let _late = fs.hold();
-        let busy = metafolder_watchd::fanotify::IGNORE_AFTER;
+        let busy = common::IGNORE_AFTER;
         for i in 0..busy {
             fs.write(cache.join(format!("f{i}")), b"x").unwrap();
         }

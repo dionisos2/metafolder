@@ -9,6 +9,7 @@
 //! directory is a mount point, and the simulated kernel keeps its own table
 //! in step with the real one. Its own binary: the namespace is the whole
 //! process's.
+#![cfg(target_os = "linux")]
 
 use std::future::Future;
 use std::time::Duration;

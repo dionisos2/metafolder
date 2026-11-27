@@ -89,7 +89,9 @@ fn daemon_port() -> &'static str {
 struct Out {
     code: i32,
     stdout: String,
-    /// The exact bytes, for output that need not be UTF-8 (a path).
+    /// The exact bytes, for output that need not be UTF-8 (a path): read by
+    /// the Unix tests only.
+    #[cfg_attr(not(unix), allow(dead_code))]
     stdout_bytes: Vec<u8>,
     stderr: String,
 }

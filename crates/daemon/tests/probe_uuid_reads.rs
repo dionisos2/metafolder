@@ -3,6 +3,7 @@
 //! of uuids stored under one key. Not a check: it prints.
 //!
 //! `cargo test --release -p metafolder-daemon --test probe_uuid_reads -- --ignored --nocapture`
+#![cfg(target_os = "linux")]
 
 use heed::types::Bytes;
 use heed::{CommitOrAbort, Database, Env, EnvOpenOptions, WithoutTls};

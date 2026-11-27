@@ -812,7 +812,9 @@ mod tests {
     use crate::log::Writer;
     use metafolder_core::metarecord::{Field, Value};
     use std::collections::HashSet;
-    use std::path::{Path, PathBuf};
+    #[cfg(unix)]
+    use std::path::Path;
+    use std::path::PathBuf;
 
     /// A repository whose root metarecord carries `mf_watch = watch` (and no
     /// `mf_ignore`), backed by a real temporary directory on disk. Child paths
@@ -907,6 +909,7 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             // Restore perms so an unreadable test dir can be removed.
+            #[cfg(unix)]
             for entry in walk_all(&self.root) {
                 if let Ok(md) = std::fs::symlink_metadata(&entry) {
                     if md.is_dir() {
@@ -921,6 +924,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn walk_all(root: &Path) -> Vec<PathBuf> {
         let mut out = vec![root.to_path_buf()];
         if let Ok(entries) = std::fs::read_dir(root) {
@@ -957,6 +961,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_symlinked_directory_is_not_followed() {
         let mut fx = Fixture::new(true);
         std::fs::create_dir_all(fx.root.join("real")).unwrap();
@@ -979,6 +984,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_unreadable_directory_does_not_abort_the_walk() {
         use std::os::unix::fs::PermissionsExt;
         let mut fx = Fixture::new(true);

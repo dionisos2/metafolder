@@ -684,6 +684,7 @@ mod tests {
 
     /// `syscall(nr, args…)` from inside the sandbox: 0 when it succeeded,
     /// else its errno.
+    #[cfg(target_os = "linux")]
     fn errno_of(call: &str) -> Option<i32> {
         sandboxed_python(&format!(
             "import ctypes, sys\n\
@@ -694,6 +695,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_a_sandboxed_helper_cannot_create_a_namespace() {
         // A user namespace hands a process every capability *inside* it —
         // the first step of most kernel privilege escalations.
@@ -705,6 +707,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_a_sandboxed_helper_cannot_reach_the_riskiest_kernel_interfaces() {
         // keyctl(KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING, 0) succeeds
         // for anyone unfiltered; io_uring_setup and bpf are the classic
@@ -1071,6 +1074,7 @@ mod scratch_tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_an_empty_or_linked_output_is_refused() {
         let cache = parent("refuse");
         let scratch = Scratch::new(&cache).unwrap();

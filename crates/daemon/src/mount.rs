@@ -714,6 +714,7 @@ mod tests {
     /// and the refusal of a network filesystem was off; decoded lossily, the
     /// mount point matched no path.
     #[test]
+    #[cfg(unix)]
     fn a_mount_point_that_is_not_utf8_is_read_as_its_bytes() {
         use std::os::unix::ffi::OsStrExt;
         let table = MountTable::from_bytes(

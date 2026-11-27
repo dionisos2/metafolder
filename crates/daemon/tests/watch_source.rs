@@ -7,6 +7,7 @@
 //! against the real fanotify), and mount marks need capabilities this harness
 //! does not have. What is under test is the daemon's half — selection, the
 //! client, and the coverage-regime honour of `mfr_watch_exceeded`.
+#![cfg(target_os = "linux")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
